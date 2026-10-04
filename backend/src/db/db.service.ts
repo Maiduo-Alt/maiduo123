@@ -8,6 +8,31 @@ export function isMemoryDb(): boolean {
   return String(process.env.USE_PG_MEM || '').toLowerCase() === 'true';
 }
 
+/**
+ * 解析 SSL 开关（环境变量 PG_SSL）。
+ * 注意 pg 的优先级是「连接串 > 本处取值」：连接串里带 `sslmode=` 时以连接串为准
+ * （见 pg/lib/connection-parameters.js 中 Object.assign 的覆盖顺序）。
+ *   PG_SSL=false / disable / off / 0 → 关闭
+ *   PG_SSL=verify / verify-full      → 开启并校验证书链与主机名
+ *   其它非空取值（如 true）           → 开启但不校验证书链（托管 PostgreSQL 常用）
+ * 未设置时关闭，保持本地与内嵌实例的行为不变。
+ */
+export function resolveSslSetting(raw?: string): false | { rejectUnauthorized: boolean } {
+  if (!raw) return false;
+  switch (raw.trim().toLowerCase()) {
+    case 'false':
+    case 'disable':
+    case 'off':
+    case '0':
+      return false;
+    case 'verify':
+    case 'verify-full':
+      return { rejectUnauthorized: true };
+    default:
+      return { rejectUnauthorized: false };
+  }
+}
+
 @Injectable()
 export class DbService implements OnModuleDestroy {
   private readonly logger = new Logger(DbService.name);
@@ -35,8 +60,9 @@ export class DbService implements OnModuleDestroy {
     this.pool = new Pool({
       connectionString,
       max: Number(process.env.PG_POOL_MAX || 10),
-      // pg-mem / 嵌入式实例对 SSL 无要求
-      ssl: false,
+      // 本地/内嵌实例默认不启用 SSL；托管库请在连接串里带 ?sslmode=require，
+      // 或用 PG_SSL 显式控制（见 resolveSslSetting）。
+      ssl: resolveSslSetting(process.env.PG_SSL),
     });
     this.pool.on('error', (err) => this.logger.error(`数据库连接异常: ${err.message}`));
   }

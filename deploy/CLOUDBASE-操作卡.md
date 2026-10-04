@@ -30,17 +30,35 @@
 
 ---
 
-## 第 2 步 Supabase：建 PostgreSQL（3 分钟）
+## 第 2 步 Supabase：建 PostgreSQL ✅ 已完成（2026-10-04 实测）
 
-1. https://supabase.com → Start your project → 用 GitHub 或邮箱登录
-2. **New project**：Name 填 `cs-training`；**Database Password 自己设一个并记下来**；Region 选 Singapore / Tokyo
-3. 等 1~2 分钟初始化
-4. 左下 **Settings → Database → Connection string → URI** → 复制
-5. 在末尾**手动补上** `?sslmode=require`
-6. 形如：`postgresql://postgres:密码@db.xxxxx.supabase.co:5432/postgres?sslmode=require`
-   → 发我，我先帮你验证连通；也可以先留着，第 3 步直接用
+项目已建好，并且已在本机跑通「建表 + 灌数据」。**第 3 步直接用下面这串，不要再从控制台复制 URI。**
 
-⚠️ 免费版有连接数上限：云托管把「最小实例数」设 1 就够，别设太大。
+```
+postgresql://postgres.cdbcdkddqhbsoommkipb:你的数据库密码@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres?sslmode=no-verify
+```
+
+项目档案：
+
+| 项 | 值 |
+| --- | --- |
+| 项目名 | `Maiduo-Alt's Project`（组织 `cs-training`） |
+| 项目 ref | `cdbcdkddqhbsoommkipb` |
+| 区域 | Oceania (Sydney) `ap-southeast-2` / 规格 NANO |
+| 版本 | PostgreSQL 17.11 |
+| 已就绪 | 25 张表 + 商品 100 / 剧本 900 / 买家背景 32 / 素材 300 / 账号 4 |
+
+**两个踩过的坑（照抄上面的连接串就不会遇到）**
+
+1. **不要用控制台「Direct connection string」里的 `db.<ref>.supabase.co`**：新项目的该域名不发布记录，本机实测 `getaddrinfo ENOTFOUND`，连不上。必须走**连接池** `aws-0-<region>.pooler.supabase.com`。
+2. **连接池的用户名是 `postgres.<ref>`，不是 `postgres`**；库名仍是 `postgres`。写成 `postgres` 会报 `tenant/user ... not found`。
+3. **ssl 用 `sslmode=no-verify`**：`sslmode=require` 在 pg 8.23 + Node 24 下会报 `SELF_SIGNED_CERT_IN_CHAIN`（裸 TLS 校验其实是通的，是驱动层兼容问题）。`no-verify` 仍然全程加密，只是不校验证书链。
+
+> 想换成腾讯云 PostgreSQL 或别的库时：把 `DATABASE_URL` 换掉即可，改完用
+> `node tools/db-check.mjs "<新连接串>"` 先验一次，再重启服务。
+
+⚠️ 免费版连接数上限 60：云托管「最小实例数」设 `1` 就够，别设大。
+⚠️ 从国内连 Sydney 单次建连约 3~5 秒，**最小实例数建议设 1**，避免冷启动时健康检查超时。
 
 ---
 
@@ -68,7 +86,7 @@
 | 变量 | 值 |
 | --- | --- |
 | `USE_PG_MEM` | `false` |
-| `DATABASE_URL` | 第 2 步的连接串 |
+| `DATABASE_URL` | 第 2 步那串（含 `?sslmode=no-verify`） |
 | `JWT_SECRET` | 本地跑一次生成：`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `UPLOAD_DIR` | `/app/uploads` |
 

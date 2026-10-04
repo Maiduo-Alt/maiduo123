@@ -31,9 +31,18 @@ git push -u origin main
 ## 2. 建外部 PostgreSQL
 
 **Supabase 免费版**（推荐，2 分钟）：
-1. supabase.com 建项目 → Settings → Database → 复制 Connection string（URI）；
-2. 末尾补 `?sslmode=require`；
-3. 形如：`postgresql://postgres:密码@db.<ref>.supabase.co:5432/postgres?sslmode=require`。
+1. supabase.com 建项目 → 记下 **项目 ref** 与 **区域**（形如 `ap-southeast-2`）；
+2. 连接串**用连接池地址**，形如：
+   `postgresql://postgres.<ref>:密码@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=no-verify`
+3. 改完先自检：`node tools/db-check.mjs "<连接串>"`，看到「数据库可用」再往下走。
+
+**三个实测坑（2026-10-04）**
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| `getaddrinfo ENOTFOUND db.<ref>.supabase.co` | 新项目不发布直连 DNS（IPv6-only） | 改用连接池 `aws-0-<region>.pooler.supabase.com` |
+| `tenant/user postgres.<ref> not found` | 连接池用户名必须是 `postgres.<ref>` | 别写成 `postgres`；区域写错也会这样 |
+| `SELF_SIGNED_CERT_IN_CHAIN` | pg 8.23 把 `sslmode=require` 当 verify-full，与 Node 24 兼容性差 | 用 `?sslmode=no-verify`（仍加密，不校验证书链） |
 
 （用腾讯云 PostgreSQL 的话，把连接串换成它的内网/外网地址即可，注意云托管要能访问到。）
 
