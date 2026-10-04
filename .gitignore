@@ -20,8 +20,11 @@ npm-debug.log*
 _handoff/*.zip
 
 # 运行期数据：上传的图片与数据库备份
-uploads/
-backups/
+# 注意必须锚定到仓库根（/uploads/），否则会连源码目录 backend/src/modules/uploads/ 一起排除，
+# 导致远端仓库缺文件、Docker 构建时 tsc 报 TS2307。
+/uploads/
+/backups/
+!/backend/src/modules/uploads/
 
 # 系统文件
 .DS_Store
