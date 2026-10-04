@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>方案验收进度看板 · 在线模拟接待训练系统</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --line: #e8ecf4;
+        --text: #1f2d3d;
+        --muted: #7a8aa0;
+        --brand: #2f6fe4;
+        --ok: #16a34a;
+        --warn: #d97706;
+        --todo: #dc2626;
+        --phase2: #64748b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+        font-size: 14px;
+      }
+      .wrap { max-width: 1240px; margin: 0 auto; padding: 20px 20px 60px; }
+      header.top {
+        background: linear-gradient(135deg, #2f6fe4, #4b8bf5);
+        color: #fff;
+        border-radius: 12px;
+        padding: 18px 22px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        flex-wrap: wrap;
+      }
+      .top h1 { font-size: 19px; margin: 0 0 4px; font-weight: 600; }
+      .top .sub { font-size: 12px; opacity: 0.85; }
+      .ring { position: relative; width: 96px; height: 96px; flex: none; }
+      .ring svg { transform: rotate(-90deg); }
+      .ring .pct {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        font-size: 22px; font-weight: 700;
+      }
+      .live { margin-left: auto; text-align: right; font-size: 12px; }
+      .live .dot {
+        display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #7CFC9E;
+        margin-right: 6px; animation: pulse 1.6s infinite;
+      }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+      button.refresh {
+        margin-top: 8px; background: rgba(255,255,255,0.16); color: #fff; border: 1px solid rgba(255,255,255,0.4);
+        border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12px;
+      }
+      button.refresh:hover { background: rgba(255,255,255,0.28); }
+      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
+      .card {
+        background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+      }
+      .card .label { font-size: 12px; color: var(--muted); }
+      .card .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+      .card .value small { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+      .card .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+      section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+      section h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+      .bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+      .bar-row .name { width: 150px; flex: none; font-size: 13px; }
+      .bar { flex: 1; height: 10px; background: #eef1f7; border-radius: 6px; overflow: hidden; }
+      .bar i { display: block; height: 100%; background: linear-gradient(90deg, #4b8bf5, #2f6fe4); }
+      .bar-row .num { width: 74px; text-align: right; flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--muted); font-weight: 500; font-size: 12px; background: #fafbfe; }
+      .chip {
+        display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; line-height: 18px; white-space: nowrap;
+      }
+      .chip.done { background: #e7f7ee; color: var(--ok); }
+      .chip.todo { background: #fdeaea; color: var(--todo); }
+      .chip.phase2 { background: #eef1f6; color: var(--phase2); }
+      .chip.phase2-done { background: #e8f0fe; color: var(--brand); }
+      .chip.scope { background: #f4f6fa; color: var(--muted); }
+      details.evidence { margin-top: 4px; }
+      details.evidence summary { cursor: pointer; color: var(--brand); font-size: 12px; }
+      .ev { font-size: 12px; color: #4b5a70; margin: 4px 0 0; line-height: 1.7; }
+      .ev .miss { color: var(--todo); }
+      .ev .hit { color: var(--ok); }
+      .muted { color: var(--muted); }
+      .flex-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      code { background: #f2f4f9; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <div class="ring">
+          <svg width="96" height="96">
+            <circle cx="48" cy="48" r="42" stroke="rgba(255,255,255,0.25)" stroke-width="8" fill="none" />
+            <circle id="ringValue" cx="48" cy="48" r="42" stroke="#fff" stroke-width="8" fill="none"
+              stroke-linecap="round" stroke-dasharray="263.9" stroke-dashoffset="263.9" />
+          </svg>
+          <div class="pct" id="ringPct">--</div>
+        </div>
+        <div>
+          <h1>方案验收进度看板</h1>
+          <div class="sub">在线模拟接待训练系统 · 依据《需求与实现方案 v1.0》逐条核对代码库真实证据</div>
+        </div>
+        <div class="live">
+          <div><span class="dot"></span>每 5 秒自动刷新</div>
+          <div id="updated" class="sub">等待数据…</div>
+          <button class="refresh" onclick="reload(true)">立即刷新</button>
+        </div>
+      </header>
+
+      <div class="cards" id="cards"></div>
+      <section>
+        <h2>验收入口与自检命令</h2>
+        <div class="muted" style="font-size:13px;line-height:2;">
+          <div>应用（用内置浏览器验收）：<a href="http://127.0.0.1:4173/" target="_blank">http://127.0.0.1:4173/</a>　账号见《验收指引》第 0 节</div>
+          <div>内容库本地预览（免登录、可离线打开）：<a href="/docs/内容库预览.html" target="_blank">/docs/内容库预览.html</a>　背景 32 / 咨询内容 300 / 商品 100 / 剧本 900 / 短语 42 / 风格 8</div>
+          <div>自检命令：<code>npm run flow:check</code>（20 条真实点击流程）／<code>npm run render:check</code>（41 项渲染与布局）／<code>npm run sweep:check</code>（15 个页面弹窗白屏扫查）／<code>npm run deploy:check</code>（17 项部署配置核对，不需要 docker）／<code>npm run content:preview</code>（重新生成内容库预览）</div>
+        </div>
+        <div id="browserChecks" class="muted" style="font-size:13px;margin-top:8px;"></div>
+      </section>
+      <section>
+        <h2>客户新增需求（方案外，2026-10-02 确认）</h2>
+        <div id="clientRequirements"></div>
+      </section>
+      <section>
+        <h2>还剩哪些没做（按方案口径分类）</h2>
+        <div id="remaining"></div>
+      </section>
+      <section>
+        <h2>八大模块进度（按一期条目）</h2>
+        <div id="modules"></div>
+      </section>
+      <section>
+        <h2>方案 9.1 功能验收标准 / 9.2 关键测试场景</h2>
+        <div id="acceptance"></div>
+      </section>
+      <section>
+        <h2>方案 9.3 性能与安全验收</h2>
+        <div id="perf"></div>
+      </section>
+      <section>
+        <h2>页面清单</h2>
+        <div id="pages"></div>
+      </section>
+      <section>
+        <h2>功能点逐条核对</h2>
+        <div class="muted" style="font-size:12px;margin-bottom:10px;">
+          展开「证据」可以看到每条功能点是拿什么证明的；只要有任意一条证据找不到，就会标成待补。
+        </div>
+        <div id="items"></div>
+      </section>
+    </div>
+
+    <script>
+      const fmt = (iso) => (iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : '—');
+
+      async function reload(manual) {
+        const url = manual ? '/api/progress?refresh=1' : '/api/progress';
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          const data = await res.json();
+          render(data);
+        } catch (error) {
+          document.getElementById('updated').textContent = '看板服务未响应：' + error.message;
+        }
+      }
+
+      function render(data) {
+        const s = data.summary;
+        document.getElementById('updated').textContent =
+          '数据时间 ' + fmt(data.generatedAt) + (data.durations ? ' · 核查耗时 ' + data.durations.auditMs + 'ms' : '');
+
+        const bc = data.browserChecks;
+        const bcEl = document.getElementById('browserChecks');
+        if (bcEl) {
+          if (bc && bc.available) {
+            const one = (label, item) =>
+              item
+                ? '<span style="color:' + (item.ok ? '#389e0d' : '#cf1322') + '">' + label + ' ' + item.passed + '/' + item.total + '</span>' +
+                  '（' + fmt(item.finishedAt) + (item.failed && item.failed.length ? '，失败：' + item.failed.join('、') : '') + '）'
+                : '<span>' + label + ' 未跑过</span>';
+            bcEl.innerHTML =
+              '最近一次浏览器层自检：' +
+              one('页面渲染', bc.render) +
+              '　' +
+              one('交互流程', bc.flow) +
+              '　' +
+              one('白屏扫查', bc.sweep);
+          } else {
+            bcEl.textContent = (bc && bc.note) || '尚未跑过浏览器层自检';
+          }
+        }
+
+        const pct = s.percent;
+        document.getElementById('ringPct').textContent = pct + '%';
+        document.getElementById('ringValue').setAttribute('stroke-dashoffset', String(263.9 * (1 - pct / 100)));
+
+        const content = data.content || {};
+        const verification = data.verification;
+        const cards = [
+          { label: '一期功能点', value: s.phase1Done + ' / ' + s.phase1Total, hint: s.todoIds.length ? '待补 ' + s.todoIds.join(', ') : '全部有证据' },
+          {
+            label: '二期功能点（已提前做掉）',
+            value: s.phase2Done + ' / ' + s.phase2Required,
+            hint:
+              '方案共 ' +
+              s.phase2Total +
+              ' 条：已实现 ' +
+              s.phase2Done +
+              '、业务方确认不做 ' +
+              s.phase2Excluded +
+              '、待办 ' +
+              (s.phase2Required - s.phase2Done),
+          },
+          { label: '页面就绪', value: s.pagesOk + ' / ' + s.pagesTotal, hint: '前端页面 + 路由均已注册' },
+          { label: '后端接口', value: s.routes, hint: 'controller 里真实注册的路由数' },
+          {
+            label: '客户新增需求（方案外）',
+            value: (s.clientRequirementsDone ?? 0) + ' / ' + (s.clientRequirementsTotal ?? 0),
+            hint: '2026-10-02 确认的 3 条，另行 1 条登记为「不做」',
+          },
+          { label: '自动化用例', value: s.cases, hint: s.files + ' 个测试文件' },
+          {
+            label: '最近一次完整验证',
+            value: verification ? verification.conclusion : '未运行',
+            hint: verification ? fmt(verification.finishedAt) : '运行 npm run verify:all 生成',
+          },
+        ];
+        document.getElementById('cards').innerHTML = cards
+          .map(
+            (c) =>
+              '<div class="card"><div class="label">' +
+              c.label +
+              '</div><div class="value">' +
+              c.value +
+              '</div><div class="hint">' +
+              c.hint +
+              '</div></div>'
+          )
+          .join('');
+
+        const clientItems = data.clientRequirements || [];
+        document.getElementById('clientRequirements').innerHTML = clientItems.length
+          ? '<table><thead><tr><th style="width:60px">编号</th><th style="width:70px">类型</th><th style="width:300px">需求</th><th>说明</th><th style="width:110px">状态</th><th style="width:90px">证据</th></tr></thead><tbody>' +
+            clientItems
+              .map((item) => {
+                const chip =
+                  item.status === 'skipped'
+                    ? '<span class="chip phase2">不做（已登记）</span>'
+                    : item.ok
+                      ? '<span class="chip done">已实现</span>'
+                      : '<span class="chip todo">待补</span>';
+                const evidence = item.evidence.length
+                  ? '<details class="evidence"><summary>证据（' +
+                    item.evidence.filter((e) => e.ok).length +
+                    '/' +
+                    item.evidence.length +
+                    '）</summary>' +
+                    item.evidence
+                      .map((e) => '<div class="ev ' + (e.ok ? 'hit' : 'miss') + '">' + (e.ok ? '✓ ' : '✗ ') + e.label + ' —— ' + e.detail + '</div>')
+                      .join('') +
+                    '</details>'
+                  : '<span class="muted">—</span>';
+                return (
+                  '<tr><td><code>' + item.id + '</code></td><td>' + item.type + '</td><td>' + item.title +
+                  '</td><td class="muted">' + (item.note || '') + '</td><td>' + chip + '</td><td>' + evidence + '</td></tr>'
+                );
+              })
+              .join('') +
+            '</tbody></table>'
+          : '<div class="ev muted">无</div>';
+
+        const remaining = data.remaining || { phase1Todo: [], phase2Todo: [], openQuestions: [], envRequired: [] };
+        const api = (data.contracts && data.contracts.api) || { missing: [], shapeDifferences: [] };
+        const params = (data.contracts && data.contracts.params) || { mismatched: 0, total: 0 };
+        const block = (title, count, body, tone) =>
+          '<div class="flex-between" style="margin:14px 0 6px"><b>' + title +
+          '</b><span class="chip ' + tone + '">' + count + '</span></div>' + body;
+        const none = '<div class="ev muted">无</div>';
+        document.getElementById('remaining').innerHTML =
+          '<div class="ev muted">方案 10.3 默认参数：' +
+          (params.available === false ? params.note : params.total - params.mismatched + '/' + params.total + ' 与代码一致') +
+          '</div>' +
+          block(
+            '① 方案列为一期、但还没做的',
+            remaining.phase1Todo.length + ' 条',
+            remaining.phase1Todo.length
+              ? '<table><tbody>' + remaining.phase1Todo
+                  .map((i) => '<tr><td style="width:80px"><code>' + i.id + '</code></td><td style="width:150px">' + i.title + '</td><td class="muted">' + i.description + '</td></tr>')
+                  .join('') + '</tbody></table>'
+              : none,
+            remaining.phase1Todo.length ? 'todo' : 'done'
+          ) +
+          (remaining.excluded && remaining.excluded.length
+            ? '<div class="ev muted">另有 ' +
+              remaining.excluded.length +
+              ' 条业务方确认不做（不计入待办）：' +
+              remaining.excluded.map((i) => '<code>' + i.id + '</code> ' + i.title).join('、') +
+              '</div>'
+            : '') +
+          (remaining.notRequired && remaining.notRequired.length
+            ? '<div class="ev muted">另有 ' +
+              remaining.notRequired.length +
+              ' 条业务方确认不验收（功能保留，代码与数据不动）：' +
+              remaining.notRequired.map((i) => '<code>' + i.id + '</code> ' + i.title).join('、') +
+              '</div>'
+            : '') +
+          block(
+            '② 方案自己标为二期的（本版未做）',
+            remaining.phase2Todo.length + ' 条',
+            '<table><tbody>' + remaining.phase2Todo
+              .map((i) => '<tr><td style="width:80px"><code>' + i.id + '</code></td><td style="width:140px">' + i.title + '</td><td class="muted">' + (i.note || '方案列为二期') + '</td></tr>')
+              .join('') + '</tbody></table>',
+            'phase2'
+          ) +
+          block(
+            '③ 接口清单（方案 7.2）缺口',
+            api.missing.length + ' 条',
+            api.missing.length
+              ? '<table><tbody>' + api.missing
+                  .map((m) => '<tr><td style="width:70px"><code>' + m.method + '</code></td><td style="width:260px"><code>' + m.path + '</code></td><td class="muted">' + m.note + '</td></tr>')
+                  .join('') + '</tbody></table>'
+              : none,
+            api.missing.length ? 'todo' : 'done'
+          ) +
+          block(
+            '④ 需要业务方给输入才能收口（方案 10.2）',
+            remaining.openQuestions.filter((q) => !q.status).length + ' 项待输入' +
+              (remaining.openQuestions.some((q) => q.status)
+                ? '，已获取 ' + remaining.openQuestions.filter((q) => q.status).length + ' 项'
+                : ''),
+            '<table><thead><tr><th style="width:60px">编号</th><th style="width:80px">状态</th><th style="width:200px">事项</th><th style="width:150px">需要谁提供</th><th>当前处理 / 官方原文</th></tr></thead><tbody>' +
+              remaining.openQuestions
+                .map((q) =>
+                  '<tr><td><code>' + q.id + '</code></td>' +
+                  '<td>' + (q.status ? '<span style="color:#389e0d">' + q.status + '</span>' : '<span class="muted">待输入</span>') + '</td>' +
+                  '<td>' + q.title + '</td>' +
+                  '<td class="muted">' + q.need + '</td>' +
+                  '<td class="muted">' + q.current +
+                    (q.resolution ? '<div class="ev" style="margin-top:6px">' + q.resolution + '</div>' : '') +
+                  '</td></tr>')
+                .join('') + '</tbody></table>',
+            'phase2-done'
+          ) +
+          block(
+            '⑤ 需要真实环境才能验证（方案 9.3）',
+            remaining.envRequired.length + ' 项',
+            '<table><tbody>' + remaining.envRequired
+              .map((e) => '<tr><td style="width:70px"><code>' + e.id + '</code></td><td style="width:300px">' + e.title + '</td><td class="muted">' + e.note + '</td></tr>')
+              .join('') + '</tbody></table>',
+            'phase2'
+          ) +
+          block(
+            '⑥ 与方案清单的形态差异（有意，不是漏做）',
+            api.shapeDifferences.length + ' 条',
+            '<details class="evidence"><summary>展开看每条差异的原因</summary>' +
+              api.shapeDifferences
+                .map((d) => '<div class="ev"><code>' + d.method + ' ' + d.path + '</code> —— ' + d.detail + '</div>')
+                .join('') + '</details>',
+            'phase2-done'
+          );
+
+        document.getElementById('modules').innerHTML = data.modules
+          .map(
+            (m) =>
+              '<div class="bar-row"><span class="name">' +
+              m.key +
+              ' ' +
+              m.name +
+              '</span><span class="bar"><i style="width:' +
+              m.percent +
+              '%"></i></span><span class="num">' +
+              m.phase1Done +
+              '/' +
+              m.phase1Total +
+              '</span></div>'
+          )
+          .join('');
+
+        document.getElementById('acceptance').innerHTML = data.acceptance
+          .map(
+            (group) =>
+              '<div class="flex-between" style="margin:10px 0 6px"><b>' +
+              group.group +
+              '</b><span class="muted" style="font-size:12px">' +
+              group.items.filter((i) => i.ok).length +
+              '/' +
+              group.items.length +
+              ' 有证据</span></div>' +
+              '<table><tbody>' +
+              group.items.map((item) => acceptanceRow(item)).join('') +
+              '</tbody></table>'
+          )
+          .join('');
+
+        document.getElementById('perf').innerHTML =
+          '<table><thead><tr><th style="width:80px">编号</th><th>验收项</th><th style="width:280px">当前证据</th></tr></thead><tbody>' +
+          (data.perfSecurity || [])
+            .map((item) => {
+              const ev = verification && verification.checks ? verification.checks[item.key] : null;
+              const chip = ev
+                ? ev.ok
+                  ? 'chip done">通过'
+                  : 'chip todo">未通过'
+                : item.acceptedRisk
+                  ? 'chip phase2-done">残留风险·已接受'
+                  : 'chip phase2">待运行';
+              const detail = ev ? ev.summary : item.note;
+              return (
+                '<tr><td><code>' + item.id + '</code></td><td>' + item.title + '</td><td><span class="' + chip +
+                '</span><div class="ev">' + (detail || '') + '</div></td></tr>'
+              );
+            })
+            .join('') +
+          '</tbody></table>';
+
+        document.getElementById('pages').innerHTML =
+          '<table><thead><tr><th style="width:240px">页面</th><th style="width:180px">路由</th><th>文件</th><th style="width:80px">状态</th></tr></thead><tbody>' +
+          data.pages
+            .map(
+              (p) =>
+                '<tr><td>' + p.name + '</td><td><code>' + p.route + '</code></td><td class="muted">' + p.ui +
+                '</td><td><span class="chip ' + (p.ok ? 'done">就绪' : 'todo">缺页面或路由') + '</span></td></tr>'
+            )
+            .join('') +
+          '</tbody></table>';
+
+        document.getElementById('items').innerHTML = data.modules
+          .map((m) => {
+            const rows = m.items
+              .map((item) => {
+                let chip =
+                  item.status === 'done'
+                    ? '<span class="chip done">已实现</span>'
+                    : item.status === 'phase2-done'
+                      ? '<span class="chip phase2-done">二期·已实现</span>'
+                      : item.status === 'phase2'
+                        ? '<span class="chip phase2">二期·未实现</span>'
+                        : item.status === 'excluded'
+                          ? '<span class="chip phase2">业务方确认不需要</span>'
+                          : '<span class="chip todo">待补</span>';
+                // 已实现但业务方确认不验收的：单独一个标记，避免被当成缺口
+                if (item.notRequired) chip = '<span class="chip phase2-done">已实现·不验收</span>';
+                const scope = '<span class="chip scope">' + item.scope + '</span>';
+                const evidence =
+                  '<details class="evidence"><summary>证据（' +
+                  item.evidence.filter((e) => e.ok).length +
+                  '/' +
+                  item.evidence.length +
+                  '）</summary>' +
+                  item.evidence
+                    .map(
+                      (e) =>
+                        '<div class="ev ' + (e.ok ? 'hit' : 'miss') + '">' + (e.ok ? '✓ ' : '✗ ') + e.label +
+                        ' —— ' + e.detail + '</div>'
+                    )
+                    .join('') +
+                  '</details>';
+                return (
+                  '<tr><td style="width:80px"><code>' + item.id + '</code></td><td style="width:150px">' + item.title +
+                  '</td><td>' + item.description + '</td><td style="width:70px">' + scope + '</td><td style="width:220px">' +
+                  chip + (item.note ? '<div class="ev muted">' + item.note + '</div>' : '') +
+                  '</td><td style="width:90px">' + evidence + '</td></tr>'
+                );
+              })
+              .join('');
+            return (
+              '<div class="flex-between" style="margin:12px 0 6px"><b>' + m.key + ' ' + m.name +
+              '</b><span class="muted" style="font-size:12px">一期 ' + m.phase1Done + '/' + m.phase1Total + '</span></div>' +
+              '<table><thead><tr><th>编号</th><th>功能</th><th>方案要求</th><th>范围</th><th>状态</th><th>证据</th></tr></thead><tbody>' +
+              rows + '</tbody></table>'
+            );
+          })
+          .join('');
+      }
+
+      function acceptanceRow(item) {
+        return (
+          '<tr><td style="width:80px"><code>' + item.id + '</code></td><td>' + item.title +
+          '<div class="ev">' +
+          item.evidence
+            .map((e) => '<span class="' + (e.ok ? 'hit' : 'miss') + '">' + (e.ok ? '✓ ' : '✗ ') + e.label + '</span>')
+            .join('　') +
+          '</div></td><td style="width:90px"><span class="chip ' + (item.ok ? 'done">有证据' : 'todo">待补') +
+          '</span></td></tr>'
+        );
+      }
+
+      reload(false);
+      setInterval(() => reload(false), 5000);
+    </script>
+  </body>
+</html>

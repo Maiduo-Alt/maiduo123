@@ -1,0 +1,8 @@
+# 统一换行符：Linux 容器/CloudBase 构建时 shell 脚本与 Dockerfile 必须是 LF
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+*.md text=auto
+*.json text=auto

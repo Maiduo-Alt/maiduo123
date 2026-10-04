@@ -1,0 +1,33 @@
+# 依赖（换设备后 npm install 重新装，约 240MB，不纳入同步）
+node_modules/
+
+# 构建产物
+dist/
+build/
+coverage/
+.vite/
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+
+# 环境变量（只保留 .env.example）
+.env
+.env.local
+.env.*.local
+
+# 打包产物
+_handoff/*.zip
+
+# 运行期数据：上传的图片与数据库备份
+uploads/
+backups/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 上线包与临时截图（make-release 产物、目视核对用，不入库）
+release/
+docs/截图/
+_handoff/

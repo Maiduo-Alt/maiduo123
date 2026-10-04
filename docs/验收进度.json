@@ -1,0 +1,4502 @@
+{
+  "generatedAt": "2026-10-04T05:47:26.336Z",
+  "summary": {
+    "phase1Total": 50,
+    "phase1Done": 50,
+    "percent": 100,
+    "phase2Total": 34,
+    "phase2Done": 34,
+    "phase2Excluded": 0,
+    "phase2Required": 34,
+    "notRequiredIds": [
+      "F1-15",
+      "F2-05",
+      "F2-06",
+      "F2-07",
+      "F2-09",
+      "F6-10"
+    ],
+    "todoIds": [],
+    "acceptanceOk": true,
+    "clientRequirementsDone": 15,
+    "clientRequirementsTotal": 15,
+    "pagesOk": 13,
+    "pagesTotal": 13,
+    "routes": 95,
+    "files": 27,
+    "cases": 191
+  },
+  "modules": [
+    {
+      "key": "F1",
+      "name": "在线模拟接待",
+      "items": [
+        {
+          "id": "F1-01",
+          "title": "难度选择",
+          "description": "四档难度：话术适应（1 名客户）、简单（2 名）、进阶（3 名）、困难（4 名）",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/receptions/levels",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "文件 backend/src/domain/params.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「难度解锁状态返回四档」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「接入人数可按档位配置」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-02",
+          "title": "训练入口区分",
+          "description": "自由练习入口（任选难度、不计入解锁进度）与任务训练入口（由回复模拟任务带入）",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/receptions",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「source」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「客服调自由练习被拦」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「难度逐步解锁」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「未解锁」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "客户 2026-10-02 确认：任务训练与自由练习都计入解锁进度（方案原写「自由练习不计入」）；客服侧已不开放自由练习，新人实际由任务训练解锁。",
+          "notRequired": false
+        },
+        {
+          "id": "F1-03",
+          "title": "并发客户进线",
+          "description": "按难度在接待开始后按预设节奏依次进线，每名客户对应一个独立会话",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/modules/reception/reception.service.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「并发」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-04",
+          "title": "会话队列",
+          "description": "左侧列表展示全部会话，含编号、买家昵称、咨询商品、等待/未读计时，可排序与分组",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「conversation-item」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/styles.css → 关键字「.reception-queue」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 tools/flow-check.mjs → 关键字「会话队列与切换」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-05",
+          "title": "会话切换",
+          "description": "点击队列项切换当前会话，未读消息高亮提示，切换过程不丢失任何会话状态",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「selectSession」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/styles.css → 关键字「.unread-dot」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 tools/flow-check.mjs → 关键字「会话队列与切换」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-06",
+          "title": "买家问题推送",
+          "description": "按剧本顺序定时推送买家消息，支持追问、情绪化表达与\"自问自答补充\"（同一买家连发多条）",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/question-seq.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "文件 backend/src/modules/reception/reception.gateway.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「完整跑通一次接待」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「买家追加升级追问」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「剧本风格会影响买家消息的语气」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-07",
+          "title": "快捷短语",
+          "description": "一键插入常用话术，支持变量替换（商品名、价格、订单号）",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/phrases",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「insertPhrase」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/phrases.e2e-spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-08",
+          "title": "商品卡片",
+          "description": "右栏展示当前会话咨询的商品卡片（主图、标题、商品ID、价格、规格），可插入到对话流发送给买家",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「sendProductCard」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/styles.css → 关键字「.consult-card」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 tools/flow-check.mjs → 关键字「商品卡片插入对话」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-09",
+          "title": "订单与售后卡片",
+          "description": "右栏展示模拟订单信息（下单时间、金额、状态）与售后入口，供售后类剧本使用",
+          "scope": "二期",
+          "module": "F1",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/order.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "页面 frontend/src/components/OrderCard.tsx",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「order-status-tabs」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/styles.css → 关键字「.order-status-tabs」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/domain/order.spec.ts → 关键字「三种状态的字段与参考图一致」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「订单卡片的下单时间」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 tools/flow-check.mjs → 关键字「右栏订单卡片与问题阶段一致」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 tools/render-check.mjs → 关键字「订单状态与问题阶段对应」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现（客户 2026-10-03 第三轮点名要求，从二期提前做掉）：右栏「订单」页签按三张参考图还原三态卡片——待支付 / 待发货 / 已发货，字段与操作随状态变；推送问题时按问题阶段自动带出对应状态的订单；售后入口以「代客发起售后」按钮呈现（话术动作），改价 / 去发货等平台侧写操作按占位禁用处理。",
+          "notRequired": false
+        },
+        {
+          "id": "F1-10",
+          "title": "实时计时与超时提醒",
+          "description": "每个会话独立计时，接近超时与已超时以颜色与提示音区分提醒",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/modules/reception/reception.service.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「beep」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「超时」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-11",
+          "title": "会话结束与转交",
+          "description": "客服可主动结束会话；剧本中标记为\"需转交\"的问题在客服点击转交后判定为正确处理",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/receptions/:id/sessions/:sessionId/transfer",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 POST /api/receptions/:id/sessions/:sessionId/finish",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/domain/scoring.spec.ts → 关键字「需转交的问题」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-12",
+          "title": "接待结果判定",
+          "description": "结束全部会话后生成结果页：各会话得分、任务总分、结论与主要扣分项",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/scoring.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "接口 POST /api/receptions/:id/finish",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/domain/scoring.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-13",
+          "title": "断线续接",
+          "description": "刷新或断网重连后，接待进度与服务端计时保持一致，不丢失会话",
+          "scope": "一期",
+          "module": "F1",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「重启」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "文件 backend/src/modules/reception/reception.gateway.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-14",
+          "title": "接待备注",
+          "description": "对单个会话添加内部备注，记录判断依据（不影响买家可见内容）",
+          "scope": "二期",
+          "module": "F1",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/records/:id/annotations",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「批注」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F1-15",
+          "title": "实时提示开关",
+          "description": "带教可开启\"提示模式\"，在客服长时间未回复时给出话术思路提示（用于教学，不用于考核）",
+          "scope": "二期",
+          "module": "F1",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/types.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "页面 frontend/src/pages/Settings.tsx → 关键字「提示模式」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「hintMode」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「提示模式参数默认关闭」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "业务方确认不需要，不列入验收范围（功能已实现并保留：系统参数页可开关「提示模式」，接待页在客服超时未回复时给出话术思路）。",
+          "notRequired": true
+        }
+      ],
+      "phase1Total": 12,
+      "phase1Done": 12,
+      "percent": 100
+    },
+    {
+      "key": "F2",
+      "name": "模拟接待明细",
+      "items": [
+        {
+          "id": "F2-01",
+          "title": "明细列表",
+          "description": "按时间倒序展示接待记录：接待编号、客服、难度、接待时长、会话数、总分、结论",
+          "scope": "一期",
+          "module": "F2",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/records",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「完整跑通一次接待」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「明细导出为 Excel」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F2-02",
+          "title": "多维筛选",
+          "description": "按客服、难度、时间范围、结论（达标/未达标）、任务、剧本分类筛选",
+          "scope": "一期",
+          "module": "F2",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Records.tsx → 关键字「name=\"accountId\"」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Records.tsx → 关键字「DatePicker.RangePicker」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Records.tsx → 关键字「name=\"conclusion\"」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "接口 GET /api/records",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「过滤条件与列表一致」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F2-03",
+          "title": "评分报告",
+          "description": "四维得分（响应时效、问题解决、话术规范、情绪安抚）、总分、结论、失分明细",
+          "scope": "一期",
+          "module": "F2",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/records/:id",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "文件 backend/src/domain/scoring.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「明细详情带出会话级四维得分」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/domain/scoring.spec.ts → 关键字「及时且完整回应时应接近满分」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F2-04",
+          "title": "会话回放",
+          "description": "以对话流形式完整回放每个会话，标注每轮买家问题、客服回复、响应耗时",
+          "scope": "一期",
+          "module": "F2",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/RecordDetail.tsx → 关键字「会话回放」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 tools/smoke-test.mjs → 关键字「明细详情可回放」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F2-05",
+          "title": "人工批注",
+          "description": "带教可对单条消息或整个会话添加批注，客服可查看与回复",
+          "scope": "一期",
+          "module": "F2",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/records/annotations/:annotationId/reply",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「权限矩阵」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "业务方确认不需要，不列入验收范围（功能保留：接口、页面、历史批注数据都不动）。",
+          "notRequired": true
+        },
+        {
+          "id": "F2-06",
+          "title": "典型问题标记",
+          "description": "将某次接待标记为\"典型案例\"并推送到案例收藏或作为培训素材",
+          "scope": "二期",
+          "module": "F2",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/RecordDetail.tsx → 关键字「标记为典型案例」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/cases.e2e-spec.ts → 关键字「典型」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "业务方确认不需要，不列入验收范围（功能已实现并保留：明细详情页可「标记为典型案例」）。",
+          "notRequired": true
+        },
+        {
+          "id": "F2-07",
+          "title": "对比视图",
+          "description": "同一客服两次接待的指标对比；或同一剧本不同客服的得分对比",
+          "scope": "二期",
+          "module": "F2",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Records.tsx → 关键字「对比所选」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Records.tsx → 关键字「接待对比」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「明细详情带出会话级四维得分」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "业务方确认不需要，不列入验收范围（功能已实现并保留：明细列表可勾选两次接待做并排指标对比）。",
+          "notRequired": true
+        },
+        {
+          "id": "F2-08",
+          "title": "导出",
+          "description": "导出为 Excel 明细或 PDF 报告（含对话全文）",
+          "scope": "二期",
+          "module": "F2",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/records/export",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Records.tsx → 关键字「导出 Excel」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "文件 backend/src/common/xlsx-writer.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「明细导出为 Excel」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "未做：暂无 Excel 明细或 PDF 报告导出。",
+          "notRequired": false
+        },
+        {
+          "id": "F2-09",
+          "title": "个人成长曲线",
+          "description": "以折线图展示该客服最近 30 天总分、首响时长、超时次数变化",
+          "scope": "二期",
+          "module": "F2",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/records/trend",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Dashboard.tsx → 关键字「成长曲线」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "文件 frontend/src/components/TrendChart.tsx",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「个人成长曲线」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「当天每次模拟」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Dashboard.tsx → 关键字「当天每次模拟」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "业务方确认不需要，不列入验收范围（功能已实现并保留：首页个人成长曲线 + GET /api/records/trend）。",
+          "notRequired": true
+        }
+      ],
+      "phase1Total": 5,
+      "phase1Done": 5,
+      "percent": 100
+    },
+    {
+      "key": "F3",
+      "name": "客户问题剧本",
+      "items": [
+        {
+          "id": "F3-01",
+          "title": "背景库管理",
+          "description": "新增、编辑、删除、查询买家咨询背景，支持分类树与拖拽排序",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/backgrounds",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「被剧本引用的背景与内容不可删除」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-02",
+          "title": "内容库管理",
+          "description": "新增、编辑、删除、查询买家咨询内容，含图片与\"买家接受方案\"字段",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/contents",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「被剧本引用的背景与内容不可删除」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-03",
+          "title": "分类管理",
+          "description": "\"模板分类\"支持新建分类、关键词检索、拖拽排序，分类下显示素材数量",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/categories",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 PUT /api/categories/reorder",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Backgrounds.tsx → 关键字「dropCategory」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「数据字典」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-04",
+          "title": "批量删除",
+          "description": "勾选多条素材后批量删除，删除前提示被引用情况",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/backgrounds/batch-delete",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 POST /api/contents/batch-delete",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「被剧本引用的背景与内容不可删除」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-05",
+          "title": "新建剧本（单个）",
+          "description": "选择一条背景 + 一条内容 + 商品 + 接待类型，生成一个剧本",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/scripts",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「按案例创建剧本」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 tools/flow-check.mjs → 关键字「新建剧本弹窗」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-06",
+          "title": "新建剧本（批量）",
+          "description": "勾选多条背景 × 多条内容，系统交叉组合生成 N 个剧本",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/scripts/batch-generate",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「剧本批量生成：背景 × 内容 交叉生成并按占比分配风格」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「4 背景 × 10 内容生成 40 个剧本」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-07",
+          "title": "按案例创建",
+          "description": "从案例收藏中选择真实会话作为剧本来源",
+          "scope": "二期",
+          "module": "F3",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/scripts/from-case",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Scripts.tsx → 关键字「根据聊天案例创建」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「按案例创建剧本」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：新建剧本弹窗支持「根据聊天案例创建」，案例的买家消息先沉淀成咨询内容再生成剧本。",
+          "notRequired": false
+        },
+        {
+          "id": "F3-08",
+          "title": "接待类型",
+          "description": "标记剧本为售前或售后，接待时按类型决定右侧信息区展示内容",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Scripts.tsx → 关键字「售后」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/domain/extraction.spec.ts → 关键字「L1 优先售前剧本，L3 优先售后剧本」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「4 背景 × 10 内容生成 40 个剧本」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-09",
+          "title": "关联商品",
+          "description": "为剧本关联一个或多个商品，接待页据渲染商品卡片",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/modules/scripts/scripts.service.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「商品与风格齐全」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「商品关联剧本数按数组元素精确统计」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-10",
+          "title": "沟通风格分配",
+          "description": "生成剧本时按风格占比为每个剧本分配买家沟通风格",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/style-ratio.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/domain/style-ratio.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-11",
+          "title": "剧本预览与试运行",
+          "description": "以对话流形式预览剧本的提问序列，可单机试跑一遍",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/scripts/:id/preview",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Scripts.tsx → 关键字「preview」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「剧本预览按对话流给出提问序列」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F3-12",
+          "title": "剧本统计",
+          "description": "展示每个剧本的被练次数、平均得分、超时率，识别难点剧本",
+          "scope": "二期",
+          "module": "F3",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/scripts/stats",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Scripts.tsx → 关键字「剧本统计」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「剧本统计」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：剧本列表可打开「剧本统计」，给出每个剧本的被练次数、平均分、超时率与难点剧本排行。",
+          "notRequired": false
+        },
+        {
+          "id": "F3-13",
+          "title": "剧本启用/停用",
+          "description": "停用后不再被接待抽取，历史数据保留",
+          "scope": "一期",
+          "module": "F3",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 PUT /api/scripts/:id",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Scripts.tsx → 关键字「status」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「剧本全部停用后无法开局」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        }
+      ],
+      "phase1Total": 11,
+      "phase1Done": 11,
+      "percent": 100
+    },
+    {
+      "key": "F4",
+      "name": "商品库",
+      "items": [
+        {
+          "id": "F4-01",
+          "title": "商品创建",
+          "description": "手工录入商品全字段，支持上传主图与详情图",
+          "scope": "一期",
+          "module": "F4",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/products",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 POST /api/uploads",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「图片上传」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「商品导入：Excel(.xlsx) 与 CSV」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F4-02",
+          "title": "商品列表",
+          "description": "列表展示商品编号、主图、标题、价格、库存、分类、关联剧本数、状态",
+          "scope": "一期",
+          "module": "F4",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/products",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「商品导出为 Excel，列头与导入模板一致」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「100 条商品导入成功率」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F4-03",
+          "title": "商品编辑与上下架",
+          "description": "编辑全部字段；下架商品不再被新剧本关联，历史数据保留",
+          "scope": "一期",
+          "module": "F4",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 PUT /api/products/:id",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「下架商品不能用于新剧本」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F4-04",
+          "title": "分类与标签",
+          "description": "商品分类树 + 场景标签（如\"出差便携\"\"节日送礼\"）",
+          "scope": "一期",
+          "module": "F4",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Products.tsx → 关键字「场景」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "接口 GET /api/categories",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「商品场景标签」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「数据字典」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F4-05",
+          "title": "搜索与筛选",
+          "description": "按标题、商品ID、分类、价格区间、状态筛选",
+          "scope": "一期",
+          "module": "F4",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Products.tsx → 关键字「placeholder=\"最低价\"」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Products.tsx → 关键字「placeholder=\"状态\"」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "接口 GET /api/products",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「商品列表支持关键词」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F4-06",
+          "title": "批量导入",
+          "description": "Excel/CSV 导入商品，含模板下载与校验失败回执",
+          "scope": "一期",
+          "module": "F4",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/products/import",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 GET /api/products/import-template",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/common/xlsx.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F4-07",
+          "title": "批量导出",
+          "description": "导出商品清单用于线下维护",
+          "scope": "二期",
+          "module": "F4",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/products/export",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Products.tsx → 关键字「导出 Excel」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「商品导出为 Excel」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：商品库支持按当前筛选条件导出 Excel，列头与导入模板一致，改完能直接导回来。",
+          "notRequired": false
+        },
+        {
+          "id": "F4-08",
+          "title": "关联剧本查看",
+          "description": "从商品详情查看其关联的全部剧本",
+          "scope": "一期",
+          "module": "F4",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Products.tsx → 关键字「剧本」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「商品关联剧本数按数组元素精确统计」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F4-09",
+          "title": "商品图片插入对话",
+          "description": "接待页把商品卡片插入对话流发给买家",
+          "scope": "一期",
+          "module": "F4",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「sendProductCard」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 tools/flow-check.mjs → 关键字「商品卡片插入对话」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        }
+      ],
+      "phase1Total": 8,
+      "phase1Done": 8,
+      "percent": 100
+    },
+    {
+      "key": "F5",
+      "name": "案例收藏",
+      "items": [
+        {
+          "id": "F5-01",
+          "title": "案例导入（文件）",
+          "description": "支持 Excel/CSV 批量导入会话记录，提供模板与字段映射",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/cases/import/file",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 GET /api/cases/import/template",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Cases.tsx → 关键字「导入文件」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/cases.e2e-spec.ts → 关键字「文件导入」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：支持上传 Excel/CSV 会话文件导入（表头角色+内容，或单列「买家:内容」），并带失败行号与原因；提供模板下载。",
+          "notRequired": false
+        },
+        {
+          "id": "F5-02",
+          "title": "案例导入（粘贴）",
+          "description": "直接粘贴聊天文本，系统按\"时间 + 角色 + 内容\"自动切分",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/cases/import/text",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/cases.e2e-spec.ts → 关键字「导入时可以打标签」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F5-03",
+          "title": "平台导出适配器",
+          "description": "预留抖店/千牛等平台导出文件的解析适配器接口，按需实现",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/case-adapters.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "接口 GET /api/cases/adapters",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/domain/case-adapters.spec.ts → 关键字「平台适配器可以按同一接口注册进来」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现适配器接口与注册点：解析逻辑抽象为 CaseImportAdapter，内置通用适配器，拿到抖店/千牛样例后按同一接口注册即可，页面「导入格式」会自动多一项。",
+          "notRequired": false
+        },
+        {
+          "id": "F5-04",
+          "title": "会话结构化",
+          "description": "自动识别消息角色、时间、顺序，生成结构化会话",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/modules/cases/cases.service.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 tools/smoke-test.mjs → 关键字「案例文本导入成功」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F5-05",
+          "title": "案例标签",
+          "description": "按分类、接待类型、情绪强度、问题类型打标签",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 PUT /api/cases/:id",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Cases.tsx → 关键字「mode=\"tags\"」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/cases.e2e-spec.ts → 关键字「导入时可以打标签」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "部分：案例表已有 tags 字段并在列表展示，但导入表单没有打标签入口。",
+          "notRequired": false
+        },
+        {
+          "id": "F5-06",
+          "title": "转剧本",
+          "description": "从案例中提取\"买家咨询内容\"与\"买家接受方案\"，生成新剧本或合并进现有内容库",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/cases/:id/to-content",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/cases.e2e-spec.ts → 关键字「优秀回复会作为」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F5-07",
+          "title": "优秀回复标记",
+          "description": "标记客服的优秀回复，作为评分时的参考答案话术",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/cases/messages/:messageId/excellent",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/cases.e2e-spec.ts → 关键字「优秀回复会作为」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Cases.tsx → 关键字「标为优秀回复」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F5-08",
+          "title": "案例检索",
+          "description": "按关键词、分类、标签、店铺、时间检索案例",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Cases.tsx → 关键字「placeholder=\"标签\"」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Cases.tsx → 关键字「DatePicker.RangePicker」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/cases.e2e-spec.ts → 关键字「列表能按标签」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "部分：接口支持关键词与阶段过滤，案例页尚未提供检索条。",
+          "notRequired": false
+        },
+        {
+          "id": "F5-09",
+          "title": "明细转案例",
+          "description": "将训练中产生的高质量接待标记为典型案例推入案例库",
+          "scope": "二期",
+          "module": "F5",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/cases/from-attempt",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/RecordDetail.tsx → 关键字「转为案例」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/cases.e2e-spec.ts → 关键字「训练明细可以转为案例」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "未做：明细页没有「把这次接待转为案例」的入口。",
+          "notRequired": false
+        }
+      ],
+      "phase1Total": 0,
+      "phase1Done": 0,
+      "percent": 100
+    },
+    {
+      "key": "F6",
+      "name": "回复模拟任务",
+      "items": [
+        {
+          "id": "F6-01",
+          "title": "任务创建",
+          "description": "设置任务名称、难度、剧本范围、目标指标、截止时间、下发对象",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/tasks",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「带教下发的任务只对指定客服可见」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F6-02",
+          "title": "目标指标设置",
+          "description": "例如\"总分 ≥ 85\"\"首次响应 ≤ 20 秒\"\"不出现超时\"\"至少完成 3 次\"",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「targets」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F6-03",
+          "title": "剧本范围限定",
+          "description": "按剧本分类 / 商品 / 指定剧本清单限定训练内容",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/task-scope.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "页面 frontend/src/pages/Tasks.tsx → 关键字「scopeType」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/domain/task-scope.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「只抽任务范围内的剧本」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：任务可限定「全部 / 按剧本分类 / 按关联商品 / 指定剧本清单」，接待抽取剧本时按范围过滤。",
+          "notRequired": false
+        },
+        {
+          "id": "F6-04",
+          "title": "下发对象",
+          "description": "按个人或小组下发，支持多选",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「只对指定客服可见」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Tasks.tsx → 关键字「assignees」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F6-05",
+          "title": "任务接收与提醒",
+          "description": "客服在首页与接待页看到待办任务与截止倒计时",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Dashboard.tsx → 关键字「我的任务」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「taskIdFromUrl」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/layouts/AppLayout.tsx → 关键字「我的任务」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「任务催办」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：首页「我的任务」与接待页任务卡都会显示进度与截止倒计时，《回复模拟任务》对客服开放「我的任务」入口。",
+          "notRequired": false
+        },
+        {
+          "id": "F6-06",
+          "title": "接待中任务卡",
+          "description": "接待页右栏常驻展示任务目标、当前进度、达成状态",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Reception.tsx → 关键字「task-card」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/styles.css → 关键字「.task-card」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「快照」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：任务训练时右栏常驻任务卡（任务名、达标条件、完成进度、截止倒计时）；自由练习不展示，符合一期「只预留、不展示」的口径。",
+          "notRequired": false
+        },
+        {
+          "id": "F6-07",
+          "title": "达成判定",
+          "description": "每次接待结束后自动判定本次是否达成任务目标",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/modules/tasks/tasks.service.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「全部达标后任务自动标记完成」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F6-08",
+          "title": "任务进度与完成",
+          "description": "达到\"完成次数\"要求后任务标记为已完成",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/modules/tasks/tasks.service.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「全部达标后任务自动标记完成」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「截止后任务自动关闭」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Tasks.tsx → 关键字「截止」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F6-09",
+          "title": "任务报表",
+          "description": "按任务查看参与者、完成率、平均分、未通过名单",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/tasks/:id/report",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/tasks.e2e-spec.ts → 关键字「完成率与未通过名单」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Tasks.tsx → 关键字「未通过名单」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F6-10",
+          "title": "任务催办",
+          "description": "截止前 24 小时提醒未完成的客服",
+          "scope": "二期",
+          "module": "F6",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/tasks/reminders",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Dashboard.tsx → 关键字「训练任务催办」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「任务催办」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "业务方确认不需要，不列入验收范围（功能已实现并保留：首页任务催办提醒 + GET /api/tasks/reminders）。",
+          "notRequired": true
+        }
+      ],
+      "phase1Total": 0,
+      "phase1Done": 0,
+      "percent": 100
+    },
+    {
+      "key": "F7",
+      "name": "沟通风格",
+      "items": [
+        {
+          "id": "F7-01",
+          "title": "风格字典维护",
+          "description": "维护风格名称、风格描述、语气示例、情绪基线",
+          "scope": "一期",
+          "module": "F7",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/styles",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「自定义风格模板」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「沟通风格默认占比与方案 10.3 一致」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F7-02",
+          "title": "聊天占比配置",
+          "description": "以\"多行风格 + 占比%\"的形式配置，支持增删行",
+          "scope": "一期",
+          "module": "F7",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 PUT /api/styles/ratios",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「沟通风格占比校验」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/domain/style-ratio.spec.ts → 关键字「占比总和超过 100%」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F7-03",
+          "title": "占比校验",
+          "description": "总和不得大于 100%；未填写的行按剩余比例平均分配",
+          "scope": "一期",
+          "module": "F7",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/style-ratio.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/domain/style-ratio.spec.ts → 关键字「100」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F7-04",
+          "title": "风格生效",
+          "description": "剧本生成时按占比随机分配风格，接待中按风格影响消息语气与情绪值",
+          "scope": "一期",
+          "module": "F7",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/style-ratio.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「剧本风格会影响买家消息的语气」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F7-05",
+          "title": "情绪值机制",
+          "description": "急躁类买家带初始情绪值，客服安抚话术可降低情绪值，情绪值过高触发升级追问",
+          "scope": "一期",
+          "module": "F7",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/domain/emotion.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/domain/emotion.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F7-06",
+          "title": "风格与难度绑定",
+          "description": "高难度档位提高急躁/纠结类风格的出现概率",
+          "scope": "一期",
+          "module": "F7",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "用例 backend/test/domain/style-ratio.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F7-07",
+          "title": "风格效果统计",
+          "description": "统计各风格的达标率，识别最难应对的买家类型",
+          "scope": "二期",
+          "module": "F7",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/styles/stats",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Styles.tsx → 关键字「达标率」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reporting.e2e-spec.ts → 关键字「风格效果统计」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：沟通风格页展示每种风格被练次数与达标率，并给出「最难应对的买家类型」。",
+          "notRequired": false
+        },
+        {
+          "id": "F7-08",
+          "title": "自定义风格模板",
+          "description": "管理员可新增自定义风格（超出内置五种）",
+          "scope": "二期",
+          "module": "F7",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "页面 frontend/src/pages/Styles.tsx → 关键字「新建风格」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「自定义风格模板」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：沟通风格页可新增自定义风格（编码、名称、特征、语气示例、情绪基线、是否情绪化）。",
+          "notRequired": false
+        }
+      ],
+      "phase1Total": 6,
+      "phase1Done": 6,
+      "percent": 100
+    },
+    {
+      "key": "F8",
+      "name": "账号",
+      "items": [
+        {
+          "id": "F8-01",
+          "title": "账号登录",
+          "description": "用户名 + 密码登录，支持记住登录状态；预留企业单点登录接口",
+          "scope": "一期",
+          "module": "F8",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/auth/login",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「登录与鉴权」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「接口清单补齐：令牌续签」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-02",
+          "title": "账号管理",
+          "description": "管理员创建、编辑、停用账号；重置密码",
+          "scope": "一期",
+          "module": "F8",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/accounts",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 POST /api/accounts/:id/reset-password",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「停用后无法登录」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「登录安全策略」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-03",
+          "title": "角色分配",
+          "description": "管理员 / 主管 / 客服三种角色，角色决定权限矩阵",
+          "scope": "一期",
+          "module": "F8",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/common/decorators.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「权限矩阵」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-04",
+          "title": "组织与小组",
+          "description": "维护小组，账号归属小组；支持主管管理本组",
+          "scope": "一期",
+          "module": "F8",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/groups",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 POST /api/groups",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「小组更新」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-05",
+          "title": "个人资料",
+          "description": "昵称、头像、工号、手机号（脱敏展示）",
+          "scope": "一期",
+          "module": "F8",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/accounts/me",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "文件 backend/src/common/mask.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "页面 frontend/src/layouts/AppLayout.tsx → 关键字「个人资料」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「个人资料：可保存昵称」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-06",
+          "title": "修改密码",
+          "description": "用户自行修改密码，强度校验",
+          "scope": "一期",
+          "module": "F8",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 POST /api/auth/change-password",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「支持自助修改密码」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-07",
+          "title": "系统参数",
+          "description": "考核阈值、评分权重、达标线、难度参数、风格占比默认值",
+          "scope": "一期",
+          "module": "F8",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 PUT /api/settings",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "文件 backend/src/domain/params.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/domain/params.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-08",
+          "title": "快捷短语维护",
+          "description": "维护客服可用的快捷短语库，支持分类与变量",
+          "scope": "一期",
+          "module": "F8",
+          "status": "done",
+          "evidence": [
+            {
+              "label": "接口 GET /api/phrases",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "接口 POST /api/phrases/:id/use",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Phrases.tsx",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "文件 backend/src/domain/phrase-vars.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/phrases.e2e-spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-09",
+          "title": "操作日志",
+          "description": "记录关键操作（删除素材、修改参数、导入数据等）",
+          "scope": "二期",
+          "module": "F8",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/common/audit.interceptor.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「操作审计」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "",
+          "notRequired": false
+        },
+        {
+          "id": "F8-10",
+          "title": "登录安全策略",
+          "description": "失败锁定、密码有效期、强制首次改密",
+          "scope": "二期",
+          "module": "F8",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "文件 backend/src/modules/auth/auth.service.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "页面 frontend/src/layouts/AppLayout.tsx → 关键字「请先修改密码」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "页面 frontend/src/pages/Settings.tsx → 关键字「登录失败锁定阈值」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「登录安全策略」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：连续登录失败锁定、密码有效期、管理员重置后强制首次改密；参数都在系统参数页可配。",
+          "notRequired": false
+        },
+        {
+          "id": "F8-11",
+          "title": "数据字典与字典项维护",
+          "description": "分类、标签等基础字典统一维护",
+          "scope": "二期",
+          "module": "F8",
+          "status": "phase2-done",
+          "evidence": [
+            {
+              "label": "接口 PUT /api/categories/:id",
+              "ok": true,
+              "detail": "已注册"
+            },
+            {
+              "label": "页面 frontend/src/pages/Dictionary.tsx",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「数据字典」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/admin-features.e2e-spec.ts → 关键字「数据字典必须覆盖各类数据里实际在用的分类」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "note": "已实现：新增「数据字典」页统一维护背景/内容/剧本/商品分类与商品场景标签，改名会级联更新已引用它的素材。",
+          "notRequired": false
+        }
+      ],
+      "phase1Total": 8,
+      "phase1Done": 8,
+      "percent": 100
+    }
+  ],
+  "acceptance": [
+    {
+      "group": "9.1 功能验收标准",
+      "items": [
+        {
+          "id": "AC-1.1",
+          "title": "在线模拟接待：四档难度可开局且并发数正确；计时与服务端一致；切换不丢状态；断线重连不丢数据；结束 3 秒内出结果",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「难度解锁状态返回四档」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「重启」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "文件 backend/src/modules/reception/reception.gateway.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "AC-1.2",
+          "title": "客户问题剧本：批量生成命名/商品/风格正确；被引用素材不可删除；停用剧本不再被抽取",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「剧本批量生成：背景 × 内容 交叉生成」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「被剧本引用的背景与内容不可删除」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「剧本全部停用后无法开局」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "AC-1.3",
+          "title": "商品库：全字段保存回显；100 条导入成功率 ≥99%；重复商品ID 跳过；下架商品不出现在新剧本",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「导入」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「下架」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "AC-1.4",
+          "title": "模拟接待明细：明细与结果页一致；回放顺序正确；批注权限正确；筛选排序准确",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「明细」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「批注」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "AC-1.5",
+          "title": "沟通风格：占比超 100% 被拦截；100 个剧本风格分布偏差 ≤±5%；情绪值可升可降并触发升级追问",
+          "evidence": [
+            {
+              "label": "用例 backend/test/domain/style-ratio.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            },
+            {
+              "label": "用例 backend/test/domain/emotion.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "AC-1.6",
+          "title": "账号：三角色权限与权限矩阵一致；改权重只影响新接待；停用账号无法登录且历史保留",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「受限写接口对无权角色一律返回 1003」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「改考核权重只影响新接待」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「停用后无法登录」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "ok": true
+        }
+      ]
+    },
+    {
+      "group": "9.2 关键测试场景",
+      "items": [
+        {
+          "id": "SC-1",
+          "title": "场景 1：四档难度并发接待（进线数量、间隔、商品卡片、超时阈值符合配置）",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「并发」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "SC-2",
+          "title": "场景 2：超时与计时准确性（180 秒触发、记超时、扣分、服务端计时权威）",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「超时」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "文件 backend/src/modules/reception/reception.service.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "SC-3",
+          "title": "场景 3：问题解决率判定（完整/部分/答非所问/不回答四类回复）",
+          "evidence": [
+            {
+              "label": "用例 backend/test/domain/scoring.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "SC-4",
+          "title": "场景 4：情绪安抚（安抚下降、禁用词上升、80 触发升级追问）",
+          "evidence": [
+            {
+              "label": "用例 backend/test/domain/emotion.spec.ts",
+              "ok": true,
+              "detail": "存在"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "SC-5",
+          "title": "场景 5：断线续接（关 30 秒重开恢复、关 90 秒标记异常中止计 0 分）",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「断线」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "SC-6",
+          "title": "场景 6：批量生成与抽取（连续开局不重复用同一内容、优先抽被练次数少的）",
+          "evidence": [
+            {
+              "label": "用例 backend/test/domain/extraction.spec.ts → 关键字「优先抽取被练次数少的剧本」",
+              "ok": true,
+              "detail": "命中"
+            },
+            {
+              "label": "用例 backend/test/e2e/acceptance.e2e-spec.ts → 关键字「剧本全部停用后无法开局」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "ok": true
+        },
+        {
+          "id": "SC-7",
+          "title": "场景 7：导入异常处理（重复商品ID、价格非法、分类不存在的行号与原因准确）",
+          "evidence": [
+            {
+              "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「导入」",
+              "ok": true,
+              "detail": "命中"
+            }
+          ],
+          "ok": true
+        }
+      ]
+    }
+  ],
+  "clientRequirements": [
+    {
+      "id": "C1",
+      "type": "变更",
+      "title": "难度解锁条件：连续 2 次达标 → 达标 1 次",
+      "status": "done",
+      "note": "任务训练与自由练习都计入解锁进度（方案 F1-02 原写「自由练习不计入」，已按客户口径覆盖）",
+      "evidence": [
+        {
+          "label": "文件 backend/src/domain/types.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "用例 backend/test/domain/params.spec.ts → 关键字「客户确认」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「达标 1 次即解锁下一档」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C2",
+      "type": "新增",
+      "title": "客服不开放模拟训练，入口只留管理员/主管",
+      "status": "done",
+      "note": "菜单 / 接待页 / 首页三处入口收敛 + 后端开局校验返回 1003",
+      "evidence": [
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「客服调自由练习被拦」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Dashboard.tsx → 关键字「模拟训练只对带教/管理员开放」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Reception.tsx → 关键字「从《我的任务》进入训练」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/flow-check.mjs → 关键字「入口收敛（无在线模拟接待）」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C3",
+      "type": "新增",
+      "title": "管理账号可设置各难度接入人数（口径①）",
+      "status": "done",
+      "note": "levelConcurrent 默认 1/2/3/4，实际接入 = min(本档人数, 并发接待上限)",
+      "evidence": [
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「接入人数可按档位配置」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Settings.tsx → 关键字「接入人数」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C4",
+      "type": "不做",
+      "title": "首页新人引导",
+      "status": "skipped",
+      "note": "客户确认由带教在训练前线下说明，不做页面引导",
+      "evidence": [],
+      "ok": true
+    },
+    {
+      "id": "C5",
+      "type": "新增",
+      "title": "各档位可设「本次模拟总接待人数」（口径③）",
+      "status": "done",
+      "note": "客户 2026-10-03 第三轮确认默认 10 人（此前是「默认空 = 回落接入人数」）；总量超过同时在线时，多出的买家以「待接入」排队，**空位即补**（有会话进终态就补一个，几秒内进线——按赤兔火眼实测对齐）；结束条件为「无待接入且全部终态」；服务重启后按同时在线重新补位",
+      "evidence": [
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「合计接待人数默认 10 人」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「总接待人数大于同时在线」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Settings.tsx → 关键字「总接待人数」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Reception.tsx → 关键字「剩余会话」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C6",
+      "type": "新增",
+      "title": "无效 / 敷衍回复判定 + 实时预警",
+      "status": "done",
+      "note": "总开关默认关闭；重复判定（完全相同 / 连续 N 次，2～10）+ 未解决判定（连续 N 轮命中要点为 0，近似官方「买家要求后仍未改善」）+ 业务方自定义敷衍词表（与禁用词库分离）；命中当场提醒并给该条消息打标，明细页标注被判无效的轮次与依据，带教可按「含无效回复」筛选复盘；无效回复不计响应时长（回退到首条有效回复，始终没有则记 600 秒）",
+      "evidence": [
+        {
+          "label": "文件 backend/src/domain/reply-validity.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "用例 backend/test/domain/reply-validity.spec.ts → 关键字「完全相同」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「重复回复被判无效」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Settings.tsx → 关键字「非平台官方口径」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Records.tsx → 关键字「invalid」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C7",
+      "type": "变更",
+      "title": "合计接待人数默认 10 人，管理员可提前设置",
+      "status": "done",
+      "note": "DEFAULT_LEVEL_TOTAL = 10（四档都 10）；系统参数页预填 10、清空也回到 10；管理员/主管仍可在开局时当场指定本局的合计人数与接入人数",
+      "evidence": [
+        {
+          "label": "文件 backend/src/domain/types.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "用例 backend/test/domain/params.spec.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/pages/Settings.tsx → 关键字「总接待人数」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/demo-data.mjs → 关键字「已还原合计接待人数设置」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C8",
+      "type": "新增",
+      "title": "订单三态 + 售前/售后以「发货」为节点自动带出订单",
+      "status": "done",
+      "note": "售后问题 → 已发货；售前问发货/物流/时效 → 待发货；其余售前 → 待支付。推送问题是每推一条就按该问的阶段重建订单（同一局同一笔订单在推进，下单时间以会话接入时间为锚点不漂移）；平台侧写操作（改价/催付/去发货/改地址）点击后记为一次业务动作，不接平台写操作（见 C10）",
+      "evidence": [
+        {
+          "label": "文件 backend/src/domain/order.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/components/OrderCard.tsx",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/pages/Reception.tsx → 关键字「OrderCard」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/domain/order.spec.ts → 关键字「推送哪条问题就配哪一态的订单」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/flow-check.mjs → 关键字「右栏订单卡片与问题阶段一致」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C10",
+      "type": "新增",
+      "title": "订单卡片的平台侧操作「点击后记为一次业务动作」",
+      "status": "done",
+      "note": "催付 / 改价 / 去发货 / 发货协商 / 代客发起售后 / 发售后卡 / 发物流卡 等按钮点了之后：① 落一条 session_actions 记录（复盘里能看到这次接待点过哪些动作）；② 按动作给买家发一句标准话术（复用回复链路，响应时长与要点命中照常算）；③ 业务动作话术不参与「无效/敷衍」判定——连点两次催付是正常操作。动作与订单状态绑定：待支付才有催付/改价，待发货才有去发货/发货协商/发售后卡，已发货才有发物流卡。",
+      "evidence": [
+        {
+          "label": "文件 backend/src/domain/business-actions.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "接口 POST /api/receptions/:id/sessions/:sessionId/actions",
+          "ok": true,
+          "detail": "已注册"
+        },
+        {
+          "label": "文件 backend/src/modules/records/records.service.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "用例 backend/test/domain/business-actions.spec.ts → 关键字「按钮按订单状态分组」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「C8：订单卡片的平台侧操作点击后记为一次业务动作」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/flow-check.mjs → 关键字「业务动作「」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C9",
+      "type": "修正",
+      "title": "《我的训练》= 训练任务，《在线模拟接待》= 模拟训练",
+      "status": "done",
+      "note": "首页原本摆着「难度档位与快速开始」卡（一键开自由练习），与页面语义相反；现已移除；先换成一张「自由练习已统一放在《在线模拟接待》里」的提示卡，客户当天又要求整块删掉——现在《我的训练》只留「我的任务」「我的最近接待」（+成长曲线），难度与开局统一收在《在线模拟接待》",
+      "evidence": [
+        {
+          "label": "页面 frontend/src/pages/Dashboard.tsx → 关键字「开始训练」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/render-check.mjs → 关键字「自由练习已统一放在《在线模拟接待》里」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/render-check.mjs → 关键字「难度档位与快速开始」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/flow-check.mjs → 关键字「入口收敛（无在线模拟接待）」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C11",
+      "type": "变更",
+      "title": "补位 = 空位即补；接待买家 = 累计已进线（按赤兔火眼实测对齐）",
+      "status": "done",
+      "note": "Codex 在抖店工作台·赤兔火眼里完整跑完一场自由练习（10 个买家 / 最多同时 3 个）后实测：赤兔是「空位即补」（任意一个买家结束，几秒内补进下一个，实测新买家等待时长 1～6 秒），且左栏「接待买家」= 累计已进线（满足 接待买家 = 正在接待 + 已结束 + 转交），界面上没有排队名单。据此把上一版的「整批换新」改回「空位即补」，并给新买家留 1.5～4.5 秒进线；接待页「接待买家」改为已进线数（排队人数仍单独看「剩余会话 / 待接入」）。观察记录见 docs/赤兔火眼补位规则观察.md",
+      "evidence": [
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「空位即补（对齐赤兔火眼）」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/reception.e2e-spec.ts → 关键字「重启」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/flow-check.mjs → 关键字「接待买家=累计已进线」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "文件 docs/赤兔火眼补位规则观察.md",
+          "ok": true,
+          "detail": "存在"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C12",
+      "type": "变更",
+      "title": "界面术语：「自由练习」统一改叫「模拟训练」",
+      "status": "done",
+      "note": "客户 2026-10-03：「自由训练修改为模拟训练」——界面上原来叫「自由练习」的这套入口与来源标记，统一改成「模拟训练」（与方案源稿 4 节的「模拟训练」说法一致）。改动范围：接待页开局界面标题、客服引导页文案、首页客服侧提示、明细列表的来源列/筛选项/两次接待对比、明细详情的来源、后端「客服暂未开放模拟训练」报错文案、明细导出的来源列。「任务训练」保持不变；方案源稿（客户原始文档）里的「自由练习」原文不动，差异登记在这里。",
+      "evidence": [
+        {
+          "label": "页面 frontend/src/pages/Reception.tsx → 关键字「模拟训练（管理员 / 带教）」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Records.tsx → 关键字「模拟训练」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Dashboard.tsx → 关键字「模拟训练只对带教/管理员开放」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「模拟训练」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/render-check.mjs → 关键字「模拟训练（管理员 / 带教）」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C13",
+      "type": "新增",
+      "title": "会话页对齐飞鸽 + 商品「规格/属性」显示商品库真实信息",
+      "status": "done",
+      "note": "① 商品卡（买家首条「咨询宝贝」与客服插入的商品卡）统一渲染成飞鸽式卡片：图片 / 标题 / 价格 / 库存 / 服务承诺标签 / 发货说明 / 动作按钮（… / 计算价格 / 邀请下单 / 规格·属性）；② 会话头新增信息标签行（模拟训练或任务训练 + 商品ID + 更多）；③ 输入区改成飞鸽文案「发送给 X，使用 Enter 发送消息…」并加字数计数；④ 右栏「订单」页签顶部补「咨询宝贝」块；⑤ 点「规格/属性」弹出**管理员在《商品库》配的真实商品信息**（规格 SKU 表、售价与划线价、库存、分类、上架状态、服务承诺、适用场景、详情图），数据来自会话快照里的商品（pickProduct 已带全字段）；⑥ 《商品库》商品编辑弹窗新增「规格（SKU）」维护入口（规格名/价格/库存，可增删），编辑回填与提交都带 skus。注：左栏计数与三页签是 C5/C11 的客户要求，保持不动。",
+      "evidence": [
+        {
+          "label": "文件 frontend/src/components/ProductSpecModal.tsx",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/components/ProductSpecModal.tsx → 关键字「规格（SKU）」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Reception.tsx → 关键字「feige-product-card」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "页面 frontend/src/pages/Products.tsx → 关键字「添加规格」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "文件 backend/src/modules/reception/reception.service.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/pages/Reception.tsx → 关键字「商品库」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/flow-check.mjs → 关键字「商品「规格/属性」显示商品库真实信息」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/flow-check.mjs → 关键字「商品库 · 编辑弹窗可维护规格（SKU）」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/flow-check.mjs → 关键字「飞鸽版式元素」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C14",
+      "type": "新增",
+      "title": "推送问题按比例混合售前 / 售后（默认两成是「买完商品后」的订单类问题）",
+      "status": "done",
+      "note": "客户 2026-10-03：「弹出的问题我需要增加设定，分为售前/售后两方面……推送的大部分为没有订单、咨询商品信息的问题，小部分为买完商品后需要咨询订单修改、修改快递、催发货相关的问题。」实现：新增系统参数 aftersaleQuestionRatio（默认 20%，0～80 可在系统参数页改）——会话的问题序列以剧本本身的话题为主体（开场不动），把靠后的约 N% 轮次替换成另一阶段的题库：售前剧本混入「买完商品后」的订单类问题（改收货地址 / 改快递 / 催发货 / 改单 / 改电话 / 备注配送），售后剧本反向混入商品咨询类问题；题库见 db/seed-content.ts 的 ORDER_AFTERSALE_QUESTIONS / PRESALE_PRODUCT_QUESTIONS。订单卡片跟着问题走，并顺带细化了售后口径：催发货 / 改地址 / 改快递这类「还没发货」的给待发货，物流 / 签收 / 退换 / 质量这类「已经发出」的才给已发货（对应三张参考图）。",
+      "evidence": [
+        {
+          "label": "文件 backend/src/domain/question-seq.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "文件 backend/src/db/seed-content.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "文件 backend/src/domain/types.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/pages/Settings.tsx → 关键字「售后问题占比」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/domain/question-seq.spec.ts → 关键字「售前 / 售后按比例混合」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「C14：售前 / 售后问题按比例混合」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/domain/order.spec.ts → 关键字「还没发货」的订单类问题配待发货」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C15",
+      "type": "新增",
+      "title": "任务按商品种类下发 + 问题与商品强一致（不允许出现不一致）",
+      "status": "done",
+      "note": "客户 2026-10-03：「商品设定种类，比如男装类、女装类等等分类，问题在推送的时候根据管理员发放培训任务时设定的商品种类进行推送问题」＋「不可出现商品问题和实际商品需求进行的行为不一致的情况」。实现：① 任务范围新增「按商品种类（男装/女装…）」——只抽「关联商品的分类」命中所选种类的剧本，推送的问题也就围绕这些品类的商品；UI 里每个品类都标出当前有几个剧本可用，选到没有剧本的品类会明确报错。② 新增 domain/product-consistency.ts 的品类一致性规则（服饰专属词只能配服饰类商品、鞋码→鞋靴、保质期→食品、保修/续航→数码家电、孕期→母婴童装、肤质→美妆，其余通用问题任何品类都成立），并三处落地：seed 生成剧本时按一致性挑商品、接待抽剧本时兜底过滤不一致的历史数据、测试里全量扫描锁不变量。③ 剧本范围从「只做服装」放开到商品库全部 13 个品类，剧本仍是 900 条，且**全量扫描 0 条不一致**。④ C14 的混合题库也收紧成「与品类无关」的问法（去掉尺码/面料类），避免补进来的问题与商品冲突。",
+      "evidence": [
+        {
+          "label": "文件 backend/src/domain/product-consistency.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "文件 backend/src/domain/task-scope.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "文件 backend/src/db/seed-content.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "文件 backend/src/db/seed.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/pages/Tasks.tsx → 关键字「按商品种类」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/domain/product-consistency.spec.ts → 关键字「内置内容库里的每条内容都能找到兼容的商品品类」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/domain/product-consistency.spec.ts → 关键字「混合题库（C14）与全部商品品类都兼容」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/domain/task-scope.spec.ts → 关键字「按商品种类」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「C15：任务按商品种类限定」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    },
+    {
+      "id": "C16",
+      "type": "新增",
+      "title": "下发回复模拟任务时「剧本 + 商品」可同时多选（列表带「范围」列）",
+      "status": "done",
+      "note": "客户 2026-10-03：「我指的是在设置回复接待任务的时候剧本和商品能够多选」。任务范围的「剧本范围」新增一档 **指定剧本 + 商品（都能多选）**（scope 类型 scripts_products）：两个条件同时生效——只抽「所选剧本里、关联了所选商品」的剧本；任一侧留空表示该维度不限制；组合不可能满足时开局返回明确提示「任务限定的「剧本 + 商品」组合下没有可用剧本」。前端两个多选框都带搜索，商品后括注分类；顺带把《客户问题剧本》批量生成的口径说清楚：组合仍是「背景 × 内容」，商品按序轮转，但**每条内容只在与其兼容的已选商品里分配**（配不到就跳过并在返回里给出 skipped 原因），单个创建时不匹配直接报错——这样「多选商品」不会造出「问题与商品不一致」的剧本。另外按客户追加要求，任务列表新增「**范围**」列：按类型显示成「剧本 2 个 × 商品 3 个」「商品种类：女装、男装」「剧本分类：售后」「关联商品 3 个」「剧本清单 2 个」「全部剧本」，悬停可看具体选中了哪些剧本/商品/分类；顺带修掉一个真问题——加列后 1366 宽下没设宽度的列（任务名称/目标）被挤成 0 宽，现在每列都给足宽度并让表格内部横向滚动。",
+      "evidence": [
+        {
+          "label": "文件 backend/src/domain/task-scope.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/pages/Tasks.tsx → 关键字「指定剧本 + 商品（都能多选）」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/domain/task-scope.spec.ts → 关键字「剧本 + 商品同时多选」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 backend/test/e2e/client-requirements.e2e-spec.ts → 关键字「C16：下发任务时「剧本 + 商品」可同时多选」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "文件 backend/src/modules/scripts/scripts.service.ts",
+          "ok": true,
+          "detail": "存在"
+        },
+        {
+          "label": "页面 frontend/src/pages/Tasks.tsx → 关键字「范围」",
+          "ok": true,
+          "detail": "命中"
+        },
+        {
+          "label": "用例 tools/render-check.mjs → 关键字「带教任务列表」",
+          "ok": true,
+          "detail": "命中"
+        }
+      ],
+      "ok": true
+    }
+  ],
+  "perfSecurity": [
+    {
+      "id": "PS-1",
+      "title": "50 人同时在线 / 10 人 4 路并发的推送延迟与接口 P95",
+      "key": "load",
+      "note": "本机压测脚本结果"
+    },
+    {
+      "id": "PS-2",
+      "title": "连续运行 72 小时无内存泄漏；worker 重启后延迟队列任务不丢失",
+      "key": "soak",
+      "acceptedRisk": true,
+      "note": "残留风险·已接受：设备腾不出 72 小时空档，未做长跑。已覆盖：并发压测、服务重启恢复（接待不被中止、定时推送重挂）、断线超时中止；未覆盖：慢速内存泄漏、跨天定时任务。"
+    },
+    {
+      "id": "PS-3",
+      "title": "越权返回 1003 / 密码非明文 / 手机号脱敏 / SQL 注入与 XSS 防护",
+      "key": "security",
+      "note": "本地探测与用例"
+    },
+    {
+      "id": "PS-4",
+      "title": "消息与评分同事务落库；数据库备份可成功恢复",
+      "key": "backup",
+      "note": "备份恢复演练"
+    },
+    {
+      "id": "PS-5",
+      "title": "Chrome / Edge 最新两个版本布局正常；1366×768 下接待页可用",
+      "key": "compat",
+      "note": "浏览器实测"
+    }
+  ],
+  "browserChecks": {
+    "available": true,
+    "render": {
+      "ok": true,
+      "total": 41,
+      "passed": 41,
+      "failed": [],
+      "finishedAt": "2026-10-04T05:46:41.641Z"
+    },
+    "flow": {
+      "ok": true,
+      "total": 20,
+      "passed": 20,
+      "failed": [],
+      "finishedAt": "2026-10-04T05:46:06.894Z"
+    },
+    "sweep": {
+      "ok": true,
+      "total": 15,
+      "passed": 15,
+      "failed": [],
+      "finishedAt": "2026-10-03T06:34:15.755Z"
+    }
+  },
+  "pages": [
+    {
+      "key": "reception",
+      "name": "在线模拟接待",
+      "route": "/reception",
+      "ui": "frontend/src/pages/Reception.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "records",
+      "name": "模拟接待明细",
+      "route": "/records",
+      "ui": "frontend/src/pages/Records.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "recordDetail",
+      "name": "明细详情与复盘",
+      "route": "/records/:id",
+      "ui": "frontend/src/pages/RecordDetail.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "library",
+      "name": "客户问题剧本（背景 / 内容）",
+      "route": "/library",
+      "ui": "frontend/src/pages/Backgrounds.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "scripts",
+      "name": "剧本列表",
+      "route": "/scripts",
+      "ui": "frontend/src/pages/Scripts.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "products",
+      "name": "商品库",
+      "route": "/products",
+      "ui": "frontend/src/pages/Products.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "cases",
+      "name": "案例收藏",
+      "route": "/cases",
+      "ui": "frontend/src/pages/Cases.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "tasks",
+      "name": "回复模拟任务",
+      "route": "/tasks",
+      "ui": "frontend/src/pages/Tasks.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "styles",
+      "name": "沟通风格",
+      "route": "/styles",
+      "ui": "frontend/src/pages/Styles.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "phrases",
+      "name": "快捷短语",
+      "route": "/phrases",
+      "ui": "frontend/src/pages/Phrases.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "accounts",
+      "name": "账号",
+      "route": "/accounts",
+      "ui": "frontend/src/pages/Accounts.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "settings",
+      "name": "系统参数",
+      "route": "/settings",
+      "ui": "frontend/src/pages/Settings.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    },
+    {
+      "key": "dashboard",
+      "name": "我的训练（首页）",
+      "route": "/",
+      "ui": "frontend/src/pages/Dashboard.tsx",
+      "ok": true,
+      "uiReady": true,
+      "routeReady": true
+    }
+  ],
+  "content": {
+    "available": true,
+    "backgrounds": 32,
+    "qas": 300,
+    "products": 100,
+    "phrases": 42,
+    "phraseCategories": 8,
+    "phrasesWithVariables": 18,
+    "phraseVariables": 22,
+    "styles": 8,
+    "styleRatioTotal": 100,
+    "scripts": 900,
+    "scriptVariantsPerContent": 3,
+    "targets": [
+      {
+        "name": "咨询内容",
+        "value": 300,
+        "target": 300,
+        "unit": "条"
+      },
+      {
+        "name": "商品",
+        "value": 100,
+        "target": 100,
+        "unit": "个"
+      },
+      {
+        "name": "剧本",
+        "value": 900,
+        "target": 500,
+        "unit": "个"
+      }
+    ]
+  },
+  "verification": {
+    "startedAt": "2026-10-03T06:30:43.344Z",
+    "finishedAt": "2026-10-03T06:32:45.481Z",
+    "apiBase": "http://127.0.0.1:3000",
+    "conclusion": "全部通过",
+    "failed": [],
+    "checks": {
+      "build": {
+        "ok": true,
+        "summary": "后端 tsc 0 错误；前端 tsc 0 错误"
+      },
+      "tests": {
+        "ok": true,
+        "summary": "177/177 项通过，失败 0 项（26 个文件）"
+      },
+      "security": {
+        "ok": true,
+        "summary": "安全相关用例 3/3 通过：安全：账号列表中的手机号脱敏返回；安全：批注权限矩阵、SQL 注入与 XSS 载荷处理；登录安全策略：连续失败锁定、管理员重置后强制改密、密码有效期（方案 F8-10）"
+      },
+      "backup": {
+        "ok": true,
+        "summary": "备份/恢复用例 4 项通过：服务重启恢复：进行中的接待不被中止，待接入队列保留且能继续补位；只识别本系统的备份文件命名；忽略非本系统命名的文件，避免误删其它备份；恢复命令按 pg_restore 的破坏性参数生成，便于运维复核"
+      },
+      "smoke": {
+        "ok": true,
+        "summary": "共 32 项检查，通过 32 项，失败 0 项"
+      },
+      "load": {
+        "ok": true,
+        "summary": "在线 50 人 / 并发 10 局共 40 路会话；接口 P95 73.1ms；实时通道往返 P95 2.8ms；消息推送延迟 P95 1ms；业务错误 0"
+      },
+      "content": {
+        "ok": true,
+        "summary": "内容库自检通过：结构与字段约束全部满足。"
+      }
+    }
+  },
+  "contracts": {
+    "api": {
+      "total": 63,
+      "ok": 63,
+      "missing": [],
+      "shapeDifferences": [
+        {
+          "method": "DELETE",
+          "path": "/api/accounts",
+          "detail": "形态不同：账号不做物理删除：方案 3.8 F8-02 只要求「停用」，停用走 PUT /api/accounts/:id { status: 0 }，历史接待保留。"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/backgrounds",
+          "detail": "形态不同：批量删除接口统一为 POST /api/backgrounds/batch-delete（支持一次删多条，并在被剧本引用时返回 3001）。"
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/contents",
+          "detail": "形态不同：同上，统一为 POST /api/contents/batch-delete。"
+        },
+        {
+          "method": "POST",
+          "path": "/api/scripts/batch-generate/async",
+          "detail": "形态不同：没有单独的 async 路径：POST /api/scripts/batch-generate 在数量超过 batchAsyncThreshold 时自动转为异步任务，进度与取消走 /api/scripts/batch-generate/tasks/:id。"
+        },
+        {
+          "method": "PUT",
+          "path": "/api/tasks",
+          "detail": "形态不同：任务属二期，本版只做了创建、列表、报表与删除，没有做修改。"
+        },
+        {
+          "method": "POST",
+          "path": "/api/cases/:p/to-script",
+          "detail": "形态不同：案例转出的是「买家咨询内容」而不是剧本：POST /api/cases/:id/to-content，先沉淀进内容库，再由《客户问题剧本》批量生成剧本（方案 3.5 的两条路径等效，且更可控）。"
+        }
+      ],
+      "items": [
+        {
+          "module": "认证",
+          "method": "POST",
+          "path": "/api/auth/login",
+          "planPath": "/api/auth/login",
+          "note": "登录",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "认证",
+          "method": "POST",
+          "path": "/api/auth/logout",
+          "planPath": "/api/auth/logout",
+          "note": "登出",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "认证",
+          "method": "POST",
+          "path": "/api/auth/refresh",
+          "planPath": "/api/auth/refresh",
+          "note": "刷新令牌",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "账号",
+          "method": "GET",
+          "path": "/api/accounts",
+          "planPath": "/api/accounts",
+          "note": "账号增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "账号",
+          "method": "POST",
+          "path": "/api/accounts",
+          "planPath": "/api/accounts",
+          "note": "账号增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "账号",
+          "method": "PUT",
+          "path": "/api/accounts",
+          "planPath": "/api/accounts",
+          "note": "账号增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "账号",
+          "method": "DELETE",
+          "path": "/api/accounts",
+          "planPath": "/api/accounts",
+          "note": "账号增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": false,
+          "detail": "形态不同：账号不做物理删除：方案 3.8 F8-02 只要求「停用」，停用走 PUT /api/accounts/:id { status: 0 }，历史接待保留。"
+        },
+        {
+          "module": "账号",
+          "method": "POST",
+          "path": "/api/accounts/:p/reset-password",
+          "planPath": "/api/accounts/{id}/reset-password",
+          "note": "重置密码",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "小组",
+          "method": "GET",
+          "path": "/api/groups",
+          "planPath": "/api/groups",
+          "note": "小组维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "小组",
+          "method": "POST",
+          "path": "/api/groups",
+          "planPath": "/api/groups",
+          "note": "小组维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "小组",
+          "method": "PUT",
+          "path": "/api/groups",
+          "planPath": "/api/groups",
+          "note": "小组维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "参数",
+          "method": "GET",
+          "path": "/api/settings",
+          "planPath": "/api/settings",
+          "note": "系统参数读取与保存",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "参数",
+          "method": "PUT",
+          "path": "/api/settings",
+          "planPath": "/api/settings",
+          "note": "系统参数读取与保存",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "商品",
+          "method": "GET",
+          "path": "/api/products",
+          "planPath": "/api/products",
+          "note": "商品增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "商品",
+          "method": "POST",
+          "path": "/api/products",
+          "planPath": "/api/products",
+          "note": "商品增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "商品",
+          "method": "PUT",
+          "path": "/api/products",
+          "planPath": "/api/products",
+          "note": "商品增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "商品",
+          "method": "DELETE",
+          "path": "/api/products",
+          "planPath": "/api/products",
+          "note": "商品增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "商品",
+          "method": "POST",
+          "path": "/api/products/import",
+          "planPath": "/api/products/import",
+          "note": "批量导入（返回回执）",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "商品",
+          "method": "GET",
+          "path": "/api/products/import-template",
+          "planPath": "/api/products/import-template",
+          "note": "下载导入模板",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "背景",
+          "method": "GET",
+          "path": "/api/backgrounds",
+          "planPath": "/api/backgrounds",
+          "note": "买家咨询背景",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "背景",
+          "method": "POST",
+          "path": "/api/backgrounds",
+          "planPath": "/api/backgrounds",
+          "note": "买家咨询背景",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "背景",
+          "method": "PUT",
+          "path": "/api/backgrounds",
+          "planPath": "/api/backgrounds",
+          "note": "买家咨询背景",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "背景",
+          "method": "DELETE",
+          "path": "/api/backgrounds",
+          "planPath": "/api/backgrounds",
+          "note": "买家咨询背景",
+          "phase2": false,
+          "ok": true,
+          "implemented": false,
+          "detail": "形态不同：批量删除接口统一为 POST /api/backgrounds/batch-delete（支持一次删多条，并在被剧本引用时返回 3001）。"
+        },
+        {
+          "module": "内容",
+          "method": "GET",
+          "path": "/api/contents",
+          "planPath": "/api/contents",
+          "note": "买家咨询内容",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "内容",
+          "method": "POST",
+          "path": "/api/contents",
+          "planPath": "/api/contents",
+          "note": "买家咨询内容",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "内容",
+          "method": "PUT",
+          "path": "/api/contents",
+          "planPath": "/api/contents",
+          "note": "买家咨询内容",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "内容",
+          "method": "DELETE",
+          "path": "/api/contents",
+          "planPath": "/api/contents",
+          "note": "买家咨询内容",
+          "phase2": false,
+          "ok": true,
+          "implemented": false,
+          "detail": "形态不同：同上，统一为 POST /api/contents/batch-delete。"
+        },
+        {
+          "module": "分类",
+          "method": "GET",
+          "path": "/api/categories",
+          "planPath": "/api/categories",
+          "note": "分类树与排序",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "分类",
+          "method": "POST",
+          "path": "/api/categories",
+          "planPath": "/api/categories",
+          "note": "分类树与排序",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "分类",
+          "method": "PUT",
+          "path": "/api/categories",
+          "planPath": "/api/categories",
+          "note": "分类树与排序",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "分类",
+          "method": "DELETE",
+          "path": "/api/categories",
+          "planPath": "/api/categories",
+          "note": "分类树与排序",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "剧本",
+          "method": "GET",
+          "path": "/api/scripts",
+          "planPath": "/api/scripts",
+          "note": "剧本增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "剧本",
+          "method": "POST",
+          "path": "/api/scripts",
+          "planPath": "/api/scripts",
+          "note": "剧本增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "剧本",
+          "method": "PUT",
+          "path": "/api/scripts",
+          "planPath": "/api/scripts",
+          "note": "剧本增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "剧本",
+          "method": "DELETE",
+          "path": "/api/scripts",
+          "planPath": "/api/scripts",
+          "note": "剧本增删改查",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "剧本",
+          "method": "POST",
+          "path": "/api/scripts/batch-generate",
+          "planPath": "/api/scripts/batch-generate",
+          "note": "批量生成（同步 ≤100 条）",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "剧本",
+          "method": "POST",
+          "path": "/api/scripts/batch-generate/async",
+          "planPath": "/api/scripts/batch-generate/async",
+          "note": "批量生成（异步任务）",
+          "phase2": false,
+          "ok": true,
+          "implemented": false,
+          "detail": "形态不同：没有单独的 async 路径：POST /api/scripts/batch-generate 在数量超过 batchAsyncThreshold 时自动转为异步任务，进度与取消走 /api/scripts/batch-generate/tasks/:id。"
+        },
+        {
+          "module": "剧本",
+          "method": "GET",
+          "path": "/api/scripts/:p/preview",
+          "planPath": "/api/scripts/{id}/preview",
+          "note": "剧本预览（提问序列）",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "风格",
+          "method": "GET",
+          "path": "/api/styles",
+          "planPath": "/api/styles",
+          "note": "沟通风格与占比",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "风格",
+          "method": "POST",
+          "path": "/api/styles",
+          "planPath": "/api/styles",
+          "note": "沟通风格与占比",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "风格",
+          "method": "PUT",
+          "path": "/api/styles",
+          "planPath": "/api/styles",
+          "note": "沟通风格与占比",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "风格",
+          "method": "DELETE",
+          "path": "/api/styles",
+          "planPath": "/api/styles",
+          "note": "沟通风格与占比",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "接待",
+          "method": "POST",
+          "path": "/api/receptions",
+          "planPath": "/api/receptions",
+          "note": "开始接待（返回 attempt 与首个会话）",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "接待",
+          "method": "GET",
+          "path": "/api/receptions/:p/snapshot",
+          "planPath": "/api/receptions/{id}/snapshot",
+          "note": "断线重连拉取全量状态",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "接待",
+          "method": "POST",
+          "path": "/api/receptions/:p/sessions/:p/messages",
+          "planPath": "/api/receptions/{id}/sessions/{sid}/messages",
+          "note": "发送客服回复",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "接待",
+          "method": "POST",
+          "path": "/api/receptions/:p/sessions/:p/transfer",
+          "planPath": "/api/receptions/{id}/sessions/{sid}/transfer",
+          "note": "转交会话",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "接待",
+          "method": "POST",
+          "path": "/api/receptions/:p/sessions/:p/finish",
+          "planPath": "/api/receptions/{id}/sessions/{sid}/finish",
+          "note": "结束会话",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "接待",
+          "method": "POST",
+          "path": "/api/receptions/:p/finish",
+          "planPath": "/api/receptions/{id}/finish",
+          "note": "结束整个接待任务",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "明细",
+          "method": "GET",
+          "path": "/api/records",
+          "planPath": "/api/records",
+          "note": "明细列表（筛选/分页）",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "明细",
+          "method": "GET",
+          "path": "/api/records/:p",
+          "planPath": "/api/records/{id}",
+          "note": "明细详情与评分报告",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "明细",
+          "method": "POST",
+          "path": "/api/records/:p/annotations",
+          "planPath": "/api/records/{id}/annotations",
+          "note": "新增批注",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "明细",
+          "method": "GET",
+          "path": "/api/records/export",
+          "planPath": "/api/records/export",
+          "note": "导出明细（二期）",
+          "phase2": true,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "任务",
+          "method": "GET",
+          "path": "/api/tasks",
+          "planPath": "/api/tasks",
+          "note": "任务维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "任务",
+          "method": "POST",
+          "path": "/api/tasks",
+          "planPath": "/api/tasks",
+          "note": "任务维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "任务",
+          "method": "PUT",
+          "path": "/api/tasks",
+          "planPath": "/api/tasks",
+          "note": "任务维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": false,
+          "detail": "形态不同：任务属二期，本版只做了创建、列表、报表与删除，没有做修改。"
+        },
+        {
+          "module": "任务",
+          "method": "GET",
+          "path": "/api/tasks/:p/report",
+          "planPath": "/api/tasks/{id}/report",
+          "note": "任务报表",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "案例",
+          "method": "POST",
+          "path": "/api/cases/import/file",
+          "planPath": "/api/cases/import/file",
+          "note": "文件导入（二期）",
+          "phase2": true,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "案例",
+          "method": "POST",
+          "path": "/api/cases/import/text",
+          "planPath": "/api/cases/import/text",
+          "note": "文本粘贴导入（二期）",
+          "phase2": true,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "案例",
+          "method": "POST",
+          "path": "/api/cases/:p/to-script",
+          "planPath": "/api/cases/{id}/to-script",
+          "note": "转为剧本（二期）",
+          "phase2": true,
+          "ok": true,
+          "implemented": false,
+          "detail": "形态不同：案例转出的是「买家咨询内容」而不是剧本：POST /api/cases/:id/to-content，先沉淀进内容库，再由《客户问题剧本》批量生成剧本（方案 3.5 的两条路径等效，且更可控）。"
+        },
+        {
+          "module": "短语",
+          "method": "GET",
+          "path": "/api/phrases",
+          "planPath": "/api/phrases",
+          "note": "快捷短语维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "短语",
+          "method": "POST",
+          "path": "/api/phrases",
+          "planPath": "/api/phrases",
+          "note": "快捷短语维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "短语",
+          "method": "PUT",
+          "path": "/api/phrases",
+          "planPath": "/api/phrases",
+          "note": "快捷短语维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        },
+        {
+          "module": "短语",
+          "method": "DELETE",
+          "path": "/api/phrases",
+          "planPath": "/api/phrases",
+          "note": "快捷短语维护",
+          "phase2": false,
+          "ok": true,
+          "implemented": true,
+          "detail": "已注册"
+        }
+      ]
+    },
+    "params": {
+      "available": true,
+      "total": 20,
+      "mismatched": 0,
+      "overridden": 2,
+      "items": [
+        {
+          "plan": "首次响应时长上限",
+          "code": "firstResponseLimitSec",
+          "expected": 30,
+          "planValue": 30,
+          "clientOverride": null,
+          "actual": 30,
+          "ok": true
+        },
+        {
+          "plan": "平均响应时长上限",
+          "code": "avgResponseLimitSec",
+          "expected": 60,
+          "planValue": 60,
+          "clientOverride": null,
+          "actual": 60,
+          "ok": true
+        },
+        {
+          "plan": "3 分钟回复率下限",
+          "code": "replyRateLimitPct",
+          "expected": 90,
+          "planValue": 90,
+          "clientOverride": null,
+          "actual": 90,
+          "ok": true
+        },
+        {
+          "plan": "超时判定阈值",
+          "code": "timeoutSec",
+          "expected": 180,
+          "planValue": 180,
+          "clientOverride": null,
+          "actual": 180,
+          "ok": true
+        },
+        {
+          "plan": "单次超时扣分",
+          "code": "timeoutPenalty",
+          "expected": 3,
+          "planValue": 3,
+          "clientOverride": null,
+          "actual": 3,
+          "ok": true
+        },
+        {
+          "plan": "评分权重",
+          "code": "weights",
+          "expected": {
+            "response": 40,
+            "solving": 35,
+            "wording": 15,
+            "emotion": 10
+          },
+          "planValue": {
+            "response": 40,
+            "solving": 35,
+            "wording": 15,
+            "emotion": 10
+          },
+          "clientOverride": null,
+          "actual": {
+            "response": 40,
+            "solving": 35,
+            "wording": 15,
+            "emotion": 10
+          },
+          "ok": true
+        },
+        {
+          "plan": "达标线",
+          "code": "passLine",
+          "expected": 80,
+          "planValue": 80,
+          "clientOverride": null,
+          "actual": 80,
+          "ok": true
+        },
+        {
+          "plan": "难度解锁条件（连续达标次数）",
+          "code": "unlockConsecutive",
+          "expected": 1,
+          "planValue": 2,
+          "clientOverride": "客户 2026-10-02 确认：达标 1 次即解锁下一档（方案 10.3 原值「连续 2 次达标」）。",
+          "actual": 1,
+          "ok": true
+        },
+        {
+          "plan": "并发接待上限",
+          "code": "maxConcurrent",
+          "expected": 4,
+          "planValue": 4,
+          "clientOverride": null,
+          "actual": 4,
+          "ok": true
+        },
+        {
+          "plan": "单会话问题轮数",
+          "code": "levelRounds",
+          "expected": [
+            6,
+            10
+          ],
+          "planValue": [
+            6,
+            10
+          ],
+          "clientOverride": null,
+          "actual": [
+            6,
+            10
+          ],
+          "ok": true
+        },
+        {
+          "plan": "买家响应等待口径",
+          "code": "waitToleranceFactor",
+          "expected": {
+            "L1": 1.5,
+            "L2": 1,
+            "L3": 1,
+            "L4": 1
+          },
+          "planValue": {
+            "L1": 1.5,
+            "L2": 1,
+            "L3": 1,
+            "L4": 1
+          },
+          "clientOverride": null,
+          "actual": {
+            "L1": 1.5,
+            "L2": 1,
+            "L3": 1,
+            "L4": 1
+          },
+          "ok": true
+        },
+        {
+          "plan": "进线间隔（秒）",
+          "code": "levelJoinDelaySec",
+          "expected": [
+            10,
+            30
+          ],
+          "planValue": [
+            10,
+            30
+          ],
+          "clientOverride": null,
+          "actual": [
+            10,
+            30
+          ],
+          "ok": true
+        },
+        {
+          "plan": "高难度风格权重上浮",
+          "code": "highLevelStyleBoost",
+          "expected": 1.5,
+          "planValue": 1.5,
+          "clientOverride": null,
+          "actual": 1.5,
+          "ok": true
+        },
+        {
+          "plan": "情绪值升级阈值",
+          "code": "emotionEscalateThreshold",
+          "expected": 80,
+          "planValue": 80,
+          "clientOverride": null,
+          "actual": 80,
+          "ok": true
+        },
+        {
+          "plan": "情绪值单次变化幅度（安抚下降 / 负面上升中位值）",
+          "code": "emotionSootheStep+emotionNegativeStep",
+          "expected": [
+            15,
+            20
+          ],
+          "planValue": [
+            15,
+            20
+          ],
+          "clientOverride": null,
+          "actual": [
+            15,
+            20
+          ],
+          "ok": true
+        },
+        {
+          "plan": "默认聊天占比",
+          "code": "defaultStyleRatio",
+          "expected": {
+            "friendly": 30,
+            "impatient": 15,
+            "direct": 20,
+            "hesitant": 20,
+            "silent": 15
+          },
+          "planValue": {
+            "friendly": 30,
+            "impatient": 15,
+            "direct": 20,
+            "hesitant": 20,
+            "silent": 15
+          },
+          "clientOverride": null,
+          "actual": {
+            "friendly": 30,
+            "impatient": 15,
+            "direct": 20,
+            "hesitant": 20,
+            "silent": 15
+          },
+          "ok": true
+        },
+        {
+          "plan": "无情绪化场景时的情绪分按满分计入",
+          "code": "emotionNeutralFullScore",
+          "expected": true,
+          "planValue": true,
+          "clientOverride": null,
+          "actual": true,
+          "ok": true
+        },
+        {
+          "plan": "单条消息长度上限",
+          "code": "messageMaxLength",
+          "expected": 800,
+          "planValue": 500,
+          "clientOverride": "客户 2026-10-03 确认：对齐飞鸽会话页的输入上限，单条消息从 500 字调到 800 字（方案 10.3 原值 500）。",
+          "actual": 800,
+          "ok": true
+        },
+        {
+          "plan": "断线判定时长",
+          "code": "disconnectGraceSec",
+          "expected": 60,
+          "planValue": 60,
+          "clientOverride": null,
+          "actual": 60,
+          "ok": true
+        },
+        {
+          "plan": "批量生成异步阈值",
+          "code": "batchAsyncThreshold",
+          "expected": 100,
+          "planValue": 100,
+          "clientOverride": null,
+          "actual": 100,
+          "ok": true
+        }
+      ]
+    }
+  },
+  "remaining": {
+    "phase1Todo": [],
+    "phase2Todo": [],
+    "excluded": [],
+    "notRequired": [
+      {
+        "id": "F1-15",
+        "title": "实时提示开关",
+        "reason": "业务方确认不需要，不列入验收范围（功能已实现并保留：系统参数页可开关「提示模式」，接待页在客服超时未回复时给出话术思路）。"
+      },
+      {
+        "id": "F2-05",
+        "title": "人工批注",
+        "reason": "业务方确认不需要，不列入验收范围（功能保留：接口、页面、历史批注数据都不动）。"
+      },
+      {
+        "id": "F2-06",
+        "title": "典型问题标记",
+        "reason": "业务方确认不需要，不列入验收范围（功能已实现并保留：明细详情页可「标记为典型案例」）。"
+      },
+      {
+        "id": "F2-07",
+        "title": "对比视图",
+        "reason": "业务方确认不需要，不列入验收范围（功能已实现并保留：明细列表可勾选两次接待做并排指标对比）。"
+      },
+      {
+        "id": "F2-09",
+        "title": "个人成长曲线",
+        "reason": "业务方确认不需要，不列入验收范围（功能已实现并保留：首页个人成长曲线 + GET /api/records/trend）。"
+      },
+      {
+        "id": "F6-10",
+        "title": "任务催办",
+        "reason": "业务方确认不需要，不列入验收范围（功能已实现并保留：首页任务催办提醒 + GET /api/tasks/reminders）。"
+      }
+    ],
+    "openQuestions": [
+      {
+        "id": "Q1",
+        "title": "抖店客服工作台考核细则原文",
+        "need": "业务方（截图或规则文档）",
+        "status": "已获取",
+        "resolution": "飞鸽平均响应时长 = 近30天工作时间消费者与商家飞鸽对话轮次的回复时长之和 ÷ 近30天工作时间人工咨询对话轮次总数；只考核 8:00:00–22:59:59 发起的人工客服会话（含智能客服转人工，纯智能客服不考核）；未回复本轮记 600 秒；消极敷衍回复判无效回复，后续有有效回复则本轮记「用户发消息到首条有效回复」的时长，仍无有效回复记 600 秒（2026-09-29 生效）。官方未公布「≤N 秒」合格线——现有 60 秒是本项目自填默认值，可在系统参数里调。来源：school.jinritemai.com/doudian/web/article/aJYrJhaZXdL1、/103956、/aJqQgPuh9FqV",
+        "current": "已按官方公式改造平均响应口径（轮次加权 + 未回复记 600 秒 + 无效回复回退到首条有效回复）；合格线仍是可配的项目自填值"
+      },
+      {
+        "id": "Q2",
+        "title": "真实会话记录导出文件样例",
+        "need": "业务方（1～3 份样例文件）",
+        "current": "案例只做了文本粘贴导入；文件导入适配器等样例后再实现（F5-01 / F5-03）"
+      },
+      {
+        "id": "Q3",
+        "title": "买家沟通风格的最终清单与默认占比",
+        "need": "业务方确认",
+        "current": "采用五种内置风格与 30/15/20/20/15 默认占比"
+      },
+      {
+        "id": "Q4",
+        "title": "是否需要「看板 / 排行榜」等激励功能",
+        "need": "业务负责人",
+        "current": "本版未实现，属二期范围"
+      },
+      {
+        "id": "Q5",
+        "title": "优秀客服参考话术来源（话术规范关键词库）",
+        "need": "业务方 / 带教组长",
+        "current": "先用通用问候语、结束语、禁用词库"
+      },
+      {
+        "id": "Q6",
+        "title": "内网部署服务器规格与是否已有 PostgreSQL / Redis",
+        "need": "运维",
+        "current": "按 Docker Compose 单机部署（含 PostgreSQL 与 Redis）"
+      },
+      {
+        "id": "Q7",
+        "title": "是否需要与人事系统对接账号",
+        "need": "业务方 / IT",
+        "current": "账号手工维护，已预留单点登录接口位置"
+      }
+    ],
+    "envRequired": [
+      {
+        "id": "PS-2",
+        "title": "连续运行 72 小时无内存泄漏；worker 重启后延迟队列任务不丢失",
+        "key": "soak",
+        "acceptedRisk": true,
+        "note": "残留风险·已接受：设备腾不出 72 小时空档，未做长跑。已覆盖：并发压测、服务重启恢复（接待不被中止、定时推送重挂）、断线超时中止；未覆盖：慢速内存泄漏、跨天定时任务。"
+      },
+      {
+        "id": "PS-5",
+        "title": "Chrome / Edge 最新两个版本布局正常；1366×768 下接待页可用",
+        "key": "compat",
+        "note": "浏览器实测"
+      }
+    ]
+  }
+}

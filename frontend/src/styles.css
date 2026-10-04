@@ -1,0 +1,1203 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: #f5f7fb;
+  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+}
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 16px 12px;
+}
+.app-logo-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #2e5c9a, #4c8bf5);
+  color: #fff;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.app-logo-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1f3864;
+}
+.app-logo-sub {
+  font-size: 11px;
+  color: #8c8c8c;
+}
+.app-header {
+  background: #fff;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #eef0f5;
+}
+.app-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.app-content {
+  padding: 16px;
+}
+.page-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+}
+/* ==========================================================================
+   在线模拟接待（严格参考图 1：抖店客服工作台会话页面）
+   三栏结构 —— 左会话队列 / 中对话区 / 右订单·商品·快捷短语
+   面板为通铺白底 + 1px 分隔线，不再使用圆角卡片，贴近工作台观感
+   ========================================================================== */
+.reception-page {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- 顶部模拟客户端标题栏 ---- */
+.reception-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 40px;
+  padding: 0 12px;
+  background: #dfe9fc;
+  border: 1px solid #d3e0f7;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  overflow: hidden;
+}
+.titlebar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.titlebar-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #262626;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(31, 56, 100, 0.08);
+}
+.titlebar-tab-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #ffb057, #ff7a1a);
+  flex: none;
+}
+.titlebar-tab-close {
+  font-size: 10px;
+  color: #c0c0c0;
+}
+.titlebar-tab-add {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  flex: none;
+}
+.titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  color: #5a6b88;
+  white-space: nowrap;
+}
+.titlebar-right b {
+  color: #1f3864;
+  font-size: 13px;
+}
+.titlebar-tag {
+  margin-inline-end: 0;
+}
+.titlebar-no {
+  color: #8095b5;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 三栏通铺容器 ---- */
+.reception-shell {
+  display: flex;
+  height: calc(100vh - 144px);
+  min-height: 560px;
+  background: #fff;
+  border: 1px solid #e3e8f2;
+  border-radius: 0 0 6px 6px;
+  overflow: hidden;
+}
+
+/* ---- 左栏：会话队列 ---- */
+.reception-left {
+  width: 300px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-right: 1px solid #eef0f5;
+  overflow: hidden;
+}
+.reception-stats-wrap {
+  position: relative;
+  padding: 14px 16px 10px;
+}
+.reception-stats {
+  display: grid;
+  /* C5 之后是 5 个数字（总量 / 正在接待 / 剩余会话 / 已结束 / 转交），按 3 列排 */
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px 8px;
+}
+.reception-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1f3864;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.reception-stat-label {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-top: 2px;
+}
+.reception-stats-more {
+  position: absolute;
+  top: 24px;
+  right: 14px;
+  color: #bfbfbf;
+  font-size: 11px;
+}
+.reception-search {
+  padding: 0 16px 10px;
+}
+.reception-search .ant-input-affix-wrapper {
+  background: #f5f6f8;
+  border-color: transparent;
+  border-radius: 16px;
+  padding-inline: 12px;
+}
+.reception-search .ant-input-affix-wrapper input {
+  background: transparent;
+  font-size: 13px;
+}
+.reception-search .ant-input-affix-wrapper:focus-within {
+  background: #fff;
+  border-color: #91caff;
+}
+.reception-queue-tabs {
+  display: flex;
+  gap: 24px;
+  padding: 0 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.queue-tab {
+  padding: 8px 0;
+  font-size: 13px;
+  color: #595959;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.queue-tab.active {
+  color: #1677ff;
+  font-weight: 600;
+  border-bottom-color: #1677ff;
+}
+.reception-queue-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 16px;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+.queue-bar-label {
+  color: #bfbfbf;
+}
+.queue-bar-grouped {
+  margin-left: auto;
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.queue-bar-grouped:hover {
+  color: #1677ff;
+}
+.reception-queue {
+  flex: 1;
+  overflow-y: auto;
+}
+.queue-group-label {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: #8c8c8c;
+  background: #fafafa;
+}
+.conversation-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f5f5f5;
+}
+.conversation-item:hover {
+  background: #f7f9fd;
+}
+.conversation-item.active {
+  background: #e8f0fe;
+}
+.conversation-item.overdue {
+  background: #fff2f0;
+}
+.conversation-index {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #4b8bf5, #2f6fe4);
+  color: #fff;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.unread-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4d4f;
+  border: 1px solid #fff;
+}
+.conversation-body {
+  flex: 1;
+  min-width: 0;
+}
+.conversation-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.conversation-name {
+  font-size: 13px;
+  color: #262626;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-name.unread {
+  font-weight: 700;
+}
+.conversation-timer {
+  font-size: 12px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.conversation-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  min-width: 0;
+}
+.product-tag {
+  margin-inline-end: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: #8c8c8c;
+  background: #fafafa;
+  border-color: #f0f0f0;
+  flex: none;
+}
+.conversation-product {
+  font-size: 12px;
+  color: #8c8c8c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reception-left-footer {
+  padding: 10px 16px;
+  border-top: 1px solid #f0f0f0;
+}
+
+/* ---- 中栏：对话区 ---- */
+.reception-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+.reception-center-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.center-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+.center-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #4b8bf5, #2f6fe4);
+  color: #fff;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.center-header-info {
+  min-width: 0;
+}
+.center-header-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.center-buyer-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #262626;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.center-header-copy {
+  color: #bfbfbf;
+  font-size: 12px;
+  cursor: pointer;
+}
+.center-header-copy:hover {
+  color: #1677ff;
+}
+.center-header-remark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: #8c8c8c;
+  cursor: pointer;
+}
+.center-header-remark:hover {
+  color: #1677ff;
+}
+.center-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+/* 参考图 1：会话头右侧的备注 / 收藏 / @ / 转交 / 更多 图标组 */
+.center-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding-left: 8px;
+  border-left: 1px solid #f0f0f0;
+}
+.center-header-actions .ant-btn {
+  color: #8c8c8c;
+}
+.center-header-actions .ant-btn:not(:disabled):hover {
+  color: #1677ff;
+  background: #f0f6ff;
+}
+.center-header-actions .ant-btn:disabled {
+  color: #d9d9d9;
+}
+.center-header-actions .center-header-at {
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 600;
+}
+.session-countdown {
+  font-size: 13px;
+  color: #595959;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.session-countdown.urgent {
+  color: #cf1322;
+  font-weight: 700;
+}
+.session-countdown-limit {
+  color: #bfbfbf;
+  font-weight: 400;
+  font-size: 12px;
+}
+.message-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+  background: #fff;
+}
+.message-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.message-row.agent {
+  flex-direction: row-reverse;
+}
+.message-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #fff;
+  background: linear-gradient(180deg, #6aa4ff, #2f6fe4);
+}
+.message-avatar.agent {
+  background: linear-gradient(180deg, #9ec6ff, #4b8bf5);
+}
+.message-avatar.system {
+  background: #d9d9d9;
+  color: #595959;
+  font-size: 11px;
+}
+.message-main {
+  max-width: 62%;
+  min-width: 0;
+}
+.message-row.agent .message-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.message-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #a0a0a0;
+}
+.message-sender {
+  color: #595959;
+}
+.message-bubble {
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: #f5f6f8;
+  border: 1px solid #eef0f5;
+  line-height: 1.6;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.message-row.agent .message-bubble {
+  background: #d9ecff;
+  border-color: #b7dbff;
+}
+.message-meta {
+  font-size: 11px;
+  color: #a0a0a0;
+  margin-top: 4px;
+}
+.product-card-msg {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 220px;
+}
+.product-card-msg-icon {
+  font-size: 22px;
+  color: #1677ff;
+}
+.product-card-msg-title {
+  font-weight: 600;
+}
+.product-card-msg-sub {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+.message-bubble-card {
+  padding: 8px 10px;
+  /* 参考图 1：咨询宝贝卡片是白底描边卡，而不是灰底气泡 */
+  background: #fff;
+  border-color: #ebedf0;
+}
+.consult-card {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.consult-card-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+  background: #fff;
+  border: 1px solid #eef0f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1677ff;
+  font-size: 20px;
+  flex: none;
+  overflow: hidden;
+}
+.consult-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.consult-card-body {
+  min-width: 0;
+}
+.consult-card-title {
+  font-size: 13px;
+  color: #262626;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.consult-card-meta {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-top: 2px;
+}
+.consult-card-price {
+  font-size: 13px;
+  color: #262626;
+  margin-top: 2px;
+}
+
+/* ---- 输入区与工具栏 ---- */
+.reception-input {
+  border-top: 1px solid #f0f0f0;
+  padding: 8px 16px 12px;
+}
+.reception-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+.reception-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.reception-toolbar .ant-btn {
+  color: #8c8c8c;
+}
+.reception-toolbar .ant-btn:not(:disabled):hover {
+  color: #1677ff;
+  background: #f0f6ff;
+}
+.reception-toolbar .ant-btn:disabled {
+  color: #d9d9d9;
+}
+.reception-toolbar-divider {
+  width: 1px;
+  height: 14px;
+  background: #ececec;
+  margin: 0 6px;
+}
+.reception-input .ant-input {
+  border: none;
+  box-shadow: none;
+  padding: 6px 0;
+  font-size: 13px;
+  background: transparent;
+  resize: none;
+}
+.reception-input .ant-input:focus {
+  box-shadow: none;
+}
+.reception-send-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+.reception-input-hint {
+  font-size: 12px;
+  color: #bfbfbf;
+  user-select: none;
+}
+
+/* ---- 右栏：订单 / 商品 / 快捷短语 ---- */
+.reception-right {
+  width: 380px;
+  flex: none;
+  background: #fff;
+  border-left: 1px solid #eef0f5;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+.reception-right .ant-tabs-nav {
+  margin-bottom: 12px;
+}
+/* 任务卡（方案 F6-06）：任务训练时常驻右栏顶部 */
+.task-card {
+  border: 1px solid #d6e4ff;
+  background: #f5f9ff;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 12px 0;
+  font-size: 12px;
+  color: #40536e;
+}
+.task-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.task-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f3864;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-card-line {
+  line-height: 1.9;
+}
+.task-card-line b {
+  color: #1f3864;
+}
+.task-card-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #2f6fe4;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.reception-empty {
+  padding: 40px 0;
+}
+.right-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.right-section-links {
+  font-weight: 400;
+  font-size: 12px;
+  color: #9db4d6;
+}
+.consult-product {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #eef0f5;
+  border-radius: 6px;
+  background: #fff;
+}
+.consult-product-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  background: #eef2f8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1677ff;
+  font-size: 20px;
+  flex: none;
+  overflow: hidden;
+}
+.consult-product-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.consult-product-title {
+  font-size: 13px;
+  color: #1677ff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.consult-product-meta {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-top: 2px;
+}
+.consult-product-price {
+  color: #cf1322;
+  font-size: 16px;
+  margin-top: 4px;
+}
+.consult-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.consult-actions .ant-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 4px;
+  border-color: #e5e8ef;
+  background: #fff;
+  color: #404040;
+  font-size: 12px;
+}
+.consult-actions .ant-btn:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+.order-status-tabs {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #595959;
+}
+.order-status-tab {
+  cursor: default;
+}
+.order-status-tab.active {
+  color: #1677ff;
+  font-weight: 600;
+}
+.order-status-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: #bfbfbf;
+  font-size: 13px;
+}
+/* 订单卡片（客户 2026-10-03 三张参考图：待支付 / 待发货 / 已发货） */
+/* 飞鸽式商品卡（客户 2026-10-03：会话页对齐飞鸽，买家发来的商品卡要带图片/价格/保障/动作按钮） */
+.feige-product-card {
+  width: 320px;
+  max-width: 100%;
+  background: #fff;
+  border: 1px solid #eef0f5;
+  border-radius: 8px;
+  padding: 8px;
+}
+.feige-product-thumb {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  color: #bfbfbf;
+  font-size: 24px;
+}
+.feige-product-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.feige-product-info {
+  flex: 1;
+  min-width: 0;
+}
+.feige-product-title {
+  font-size: 13px;
+  line-height: 18px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.feige-product-price {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fa541c;
+}
+.feige-product-stock {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #8c8c8c;
+}
+.feige-product-tags {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.feige-product-tags .ant-tag {
+  font-size: 11px;
+  line-height: 18px;
+  padding-inline: 5px;
+  margin-bottom: 4px;
+}
+.feige-product-ship {
+  display: block;
+  margin-top: 2px;
+  color: #8c8c8c;
+}
+.feige-product-actions {
+  flex: none;
+  width: 100%;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding-top: 6px;
+  border-top: 1px solid #f5f5f5;
+}
+.feige-product-actions .ant-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+/* 飞鸽会话头：昵称下方那一行信息标签 */
+.center-header-tags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+.center-header-tags .ant-tag {
+  font-size: 11px;
+  line-height: 18px;
+  padding-inline: 6px;
+  color: #595959;
+  background: #f5f5f5;
+  border-color: #f0f0f0;
+}
+.center-header-tags-more {
+  cursor: default;
+}
+/* 输入区右下角字数计数 */
+/* 右栏「商品」页签：商品库商品列表（客户 2026-10-03） */
+.right-product-list {
+  margin-top: 10px;
+  max-height: calc(100vh - 330px);
+  overflow-y: auto;
+}
+.right-product-item {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f5f5f5;
+}
+.right-product-item:last-child {
+  border-bottom: 0;
+}
+.reception-input-count {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #8c8c8c;
+  flex: none;
+}
+.consult-product-stock {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #8c8c8c;
+  font-weight: 400;
+}
+.order-card {
+  padding: 10px 12px 12px;
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.order-card .ant-divider {
+  border-color: #f5f5f5;
+}
+.order-card .ant-tag {
+  font-size: 11px;
+  line-height: 18px;
+  padding-inline: 5px;
+}
+.order-thumb {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  color: #bfbfbf;
+  font-size: 22px;
+}
+.order-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* 飞鸽式会话列表项：圆形头像 + 昵称/时间 + 最后一条消息预览 */
+/* 飞鸽式左栏顶栏横幅（原来是 2×2 计数网格，客户 2026-10-03 要求改成横幅并把计数搬进来） */
+.reception-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 10px 0;
+  padding: 8px 10px;
+  background: #f7f9fc;
+  border: 1px solid #eef1f6;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #595959;
+}
+.reception-banner-text b {
+  color: #262626;
+  font-weight: 600;
+}
+.reception-banner-link {
+  flex: none;
+  color: #1677ff;
+  cursor: pointer;
+}
+.conversation-avatar {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e8f0fe;
+  color: #2f6fe4;
+  font-size: 12px;
+  font-weight: 600;
+}
+.conversation-time {
+  flex: none;
+  margin-left: 6px;
+  font-size: 11px;
+  color: #bfbfbf;
+}
+.conversation-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+.message-read {
+  margin-right: 6px;
+  color: #bfbfbf;
+}
+.message-avatar {
+  border-radius: 50%;
+}
+
+/* 1366×768（最低要求分辨率）下压缩头部信息，保证昵称与倒计时都不被截断 */
+@media (max-width: 1440px) {
+  .session-countdown-limit {
+    display: none;
+  }
+  .center-buyer-name {
+    max-width: 180px;
+  }
+  .reception-left {
+    width: 272px;
+  }
+  .reception-right {
+    width: 340px;
+  }
+}
+
+/* 客户问题剧本（参考图 2 / 3） */
+.library-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.library-tabs {
+  display: flex;
+  gap: 12px;
+}
+.library-tab {
+  padding: 6px 16px;
+  background: #f5f6f8;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px 6px 0 0;
+  font-size: 13px;
+  color: #595959;
+  cursor: pointer;
+}
+.library-tab.active {
+  background: #fff;
+  border-color: #91caff;
+  color: #1677ff;
+  font-weight: 600;
+}
+.library-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.library-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.library-categories {
+  width: 240px;
+  flex: none;
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px;
+}
+.library-categories-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.library-categories-label {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin: 12px 0 6px;
+}
+.category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.category-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #262626;
+  cursor: pointer;
+}
+.category-item:hover {
+  background: #f5f8ff;
+}
+.category-item.active {
+  background: #1677ff;
+  color: #fff;
+}
+.category-count {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+.category-item.active .category-count {
+  color: #fff;
+}
+.library-table {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+.cell-sub {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-top: 2px;
+}
+
+/* 新建聊天剧本弹窗（参考图 4） */
+.script-section {
+  border-left: 3px solid #1677ff;
+  background: #fafbfd;
+  border-radius: 4px;
+  padding: 12px 16px 0;
+  margin-bottom: 16px;
+}
+.script-section-title {
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.script-product-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -8px 0 16px;
+}
+.script-product-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  background: #eef2f8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1677ff;
+  overflow: hidden;
+}
+.script-product-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

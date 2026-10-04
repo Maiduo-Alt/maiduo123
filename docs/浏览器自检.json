@@ -1,0 +1,23 @@
+{
+  "render": {
+    "ok": true,
+    "total": 41,
+    "passed": 41,
+    "failed": [],
+    "finishedAt": "2026-10-04T05:46:41.641Z"
+  },
+  "flow": {
+    "ok": true,
+    "total": 20,
+    "passed": 20,
+    "failed": [],
+    "finishedAt": "2026-10-04T05:46:06.894Z"
+  },
+  "sweep": {
+    "ok": true,
+    "total": 15,
+    "passed": 15,
+    "failed": [],
+    "finishedAt": "2026-10-03T06:34:15.755Z"
+  }
+}

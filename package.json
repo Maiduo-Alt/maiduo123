@@ -1,0 +1,35 @@
+{
+  "name": "cs-training-simulator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "在线模拟接待训练系统（PC Web，客服并发接待模拟训练）",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "install:all": "npm install",
+    "migrate": "npm run migrate -w backend",
+    "seed": "npm run seed -w backend",
+    "dev:api": "npm run start -w backend",
+    "dev:api:mem": "node tools/dev-api-memory.mjs",
+    "dev:web": "npm run dev -w frontend",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "test": "npm run test -w backend && npm run test -w frontend",
+    "smoke": "node tools/smoke-test.mjs",
+    "content:check": "node tools/check-content.mjs",
+    "content:preview": "node tools/content-preview.mjs",
+    "scripts:check": "node tools/check-scripts.mjs",
+    "load:test": "node tools/load-test.mjs",
+    "backup:db": "npm run backup -w backend",
+    "verify": "node tools/verify-docx.mjs \"在线模拟接待训练系统_需求与实现方案_v1.0.docx\"",
+    "verify:all": "node tools/run-verification.mjs",
+    "progress": "node tools/acceptance-audit.mjs",
+    "progress:serve": "node tools/progress-server.mjs",
+    "render:check": "node tools/render-check.mjs",
+    "flow:check": "node tools/flow-check.mjs",
+    "sweep:check": "node tools/click-sweep.mjs",
+    "deploy:check": "node tools/deploy-check.mjs",
+    "demo:data": "node tools/demo-data.mjs"
+  }
+}
