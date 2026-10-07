@@ -23,7 +23,7 @@ export class ScriptsService {
     private readonly settings: SettingsService
   ) {}
 
-  async list(query: PageQuery & { keyword?: string; category?: string; stage?: string; status?: string; productId?: string }) {
+  async list(query: PageQuery & { keyword?: string; category?: string; stage?: string; status?: string; productId?: string; styleId?: string }) {
     const { page, pageSize, offset, limit } = normalizePage(query);
     const where: string[] = ['1=1'];
     const args: unknown[] = [];
@@ -47,6 +47,11 @@ export class ScriptsService {
       // JSONB 数组包含匹配，避免 LIKE '%id%' 把 id=1 误匹配到 [11]
       args.push(JSON.stringify([Number(query.productId)]));
       where.push(`s.product_ids @> $${args.length}::jsonb`);
+    }
+    if (query.styleId) {
+      // 买家风格筛选（2026-10-07 客户新增）
+      args.push(Number(query.styleId));
+      where.push(`s.style_id = $${args.length}`);
     }
     const whereSql = where.join(' AND ');
     const total = await this.db.one<{ count: string }>(`SELECT count(*)::text AS count FROM scripts s WHERE ${whereSql}`, args);

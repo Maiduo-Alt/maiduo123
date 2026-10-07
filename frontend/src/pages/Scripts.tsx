@@ -244,6 +244,15 @@ export default function Scripts() {
               { value: 'aftersale', label: '售后' },
             ]}
           />
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="买家风格"
+            style={{ width: 140 }}
+            onChange={(v) => load({ styleId: v, page: 1 })}
+            options={(options.styles || []).map((s: any) => ({ value: s.id, label: s.name }))}
+          />
           <Popconfirm
             title={`确认删除选中的 ${selectedIds.length} 个剧本？`}
             description="删除后不可恢复；历史接待明细不受影响"
