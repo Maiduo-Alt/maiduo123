@@ -290,14 +290,34 @@ export class ScriptsService {
     return { success: true };
   }
 
+  /**
+   * 删除剧本（2026-10-07 按客户要求）：有接待记录也直接物理删除。
+   * 历史会话不受影响——会话的问题/商品快照存在 sessions 自己身上，
+   * 《明细》对剧本表是 LEFT JOIN，删除后剧本名显示为空（前端兜底「已删除剧本」）。
+   */
   async remove(id: number) {
-    const used = await this.db.one<{ count: string }>(`SELECT count(*)::text AS count FROM sessions WHERE script_id = $1`, [id]);
-    if (Number(used.count) > 0) {
-      await this.db.query(`UPDATE scripts SET status = 0, updated_at = now() WHERE id = $1`, [id]);
-      return { success: true, mode: 'disabled', message: '该剧本已有接待记录，已改为停用' };
-    }
-    await this.db.query(`DELETE FROM scripts WHERE id = $1`, [id]);
+    const row = await this.db.one<{ id: number }>(`DELETE FROM scripts WHERE id = $1 RETURNING id`, [id]);
+    if (!row) throw new BizError(ERR.NOT_FOUND, '剧本不存在');
     return { success: true, mode: 'deleted' };
+  }
+
+  /**
+   * 批量删除剧本（2026-10-07 客户新增）：清理用不上的剧本。
+   * 单个/批量同一口径：一律物理删除（含已被练过的），历史接待明细不受影响
+   * （sessions 自带问题与商品快照，《明细》LEFT JOIN 剧本名兜底显示）。
+   * 先查真实存在的 id 再删，不存在的 id 不计入删除数。
+   */
+  async removeMany(ids: number[]) {
+    const unique = [...new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!unique.length) throw new BizError(ERR.PARAM, '请先选择要删除的剧本');
+    if (unique.length > 500) throw new BizError(ERR.PARAM, '单次最多删除 500 个剧本，请分批操作');
+    const placeholders = unique.map((_, i) => `$${i + 1}`).join(',');
+    // 参数要按位置逐个展开（unique），不能写成 [unique]——那会把整个数组塞进 $1 导致类型错误
+    const existingRows = await this.db.many<{ id: number }>(`SELECT id FROM scripts WHERE id IN (${placeholders})`, unique);
+    const existing = (existingRows || []).map((row) => Number(row.id));
+    if (!existing.length) return { success: true, deleted: 0, total: 0 };
+    await this.db.query(`DELETE FROM scripts WHERE id IN (${existing.map((_, i) => `$${i + 1}`).join(',')})`, existing);
+    return { success: true, deleted: existing.length, total: unique.length };
   }
 
   /** 批量生成：背景 × 内容 交叉组合，风格按占比分配。 */

@@ -12,10 +12,11 @@ import {
   Space,
   Table,
   Tag,
+  Typography,
   Upload,
   message,
 } from 'antd';
-import { DeleteOutlined, DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import { api, download, uploadImage } from '../api/client';
 
 export default function Products() {
@@ -25,11 +26,17 @@ export default function Products() {
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState<any>({ page: 1, pageSize: 10 });
   const [modal, setModal] = useState<{ open: boolean; record?: any }>({ open: false });
+  /** 表格勾选的商品 id（批量删除用） */
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [csv, setCsv] = useState('');
   const [xlsxBase64, setXlsxBase64] = useState('');
   const [xlsxName, setXlsxName] = useState('');
   const [importResult, setImportResult] = useState<any>(null);
+  /** 一键添加商品：分享链接识别（2026-10-07 客户新增） */
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkText, setLinkText] = useState('');
+  const [linkLoading, setLinkLoading] = useState(false);
   const [form] = Form.useForm();
   // 筛选条（方案 F4-05：标题 / 商品ID、分类、价格区间、状态）
   const [filterKeyword, setFilterKeyword] = useState('');
@@ -62,6 +69,7 @@ export default function Products() {
   const load = async (patch: any = {}) => {
     const next = { ...query, ...patch };
     setQuery(next);
+    setSelectedIds([]);
     setLoading(true);
     try {
       const res = await api<any>('/products', { query: next });
@@ -73,10 +81,73 @@ export default function Products() {
     }
   };
 
+  /**
+   * 一键添加商品（2026-10-07 客户新增）：识别分享链接 → 预填新建表单（不落库）。
+   * 识别失败（链接无效/平台不支持/页面有验证）时提示原因，由用户手动新建。
+   */
+  const importFromLink = async () => {
+    if (!linkText.trim()) {
+      message.warning('请先粘贴商品分享链接');
+      return;
+    }
+    setLinkLoading(true);
+    try {
+      const data = await api<any>('/products/import-from-link', { method: 'POST', body: { url: linkText.trim() } });
+      setLinkOpen(false);
+      setLinkText('');
+      setModal({ open: true });
+      form.resetFields();
+      form.setFieldsValue({
+        title: data.title || '',
+        price: data.price ?? undefined,
+        originPrice: data.originPrice ?? undefined,
+        coverUrl: data.coverUrl || '',
+        detailImages: data.detailImages || [],
+        services: [],
+        scenes: [],
+        skus: [],
+      });
+      message.success('已识别商品信息，请核对后保存（商品ID 需手动填写）');
+      if (data.notice) message.warning(data.notice, 6);
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
   useEffect(() => {
     load({ page: 1 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * 批量删除商品（2026-10-07 客户新增）：未被剧本引用的软删除；
+   * 被剧本引用的逐个跳过并提示——先在《客户问题剧本》删掉相关剧本，再回来删商品。
+   */
+  const removeProducts = async (ids: number[]) => {
+    if (!ids.length) return;
+    try {
+      const res = await api<any>('/products/batch-delete', { method: 'POST', body: { ids } });
+      setSelectedIds([]);
+      if (res.blocked?.length) {
+        const names = res.blocked
+          .slice(0, 3)
+          .map((b: any) => `${b.title}（被 ${b.scriptCount} 个剧本引用）`)
+          .join('、');
+        message.warning(
+          `已删除 ${res.deleted} 个商品；${res.blocked.length} 个被剧本引用未删除：${names}` +
+            (res.blocked.length > 3 ? ` 等 ${res.blocked.length} 个` : '') +
+            '。可先在《客户问题剧本》删除相关剧本，再回来删除商品'
+        );
+      } else {
+        message.success(`已删除 ${res.deleted} 个商品`);
+      }
+      load({ page: 1 });
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
 
   const save = async () => {
     const values = await form.validateFields();
@@ -156,6 +227,19 @@ export default function Products() {
           >
             导出 Excel
           </Button>
+          <Popconfirm
+            title={`确认删除选中的 ${selectedIds.length} 个商品？`}
+            description="被剧本引用的商品会被自动跳过"
+            onConfirm={() => removeProducts(selectedIds)}
+            disabled={!selectedIds.length}
+          >
+            <Button danger icon={<DeleteOutlined />} disabled={!selectedIds.length}>
+              批量删除{selectedIds.length ? `（${selectedIds.length}）` : ''}
+            </Button>
+          </Popconfirm>
+          <Button icon={<ImportOutlined />} onClick={() => setLinkOpen(true)}>
+            一键添加
+          </Button>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -227,6 +311,10 @@ export default function Products() {
         rowKey="id"
         loading={loading}
         dataSource={list}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(Number)),
+        }}
         pagination={{
           total,
           current: query.page,
@@ -537,6 +625,43 @@ export default function Products() {
             </Card>
           )}
         </Space>
+      </Modal>
+
+      {/* 一键添加商品（2026-10-07 客户新增）：粘贴分享链接识别商品信息并预填表单 */}
+      <Modal
+        open={linkOpen}
+        title="一键添加商品"
+        onCancel={() => {
+          setLinkOpen(false);
+          setLinkText('');
+        }}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              setLinkOpen(false);
+              setLinkText('');
+            }}
+          >
+            取消
+          </Button>,
+          <Button key="ok" type="primary" loading={linkLoading} onClick={importFromLink}>
+            识别并填入表单
+          </Button>,
+        ]}
+        width={520}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+          粘贴<strong>抖音、淘宝、京东</strong>的商品分享链接或整段分享文案，系统会自动识别商品信息并填入新建表单（商品ID
+          需手动填写）。三个平台均可自动带出标题；因平台对服务器访问有风控，价格、图片通常需要手动补充。识别失败时可改用「新建商品」手动录入。
+        </Typography.Paragraph>
+        <Input.TextArea
+          rows={3}
+          value={linkText}
+          onChange={(e) => setLinkText(e.target.value)}
+          placeholder={'例如：https://v.douyin.com/xxxxxx/\n或直接粘贴整段分享文案'}
+        />
       </Modal>
     </Card>
   );

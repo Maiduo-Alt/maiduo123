@@ -51,6 +51,20 @@ export class ProductsController {
     return this.products.remove(Number(id));
   }
 
+  /** 批量删除商品（2026-10-07 客户新增）：未被剧本引用的软删除；被引用的逐个跳过并在返回里说明。 */
+  @Roles('admin')
+  @Post('batch-delete')
+  removeMany(@Body() body: { ids: number[] }) {
+    return this.products.removeMany(body.ids || []);
+  }
+
+  /** 一键添加商品（2026-10-07 客户新增）：识别分享链接，返回表单预填信息（不落库）。 */
+  @Roles('admin')
+  @Post('import-from-link')
+  importFromLink(@Body() body: { url?: string }) {
+    return this.products.importFromLink(body?.url || '');
+  }
+
   @Roles('admin')
   @Post('import')
   import(@Body() body: { csv?: string; xlsxBase64?: string }) {

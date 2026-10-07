@@ -1684,7 +1684,7 @@ export default function Reception() {
               dataSource={result.sessions || []}
               columns={[
                 { title: '买家', dataIndex: 'buyerName' },
-                { title: '剧本', dataIndex: 'scriptName' },
+                { title: '剧本', dataIndex: 'scriptName', render: (v: string) => v || '已删除剧本' },
                 { title: '响应时效', dataIndex: 'responseScore', render: (v) => `${v ?? '-'}` },
                 { title: '问题解决', dataIndex: 'solvingScore', render: (v) => `${v ?? '-'}` },
                 { title: '话术规范', dataIndex: 'wordingScore', render: (v) => `${v ?? '-'}` },

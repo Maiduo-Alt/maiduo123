@@ -8,6 +8,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Progress,
   Radio,
   Select,
@@ -18,7 +19,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { BarChartOutlined, PlusOutlined, ReloadOutlined, ShoppingOutlined } from '@ant-design/icons';
+import { BarChartOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, ShoppingOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 
 export default function Scripts() {
@@ -27,6 +28,8 @@ export default function Scripts() {
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState<any>({ page: 1, pageSize: 10 });
   const [batchOpen, setBatchOpen] = useState(false);
+  /** 表格勾选的剧本 id（批量删除用） */
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [detail, setDetail] = useState<any>(null);
   const [options, setOptions] = useState<{
     backgrounds: any[];
@@ -54,6 +57,7 @@ export default function Scripts() {
   const load = async (patch: any = {}) => {
     const next = { ...query, ...patch };
     setQuery(next);
+    setSelectedIds([]);
     setLoading(true);
     try {
       const res = await api<any>('/scripts', { query: next });
@@ -201,6 +205,22 @@ export default function Scripts() {
     setDetail(data);
   };
 
+  /**
+   * 删除剧本（含已被练过的）：物理删除，历史接待明细不受影响
+   * （会话的问题/商品快照存在会话自己身上，《明细》剧本名兜底显示「已删除剧本」）。
+   */
+  const removeScripts = async (ids: number[]) => {
+    if (!ids.length) return;
+    try {
+      const res = await api<any>('/scripts/batch-delete', { method: 'POST', body: { ids } });
+      message.success(`已删除 ${res.deleted} 个剧本`);
+      setSelectedIds([]);
+      load({ page: 1 });
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
+
   return (
     <Card
       className="page-card"
@@ -224,6 +244,16 @@ export default function Scripts() {
               { value: 'aftersale', label: '售后' },
             ]}
           />
+          <Popconfirm
+            title={`确认删除选中的 ${selectedIds.length} 个剧本？`}
+            description="删除后不可恢复；历史接待明细不受影响"
+            onConfirm={() => removeScripts(selectedIds)}
+            disabled={!selectedIds.length}
+          >
+            <Button danger icon={<DeleteOutlined />} disabled={!selectedIds.length}>
+              批量删除{selectedIds.length ? `（${selectedIds.length}）` : ''}
+            </Button>
+          </Popconfirm>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -256,6 +286,11 @@ export default function Scripts() {
         rowKey="id"
         loading={loading}
         dataSource={list}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(Number)),
+          preserveSelectedRowKeys: false,
+        }}
         pagination={{
           total,
           current: query.page,
@@ -285,11 +320,22 @@ export default function Scripts() {
           },
           {
             title: '操作',
-            width: 100,
+            width: 140,
             render: (_, row: any) => (
-              <Button type="link" onClick={() => openDetail(row.id)}>
-                预览
-              </Button>
+              <Space size={0}>
+                <Button type="link" onClick={() => openDetail(row.id)}>
+                  预览
+                </Button>
+                <Popconfirm
+                  title="确认删除该剧本？"
+                  description="删除后不可恢复；历史接待明细不受影响"
+                  onConfirm={() => removeScripts([row.id])}
+                >
+                  <Button type="link" danger>
+                    删除
+                  </Button>
+                </Popconfirm>
+              </Space>
             ),
           },
         ]}

@@ -64,7 +64,7 @@ export default function RecordDetail() {
 
   const sessionColumns = [
     { title: '买家', dataIndex: 'buyerName', width: 120 },
-    { title: '剧本', dataIndex: 'scriptName', ellipsis: true },
+    { title: '剧本', dataIndex: 'scriptName', ellipsis: true, render: (v: string) => v || <Typography.Text type="secondary">已删除剧本</Typography.Text> },
     { title: '买家风格', dataIndex: 'styleName', width: 120 },
     { title: '问题数', dataIndex: 'totalQuestions', width: 80 },
     { title: '超时', dataIndex: 'timeoutCount', width: 70 },
@@ -259,7 +259,7 @@ export default function RecordDetail() {
                     children: (
                       <>
                         <Descriptions size="small" column={3} style={{ marginBottom: 12 }}>
-                          <Descriptions.Item label="剧本">{s.scriptName}</Descriptions.Item>
+                          <Descriptions.Item label="剧本">{s.scriptName || '已删除剧本'}</Descriptions.Item>
                           <Descriptions.Item label="买家风格">{s.styleName}</Descriptions.Item>
                           <Descriptions.Item label="结束原因">{s.finishedReason || '-'}</Descriptions.Item>
                           <Descriptions.Item label={`业务动作（${actionsOfSession(s.id).length}）`} span={3}>

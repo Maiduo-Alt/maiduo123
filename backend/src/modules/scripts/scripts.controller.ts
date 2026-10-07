@@ -71,4 +71,11 @@ export class ScriptsController {
   remove(@Param('id') id: string) {
     return this.scripts.remove(Number(id));
   }
+
+  /** 批量删除剧本：无接待记录的物理删除，有接待记录的改为停用（与单个删除同一口径）。 */
+  @Roles('admin', 'leader')
+  @Post('batch-delete')
+  removeMany(@Body() body: { ids: number[] }) {
+    return this.scripts.removeMany(body.ids || []);
+  }
 }

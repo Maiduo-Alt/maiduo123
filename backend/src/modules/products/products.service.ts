@@ -5,6 +5,7 @@ import { normalizePage, pageResult, PageQuery } from '../../common/pagination';
 import { base64ToBuffer, parseXlsx } from '../../common/xlsx';
 import { buildXlsx } from '../../common/xlsx-writer';
 import { parseCsvLine } from '../../common/csv';
+import { importFromShareLink } from '../../common/share-link';
 
 export interface ProductInput {
   productNo: string;
@@ -215,6 +216,54 @@ export class ProductsService {
     if (Number(refs.count) > 0) throw new BizError(ERR.MATERIAL_REFERENCED, `该商品被 ${refs.count} 个剧本引用，无法删除，可改为下架`);
     await this.db.query(`UPDATE products SET deleted_at = now() WHERE id = $1`, [id]);
     return { success: true };
+  }
+
+  /**
+   * 批量删除商品（2026-10-07 客户新增）：与单个删除同一口径——软删除（deleted_at），   * 被剧本引用的商品不删（删了会让剧本关联悬空），逐个跳过并在 blocked 里回报
+   * 引用数，前端据此提示「可先在剧本库删除相关剧本」。
+   */
+  async removeMany(ids: number[]) {
+    const unique = [...new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!unique.length) throw new BizError(ERR.PARAM, '请先选择要删除的商品');
+    if (unique.length > 500) throw new BizError(ERR.PARAM, '单次最多删除 500 个商品，请分批操作');
+    const placeholders = unique.map((_, i) => `$${i + 1}`).join(',');
+    // 参数按位置逐个展开；只处理真实存在且未删除的（deleted_at IS NULL），已删的不重复计数
+    const existingRows = await this.db.many<{ id: number; title: string }>(
+      `SELECT id, title FROM products WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+      unique
+    );
+    const existing = existingRows || [];
+    if (!existing.length) return { success: true, deleted: 0, blocked: [], total: 0 };
+    const blocked: { id: number; title: string; scriptCount: number }[] = [];
+    const deletable: number[] = [];
+    for (const product of existing) {
+      const refs = await this.db.one<{ count: string }>(
+        `SELECT count(*)::text AS count FROM scripts WHERE product_ids @> $1::jsonb`,
+        [JSON.stringify([product.id])]
+      );
+      const scriptCount = Number(refs.count);
+      if (scriptCount > 0) blocked.push({ id: product.id, title: product.title, scriptCount });
+      else deletable.push(product.id);
+    }
+    if (deletable.length) {
+      await this.db.query(
+        `UPDATE products SET deleted_at = now() WHERE id IN (${deletable.map((_, i) => `$${i + 1}`).join(',')})`,
+        deletable
+      );
+    }
+    return { success: true, deleted: deletable.length, blocked, total: unique.length };
+  }
+
+  /**
+   * 一键添加商品（2026-10-07 客户新增）：识别店铺商品分享链接，返回预填信息（不落库）。
+   * 识别失败给出明确原因，前端回退到手动新建。
+   */
+  async importFromLink(text: string) {
+    try {
+      return await importFromShareLink(text);
+    } catch (err) {
+      throw new BizError(ERR.IMPORT_VALIDATE, (err as Error).message || '链接识别失败，请手动新建商品');
+    }
   }
 
   /** CSV 导入：首行为表头。 */
