@@ -1,0 +1,143 @@
+# 腾讯云轻量服务器（Ubuntu）单机部署 —— 低延迟优化版
+#
+# 与仓库根目录 docker-compose.yml 的区别（为什么迁移后延迟会大幅下降）：
+#   1. 全部组件（PG / API / 前端 / nginx）跑在同一台机器上，容器间 RTT < 1ms，
+#      取代原来「CloudBase 云托管 ↔ 境外 Supabase」每次请求几百毫秒的跨区往返；
+#   2. 去掉了 redis 与独立 worker 容器 —— 单实例部署用进程内调度器即可
+#      （代码默认实现，见 backend/src/modules/reception/scheduler.service.ts），
+#      省出约 300MB 内存，2 核 2G 也能稳跑；要横向扩容时再切回根目录全套 compose；
+#   3. PostgreSQL 按小内存机器调参（shared_buffers 256MB 等），并打开慢查询日志（≥500ms）；
+#   4. 启动命令修正为镜像内真实路径 backend/dist/...（根目录 compose 的
+#      `node dist/db/migrate.js` 在镜像里路径不存在，会启动失败）；
+#   5. 统一 TZ=Asia/Shanghai，备份/日志时间戳与业务一致；
+#   6. 日志轮转从 30×20m 收敛为 10×20m（轻量盘小，防写满）。
+#
+# 用法（在仓库根目录）：
+#   cp deploy/env.production.example .env   # 填 JWT_SECRET（或直接用 deploy/lighthouse/up.sh 自动生成）
+#   docker compose -f deploy/lighthouse/docker-compose.yml --env-file .env up -d --build
+
+name: cs-training
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: cs_training
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cs_training_pwd}
+      POSTGRES_DB: cs_training
+      TZ: Asia/Shanghai
+    # 小内存机器调参：shared_buffers 吃内存大头（256MB），effective_cache_size 是优化器提示值
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=100
+      -c log_min_duration_statement=500
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cs_training']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '20m'
+        max-file: '10'
+
+  api:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    environment:
+      PORT: 3000
+      # 库就在同一台机器上，走 compose 内网，RTT 亚毫秒级
+      DATABASE_URL: postgres://cs_training:${POSTGRES_PASSWORD:-cs_training_pwd}@postgres:5432/cs_training
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      USE_PG_MEM: 'false'
+      UPLOAD_DIR: /app/uploads
+      TZ: Asia/Shanghai
+      # 2G 内存机器上限 512MB，4G 可调到 1024
+      NODE_OPTIONS: --max-old-space-size=512
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/api/health | grep -q "\"status\":\"ok\""']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: '20m'
+        max-file: '10'
+    # migrate → seed 幂等，每次启动执行都安全；路径是镜像内真实路径 /app/backend/dist
+    command: ['sh', '-c', 'node backend/dist/db/migrate.js && node backend/dist/db/seed.js && node backend/dist/main.js']
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - '${WEB_PORT:-8080}:80'
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+      - web
+    logging:
+      driver: json-file
+      options:
+        max-size: '20m'
+        max-file: '10'
+    restart: unless-stopped
+
+  # 每日自动备份（方案 5.10：pg_dump + 保留 30 天）
+  backup:
+    image: postgres:15-alpine
+    environment:
+      DATABASE_URL: postgres://cs_training:${POSTGRES_PASSWORD:-cs_training_pwd}@postgres:5432/cs_training
+      BACKUP_KEEP: '30'
+      TZ: Asia/Shanghai
+    volumes:
+      - ../../backups:/backups
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        while true; do
+          pg_dump --format=custom --no-owner --no-privileges \
+            --file "/backups/cs_training_$(date +%Y%m%d-%H%M%S).dump" "$$DATABASE_URL"
+          echo "[backup] $(date '+%Y-%m-%d %H:%M:%S') 备份完成，清理超出 $$BACKUP_KEEP 份的旧备份"
+          ls -1t /backups/cs_training_*.dump 2>/dev/null | tail -n +$$((BACKUP_KEEP + 1)) | xargs -r rm -f
+          sleep 86400
+        done
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '20m'
+        max-file: '10'
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  uploads:
