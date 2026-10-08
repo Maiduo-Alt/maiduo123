@@ -16,7 +16,7 @@ import {
   Upload,
   message,
 } from 'antd';
-import { DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import { api, download, uploadImage } from '../api/client';
 
 export default function Products() {
@@ -37,6 +37,8 @@ export default function Products() {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkText, setLinkText] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
+  /** 使用说明：一键添加商品操作说明卡（2026-10-08 客户新增） */
+  const [guideOpen, setGuideOpen] = useState(false);
   const [form] = Form.useForm();
   // 筛选条（方案 F4-05：标题 / 商品ID、分类、价格区间、状态）
   const [filterKeyword, setFilterKeyword] = useState('');
@@ -239,6 +241,9 @@ export default function Products() {
           </Popconfirm>
           <Button icon={<ImportOutlined />} onClick={() => setLinkOpen(true)}>
             一键添加
+          </Button>
+          <Button icon={<QuestionCircleOutlined />} onClick={() => setGuideOpen(true)}>
+            使用说明
           </Button>
           <Button
             type="primary"
@@ -654,7 +659,7 @@ export default function Products() {
       >
         <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
           粘贴<strong>抖音、淘宝、京东</strong>的商品分享链接或整段分享文案，系统会自动识别商品信息并填入新建表单（商品ID
-          需手动填写）。三个平台均可自动带出标题；因平台对服务器访问有风控，价格、图片通常需要手动补充。识别失败时可改用「新建商品」手动录入。
+          需手动填写）。各平台识别能力：抖音标题/价格/图片全自动；淘宝标题/价格自动、图片需手补；京东标题/图片自动、价格需手填（平台对未登录访问隐藏价格）。识别失败时会自动提取分享文案中的标题兜底，也可改用「新建商品」手动录入。
         </Typography.Paragraph>
         <Input.TextArea
           rows={3}
@@ -662,6 +667,20 @@ export default function Products() {
           onChange={(e) => setLinkText(e.target.value)}
           placeholder={'例如：https://v.douyin.com/xxxxxx/\n或直接粘贴整段分享文案'}
         />
+      </Modal>
+
+      {/* 使用说明（2026-10-08 客户新增）：一键添加商品操作说明卡 */}
+      <Modal
+        open={guideOpen}
+        title="一键添加商品 · 使用说明"
+        onCancel={() => setGuideOpen(false)}
+        footer={null}
+        width={560}
+        destroyOnClose
+      >
+        <div style={{ maxHeight: '70vh', overflow: 'auto', textAlign: 'center' }}>
+          <img src="/guide/product-add-guide.png" alt="一键添加商品使用说明" style={{ width: '100%', maxWidth: 460 }} />
+        </div>
       </Modal>
     </Card>
   );
