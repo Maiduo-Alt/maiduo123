@@ -19,7 +19,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { BarChartOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, ShoppingOutlined } from '@ant-design/icons';
+import { BarChartOutlined, DeleteOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, ShoppingOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 
 export default function Scripts() {
@@ -49,6 +49,8 @@ export default function Scripts() {
   const [genTask, setGenTask] = useState<any>(null);
   /** 剧本统计（方案 F3-12） */
   const [stats, setStats] = useState<any>(null);
+  /** 使用说明：剧本管理操作说明卡（2026-10-08 客户新增） */
+  const [guideOpen, setGuideOpen] = useState(false);
   const createMode = Form.useWatch('createMode', form);
   const createWay = Form.useWatch('createWay', form);
   const productIds = Form.useWatch('productIds', form) as number[] | undefined;
@@ -284,6 +286,9 @@ export default function Scripts() {
             }}
           >
             剧本统计
+          </Button>
+          <Button icon={<QuestionCircleOutlined />} onClick={() => setGuideOpen(true)}>
+            使用说明
           </Button>
           <Button icon={<ReloadOutlined />} onClick={() => load()}>
             刷新
@@ -620,6 +625,20 @@ export default function Scripts() {
           </>
         )}
       </Drawer>
+
+      {/* 使用说明（2026-10-08 客户新增）：剧本管理操作说明卡 */}
+      <Modal
+        open={guideOpen}
+        title="剧本管理 · 使用说明"
+        onCancel={() => setGuideOpen(false)}
+        footer={null}
+        width={560}
+        destroyOnClose
+      >
+        <div style={{ maxHeight: '70vh', overflow: 'auto', textAlign: 'center' }}>
+          <img src="/guide/script-manage-guide.png" alt="剧本管理使用说明" style={{ width: '100%', maxWidth: 460 }} />
+        </div>
+      </Modal>
     </Card>
   );
 }
