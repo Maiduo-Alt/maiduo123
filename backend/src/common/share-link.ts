@@ -39,11 +39,15 @@ export function extractUrl(text: string): string {
 }
 
 /** 从分享文案本身提取商品标题。
- *  淘宝/京东分享格式：…「商品标题」点击链接直接打开（标题在直角引号里，最可靠）；
+ *  淘宝/京东分享格式（两种）：
+ *    「商品标题」（最常见）或 「「店铺名」商品标题」（店铺用内层引号包住，标题裸在外层引号里）；
  *  抖音分享格式：【抖音商城】<链接> 【店铺名】商品标题…（换行）长按复制此条消息…
  *  不依赖访问商品页，属于兜底手段。 */
 export function extractTitleFromShareText(text: string): string | null {
   const raw = String(text || '');
+  // 嵌套格式优先：「「店名」标题」
+  const nested = raw.match(/「「[^」]*」([^「」]{4,80})」/);
+  if (nested) return nested[1].trim();
   const corner = raw.match(/「([^」]{4,80})」/);
   if (corner) return corner[1].trim();
   const urlMatch = raw.match(/https?:\/\/[^\s"'<>，。；）)】\]]+/);
@@ -232,9 +236,14 @@ function userAgentFor(platform: SharePlatform): string {
 
 const PLATFORM_NAMES: Record<Exclude<SharePlatform, 'unknown'>, string> = { douyin: '抖音', taobao: '淘宝', jd: '京东' };
 
-/** 一键识别的入口：粘贴文本 → 抽链接 → 跳转到商品页按平台解析；
- *  页面被风控/纯 JS 渲染时降级为「分享文案标题 + 人工补充价格图片」。 */
-export async function importFromShareLink(text: string, fetchImpl: typeof fetch = fetch): Promise<ShareProductPreview> {
+/** 一键识别的入口：粘贴文本 → 抽链接 → （可选）无头浏览器抓取 → 跳转到商品页按平台解析；
+ *  页面被风控/纯 JS 渲染时降级为「分享文案标题 + 人工补充价格图片」。
+ *  @param scrapeImpl 无头浏览器抓取（deploy/scraper 服务）；识别不出或抛错时自动回退纯 HTTP。 */
+export async function importFromShareLink(
+  text: string,
+  fetchImpl: typeof fetch = fetch,
+  scrapeImpl?: (url: string) => Promise<{ title?: string; price?: number; originPrice?: number; coverUrl?: string; detailImages?: string[]; sourceUrl?: string } | null>
+): Promise<ShareProductPreview> {
   const url = extractUrl(text);
   const platform = detectPlatform(url);
   if (platform === 'unknown') {
@@ -244,6 +253,37 @@ export async function importFromShareLink(text: string, fetchImpl: typeof fetch 
   let sourceUrl = url;
   let data: Omit<ShareProductPreview, 'platform' | 'sourceUrl'> | null = null;
   let jdPrice: { price?: number; originPrice?: number } = {};
+  // 0) 无头浏览器抓取：能拿到完整数据（含价格/图片）就直接用；部分数据（如淘宝只有价格）与分享文案标题合并
+  if (scrapeImpl) {
+    try {
+      const scraped = await scrapeImpl(url);
+      if (scraped && (scraped.title || scraped.price || scraped.coverUrl)) {
+        const title = scraped.title || textTitle;
+        if (title) {
+          const hasImg = Boolean(scraped.coverUrl);
+          const hasPrice = Boolean(scraped.price);
+          return {
+            platform,
+            sourceUrl: scraped.sourceUrl || url,
+            title,
+            price: scraped.price,
+            originPrice: scraped.originPrice,
+            coverUrl: scraped.coverUrl,
+            detailImages: scraped.detailImages,
+            notice: !hasPrice
+              ? hasImg
+                ? `${PLATFORM_NAMES[platform]}网页端对未登录用户遮罩了价格，已自动填入标题与商品图，请手动填写价格`
+                : `${PLATFORM_NAMES[platform]}商品页抓取不完整，已预填标题；价格、图片请手动补充（也可直接手动新建商品）`
+              : !hasImg
+                ? `${PLATFORM_NAMES[platform]}商品图片未能抓取，已自动填入标题与价格，请手动补充图片`
+                : undefined,
+          };
+        }
+      }
+    } catch {
+      /* 抓取服务不可用：回退纯 HTTP 解析 */
+    }
+  }
   const ua = userAgentFor(platform);
   try {
     sourceUrl = await resolveRedirects(url, fetchImpl, ua);

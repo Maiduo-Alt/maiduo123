@@ -256,13 +256,45 @@ export class ProductsService {
 
   /**
    * 一键添加商品（2026-10-07 客户新增）：识别店铺商品分享链接，返回预填信息（不落库）。
+   * 识别顺序：无头浏览器抓取服务（deploy/scraper，能拿到价格/图片）→ 纯 HTTP 解析 → 分享文案标题兜底。
    * 识别失败给出明确原因，前端回退到手动新建。
    */
   async importFromLink(text: string) {
     try {
-      return await importFromShareLink(text);
+      return await importFromShareLink(text, fetch, (url) => this.scrapeWithBrowser(url));
     } catch (err) {
       throw new BizError(ERR.IMPORT_VALIDATE, (err as Error).message || '链接识别失败，请手动新建商品');
+    }
+  }
+
+  /**
+   * 调用无头浏览器抓取服务（同一 compose 网络里的 scraper 容器）。
+   * 任何失败（服务未部署/超时/对方风控）都返回 null，由上层回退，不影响主流程。
+   */
+  private async scrapeWithBrowser(url: string) {
+    const base = process.env.SCRAPER_URL || 'http://scraper:9090';
+    try {
+      const res = await fetch(`${base}/scrape`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url }),
+        signal: AbortSignal.timeout(75_000),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as any;
+      const preview = body?.preview;
+      // 部分结果也算数：淘宝经常只有价格（标题由分享文案补齐）
+      if (body?.error || !preview || (!preview.title && !preview.price && !preview.coverUrl)) return null;
+      return preview as {
+        title?: string;
+        price?: number;
+        originPrice?: number;
+        coverUrl?: string;
+        detailImages?: string[];
+        sourceUrl?: string;
+      };
+    } catch {
+      return null;
     }
   }
 

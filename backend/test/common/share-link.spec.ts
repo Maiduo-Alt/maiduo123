@@ -145,12 +145,16 @@ describe('分享链接识别（一键添加商品）', () => {
     expect(detectPlatform('https://3.cn/1A2b3C')).toBe('jd');
   });
 
-  it('淘宝/京东分享文案标题在「」里', () => {
+  it('淘宝/京东分享文案标题在「」里（含「「店名」标题」嵌套格式）', () => {
     expect(extractTitleFromShareText('【京东】https://3.cn/1A2b3C 「步履不停 休闲宽松多色廓形基础T恤圆领短袖上衣女」\n点击链接直接打开')).toBe(
       '步履不停 休闲宽松多色廓形基础T恤圆领短袖上衣女'
     );
     expect(extractTitleFromShareText('28￥ HU9046 abc￥ https://m.tb.cn/h.g2qXyZ CZ8901 「棉屿T恤女圆领短袖2024新款」\n复制打开淘宝')).toBe(
       '棉屿T恤女圆领短袖2024新款'
+    );
+    // 店铺名用内层引号、标题裸在外层引号里（真实淘宝分享格式）
+    expect(extractTitleFromShareText('【淘宝】7天无理由 https://e.tb.cn/h.x CZ028 「「来信」步履不停 翻领A版中长款风衣廓形文艺复古轻盈秋款21090」\n点击链接直接打开')).toBe(
+      '步履不停 翻领A版中长款风衣廓形文艺复古轻盈秋款21090'
     );
   });
 
@@ -193,5 +197,35 @@ describe('分享链接识别（一键添加商品）', () => {
     expect(preview.platform).toBe('jd');
     expect(preview.title).toBe('棉屿T恤女圆领短袖2024新款');
     expect(preview.price).toBeUndefined();
+  });
+
+  it('无头浏览器抓取（scrapeImpl）优先：拿到完整数据直接返回，不再走 HTTP', async () => {
+    const fakeFetch = (async () => {
+      throw new Error('HTTP 不应该被调用');
+    }) as unknown as typeof fetch;
+    const fakeScrape = async (url: string) => {
+      expect(url).toContain('v.douyin.com');
+      return {
+        title: '步履不停 休闲宽松多色廓形基础T恤圆领短袖上衣女',
+        price: 99.9,
+        originPrice: 129,
+        coverUrl: 'https://example.com/cover.jpg',
+        detailImages: ['https://example.com/d1.jpg'],
+        sourceUrl: 'https://haohuo.jinritemai.com/ecommerce/trade/detail/index.html?id=1',
+      };
+    };
+    const preview = await importFromShareLink('【抖音商城】https://v.douyin.com/j5sqPp7x6lE/ 【棉屿T恤】步履不停', fakeFetch, fakeScrape);
+    expect(preview.platform).toBe('douyin');
+    expect(preview.price).toBe(99.9);
+    expect(preview.coverUrl).toContain('cover.jpg');
+    expect(preview.notice).toBeUndefined();
+  });
+
+  it('scrapeImpl 返回 null 或抛错时：回退到纯 HTTP 解析', async () => {
+    const html = pageWithRenderData(PRODUCT);
+    const fakeFetch = (async () => new Response(html, { status: 200 })) as unknown as typeof fetch;
+    const preview = await importFromShareLink('https://haohuo.jinritemai.com/views/product/item2?id=1', fakeFetch, async () => null);
+    expect(preview.title).toContain('羽绒服');
+    expect(preview.price).toBe(399);
   });
 });

@@ -1,0 +1,13 @@
+{
+  "name": "cs-training-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "商品分享链接无头浏览器抓取服务：抖音/淘宝/京东商品页真实渲染后提取标题/价格/图片，供 api 一键添加商品使用",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
