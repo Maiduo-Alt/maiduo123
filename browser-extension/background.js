@@ -79,7 +79,8 @@ async function scrollAndWait() {
  * 在商品页上下文执行的提取函数（必须自包含，不能使用外部变量）。
  * 用户在浏览器已登录，所以能拿到登录后的完整价格与图片。
  */
-function extractProduct() {
+async function extractProduct() {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const host = location.hostname;
   const r = { platform: '', title: '', price: null, originPrice: null, coverUrl: '', detailImages: [], skus: [], attributes: [] };
   const meta = (prop) =>
@@ -232,16 +233,37 @@ function extractProduct() {
         '#choose-attrs .p-choose-type, #choose .p-choose-type, #choose-color, #choose-version, #choose-attr-1, #choose-attr-2'
       )
     );
-    // 商品属性：详情区参数表（Ptable/参数表格），新旧版容器都扫，去重
+    // 商品属性：详情区参数表（Ptable/参数表格），新旧版容器都扫，去重。
+    // 「规格与包装」tab 的内容是点击后才异步渲染进 DOM 的——之前只扫静态容器，
+    // 没点开过该 tab 时参数表根本不在 DOM 里，导致属性漏抓（2026-10-09 修复）：
+    // 先程序化激活该 tab，再等参数内容就绪（最多 4 秒），最后仍为空则全文档扫 dt/dd 兜底。
+    try {
+      const tabEl = [...document.querySelectorAll('.tab-main li, .tab-main div, [data-anchor]')].find(
+        (el) =>
+          /规格|参数/.test((el.textContent || '').trim()) &&
+          /detail/i.test(el.getAttribute('data-anchor') || el.getAttribute('data-href') || el.getAttribute('href') || '')
+      );
+      if (tabEl && !/curr|active|current|on/i.test(String(tabEl.className || ''))) tabEl.click();
+    } catch (e) {
+      /* 找不到 tab 就按已渲染处理 */
+    }
+    for (let i = 0; i < 10; i++) {
+      if (document.querySelector('#J-detail-pop .Ptable, .Ptable dt, .p-parameter-list li, .parameter2 li')) break;
+      await sleep(400);
+    }
     r.attributes = parseAttrs(
       [
+        document.querySelector('#J-detail-pop'),
         document.querySelector('#J-detail'),
         document.querySelector('#J-detail-content'),
         document.querySelector('.detail-content'),
         document.querySelector('.describe'),
         document.querySelector('.Ptable'),
+        document.querySelector('.p-parameter'),
+        document.querySelector('.p-parameter-list'),
+        document.querySelector('.parameter2'),
       ],
-      false
+      true
     );
   } else if (host.endsWith('taobao.com') || host.endsWith('tmall.com')) {
     r.platform = host.endsWith('tmall.com') ? '天猫' : '淘宝';
@@ -286,6 +308,11 @@ function extractProduct() {
       ],
       true
     );
+  }
+  // 兜底：属性仍为空时，全文档扫「含 ≥2 个 dt」的 dl 参数块（京东/淘宝通用）
+  if (!r.attributes.length) {
+    const dls = [...document.querySelectorAll('dl')].filter((dl) => dl.querySelectorAll('dt').length >= 2).slice(0, 30);
+    r.attributes = parseAttrs(dls, false);
   }
   if (!r.coverUrl && r.detailImages.length) r.coverUrl = r.detailImages[0];
   return r;
