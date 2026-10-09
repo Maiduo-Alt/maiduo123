@@ -8,7 +8,7 @@ const DICT_TYPES = [
   { code: 'bg', name: '买家咨询背景分类', scope: '用于《客户问题剧本》的背景筛选' },
   { code: 'qa', name: '买家咨询内容分类', scope: '用于《客户问题剧本》的内容筛选' },
   { code: 'script', name: '剧本分类', scope: '用于剧本列表筛选与任务范围限定' },
-  { code: 'product', name: '商品分类', scope: '用于商品库筛选与剧本关联' },
+  { code: 'product', name: '商品分类', scope: '用于商品库筛选与编辑；商品库页面的「分类管理」与这里维护的是同一份数据' },
   { code: 'tag', name: '商品场景标签', scope: '商品详情里的场景标签（如「出差便携」）' },
 ];
 
