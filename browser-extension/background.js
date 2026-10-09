@@ -289,6 +289,90 @@ async function extractProduct() {
       .slice(0, 30)
       .map((it) => ({ ...it, price: null, stock: null }));
   };
+  /**
+   * 映射京东 pc_detailpage_wareBusiness 接口响应（capture-jd.js 捕获）→ 采集结果。
+   * 必须内嵌在 extractProduct 内（executeScript 的 func 序列化时外部引用会丢失）。
+   * 字段结构来自 2026-10-09 WebBridge 抓包实测（商品 10236042154469）。
+   */
+  const mapJdWareBusiness = (wb) => {
+    const out = { title: '', price: null, originPrice: null, coverUrl: '', detailImages: [], skus: [], attributes: [] };
+    if (!wb || typeof wb !== 'object') return out;
+    const pnum = (s) => {
+      const m = String(s == null ? '' : s).replace(/,/g, '').match(/(\d+\.\d{1,2})/);
+      return m ? Number(m[1]) : null;
+    };
+    const jdImg = (u) => {
+      if (!u) return '';
+      if (u.startsWith('//')) return 'https:' + u;
+      if (u.startsWith('http')) return u;
+      if (u.startsWith('jfs/')) return 'https://img10.360buyimg.com/n1/' + u;
+      return '';
+    };
+    // 标题：去掉 seoTitle 尾部「【行情 报价...」噪音
+    const st = wb.skuHeadVO && wb.skuHeadVO.skuTitle;
+    if (st) out.title = String(st).replace(/【.*$/s, '').trim();
+    // 价格：到手价优先，划线价 op（页面价），m 为最高价参考
+    const pr = wb.price || {};
+    out.price = pnum(pr.finalPrice && pr.finalPrice.price);
+    // 划线价 = 京东价 op（页面删除线的对照价）；p 同为京东价；m 是市场价仅作兜底，不冒充满划线价
+    out.originPrice = pnum(pr.op) || pnum(pr.p) || pnum(pr.m);
+    // 主图：mainImageArea 封面 + carouselArea 轮播（siteType '1'=图片，'3'=视频跳过）
+    const mi = wb.mainImageVO || {};
+    out.coverUrl = jdImg(mi.mainImageArea && mi.mainImageArea.imageUrl);
+    const car = Array.isArray(mi.carouselArea) ? mi.carouselArea : [];
+    out.detailImages = [...new Set(car.filter((it) => it && String(it.siteType) === '1').map((it) => jdImg(it.imageUrl)).filter(Boolean))];
+    // SKU：colorSizeList 规格组（title=组名，buttons[].text=选项）笛卡尔组合；
+    // 组名含 码|尺寸|尺码 → size，其余 → name；库存取 colorSizeVO.stockInfo（stockState '33'=有货）
+    const cs = wb.colorSizeVO || {};
+    const stockInfo = cs.stockInfo || {};
+    const groups = (Array.isArray(cs.colorSizeList) ? cs.colorSizeList : [])
+      .map((g) => ({ name: String((g && g.title) || '').trim(), options: (Array.isArray(g && g.buttons) ? g.buttons : []).map((b) => String((b && b.text) || '').trim()).filter(Boolean) }))
+      .filter((g) => g.options.length);
+    const sizeLike = (n) => /码|尺寸|尺码/.test(n || '');
+    if (groups.length) {
+      let items = [];
+      const nameGroups = groups.filter((g) => !sizeLike(g.name));
+      const sizeGroups = groups.filter((g) => sizeLike(g.name));
+      if (nameGroups.length && sizeGroups.length) {
+        const restCombos = sizeGroups.reduce((acc, g) => acc.flatMap((a) => g.options.map((o) => (a ? a + '/' + o : o))), ['']);
+        items = nameGroups[0].options.flatMap((n) => restCombos.map((s) => ({ name: n, size: s })));
+      } else if (groups.length >= 2) {
+        const [first, ...rest] = groups;
+        const restCombos = rest.reduce((acc, g) => acc.flatMap((a) => g.options.map((o) => (a ? a + '/' + o : o))), ['']);
+        items = first.options.flatMap((n) => restCombos.map((s) => ({ name: n, size: s })));
+      } else if (sizeGroups.length) {
+        items = sizeGroups[0].options.map((o) => ({ name: '', size: o }));
+      } else {
+        items = nameGroups[0] ? nameGroups[0].options.map((o) => ({ name: o, size: '' })) : [];
+      }
+      if (items.length > 30) {
+        items = groups.flatMap((g) => g.options.map((o) => (sizeLike(g.name) ? { name: '', size: o } : { name: o, size: '' })));
+      }
+      const seen = new Set();
+      items = items.filter((it) => { const k = it.name + '|' + it.size; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 30);
+      // 库存：按钮 skuId 仅对应默认组合，无法精确映射笛卡尔行 → 有任一 stockState 为缺货('34')时标注，否则视为有货
+      const states = Object.values(stockInfo).map((s) => s && s.stockState);
+      const allIn = states.length && states.every((s) => s && s !== '34');
+      out.skus = items.map((it) => ({ ...it, price: null, stock: allIn ? 1 : null }));
+    }
+    // 属性：attributes + coreAttributes（labelName/labelValue），跳过「店铺」「商品编号」噪声
+    const SKIP = /^(店铺|商品编号|商品名称)$/;
+    const seenA = new Set();
+    const pushA = (k, v) => {
+      k = String(k || '').replace(/[：:\s]+$/, '').trim();
+      v = String(v || '').replace(/\s+/g, ' ').trim();
+      if (!k || !v || SKIP.test(k) || k.length > 20 || v.length > 80) return;
+      const key = k + '|' + v;
+      if (seenA.has(key)) return;
+      seenA.add(key);
+      out.attributes.push({ name: k, value: v });
+    };
+    const pa = wb.productAttributeVO || {};
+    (Array.isArray(pa.coreAttributes) ? pa.coreAttributes : []).forEach((a) => pushA(a && a.labelName, a && a.labelValue));
+    (Array.isArray(pa.attributes) ? pa.attributes : []).forEach((a) => pushA(a && a.labelName, a && a.labelValue));
+    out.attributes = out.attributes.slice(0, 40);
+    return out;
+  };
   // img.src 属性反映懒加载后的真实地址；getAttribute 可能拿到占位图，所以优先属性
   const imgs = [...document.querySelectorAll('img')]
     .map((i) => i.src || abs(i.getAttribute('data-src') || i.getAttribute('data-lazy-src') || i.getAttribute('src')))
@@ -297,66 +381,29 @@ async function extractProduct() {
   if (host.endsWith('jd.com')) {
     r.platform = '京东';
     // 新版页面（2026 全面重构，旧选择器全部失效）优先使用捕获的 wareBusiness 接口数据：
-    // capture-jd.js 在 document_start 挂钩 fetch/XHR 拿到 api.m.jd.com 响应，
-    // 含标题/到手价/划线价/主图/画廊/规格组/商品属性，全部结构化（WebBridge 实地验证 2026-10-09）
-    const wb = window.__jdWareBusiness && window.__jdWareBusiness.result;
-    const jdImg = (p) => (p ? (String(p).startsWith('jfs/') ? 'https://img10.360buyimg.com/n1/' + p : abs(p)) : '');
-    const pnum = (v) => (typeof v === 'number' ? v : num(v));
+    // capture-jd.js 在 document_start 挂钩 fetch/XHR/script 拿 api.m.jd.com 响应，经 localStorage 传递。
+    // 两级读取：同世界 window 快通道 + localStorage 主通道（v1.3.1）
+    let wb = null;
+    try {
+      const capRaw = localStorage.getItem('cs-training-jd-capture');
+      const cap = capRaw ? JSON.parse(capRaw) : null;
+      wb = cap && cap.data && cap.data.result ? cap.data.result : null;
+    } catch (e) {
+      wb = null;
+    }
+    if (!wb && window.__jdWareBusiness && window.__jdWareBusiness.result) wb = window.__jdWareBusiness.result;
     if (wb) {
-      if (wb.skuHeadVO && wb.skuHeadVO.skuTitle) r.title = String(wb.skuHeadVO.skuTitle).trim();
-      const pr = wb.price || {};
-      const fp = pr.finalPrice && pr.finalPrice.price;
-      const pv = fp !== undefined && fp !== null && fp !== '' ? pnum(fp) : pnum(pr.p);
-      if (pv !== null && pv !== undefined) r.price = pv;
-      const opv = pnum(pr.op);
-      if (opv !== null && opv !== undefined && opv !== r.price) r.originPrice = opv;
-      r.coverUrl = jdImg(wb.mainImageVO && wb.mainImageVO.mainImageArea && wb.mainImageVO.mainImageArea.imageUrl);
-      const car = (wb.mainImageVO && wb.mainImageVO.carouselArea) || [];
-      r.detailImages = uniq(
-        car.filter((x) => x && String(x.siteType) === '1' && x.imageUrl).map((x) => jdImg(x.imageUrl))
-      ).slice(0, 10);
-      // SKU 规格组：colorSizeVO.colorSizeList（title=组名，buttons[].text=选项，含每个 skuId 的库存）
-      const groups = ((wb.colorSizeVO && wb.colorSizeVO.colorSizeList) || [])
-        .map((g) => ({
-          name: String((g && g.title) || ''),
-          options: ((g && g.buttons) || []).map((b) => String((b && b.text) || '')).filter(Boolean),
-        }))
-        .filter((g) => g.options.length);
-      if (groups.length) {
-        const sizeIdx = groups.findIndex((g) => /码|尺寸|尺码/.test(g.name));
-        const nameIdx = sizeIdx === 0 ? (groups.length > 1 ? 1 : 0) : 0;
-        const gName = groups[nameIdx];
-        const gSize = sizeIdx >= 0 && sizeIdx !== nameIdx ? groups[sizeIdx] : null;
-        let items = [];
-        if (gSize) items = gName.options.flatMap((n) => gSize.options.map((s) => ({ name: n, size: s })));
-        else items = gName.options.map((n) => ({ name: n, size: '' }));
-        const seen = new Set();
-        r.skus = items
-          .filter((it) => {
-            const k = it.name + '|' + it.size;
-            if (seen.has(k)) return false;
-            seen.add(k);
-            return true;
-          })
-          .slice(0, 30)
-          .map((it) => ({ ...it, price: null, stock: null }));
-      }
-      // 商品属性：attributes + coreAttributes，跳过店铺/商品编号噪声
-      const skip = { 店铺: 1, 商品编号: 1 };
-      const seenA = new Set();
-      const pushA = (k, v) => {
-        k = String(k || '').trim();
-        v = String(v || '').trim();
-        if (!k || !v || skip[k] || k.length > 20 || v.length > 80) return;
-        const key = k + '|' + v;
-        if (seenA.has(key)) return;
-        seenA.add(key);
-        r.attributes.push({ name: k, value: v });
-      };
-      const pav = wb.productAttributeVO || {};
-      (pav.attributes || []).forEach((a) => pushA(a.labelName, a.labelValue));
-      (pav.coreAttributes || []).forEach((a) => pushA(a.labelName, a.labelValue));
-      r.attributes = r.attributes.slice(0, 40);
+      const mapped = mapJdWareBusiness(wb);
+      r.captureWb = true;
+      if (mapped.title) r.title = mapped.title;
+      if (mapped.price !== null && mapped.price !== undefined) r.price = mapped.price;
+      if (mapped.originPrice !== null && mapped.originPrice !== undefined) r.originPrice = mapped.originPrice;
+      if (mapped.coverUrl) r.coverUrl = mapped.coverUrl;
+      if (mapped.detailImages.length) r.detailImages = mapped.detailImages;
+      if (mapped.skus.length) r.skus = mapped.skus;
+      if (mapped.attributes.length) r.attributes = mapped.attributes;
+    } else {
+      r.captureWb = false;
     }
     // 以下 DOM 采集仅在接口数据缺失时兜底
     // 新版京东页标题主要在 document.title：「名称【行情 报价...】-京东」，需清理后缀

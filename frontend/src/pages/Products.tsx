@@ -435,6 +435,10 @@ export default function Products() {
         6
       );
       if (!data.price || !data.coverUrl) message.warning('价格或主图未采集完整，请手动补充', 6);
+      // 京东接口数据未捕获到时本次为 DOM 兜底采集（详情图/属性可能不全），明确提示用户刷新商品页后重试
+      if (data.captureWb === false && data.platform === '京东') {
+        message.warning('未捕获到京东接口数据，本次为页面兜底采集（详情图/属性可能不全），建议回到商品页按 F5 刷新后重新采集', 8);
+      }
     } catch {
       /* 忽略坏数据 */
     }
