@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Alert,
+  AutoComplete,
   Button,
   Card,
   Drawer,
@@ -30,6 +31,10 @@ export default function Scripts() {
   const [batchOpen, setBatchOpen] = useState(false);
   /** 表格勾选的剧本 id（批量删除用） */
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  /** 批量改分类弹窗（2026-10-09 客户新增） */
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [categoryValue, setCategoryValue] = useState<string>('');
+  const [categorySaving, setCategorySaving] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [options, setOptions] = useState<{
     backgrounds: any[];
@@ -229,6 +234,29 @@ export default function Scripts() {
     }
   };
 
+  /** 批量改分类：勾选的剧本统一归到一个分类，新分类名会自动登记进《数据字典》 */
+  const applyCategory = async () => {
+    const name = categoryValue.trim();
+    if (!name) {
+      message.warning('请选择或输入分类名称');
+      return;
+    }
+    setCategorySaving(true);
+    try {
+      const res = await api<any>('/scripts/batch-update-category', { method: 'POST', body: { ids: selectedIds, category: name } });
+      message.success(`已将 ${res.updated} 个剧本的分类改为「${res.category}」`);
+      setCategoryOpen(false);
+      setCategoryValue('');
+      setSelectedIds([]);
+      load({ page: 1 });
+      loadOptions();
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
   return (
     <Card
       className="page-card"
@@ -270,6 +298,15 @@ export default function Scripts() {
             onChange={(v) => load({ styleId: v, page: 1 })}
             options={(options.styles || []).map((s: any) => ({ value: s.id, label: s.name }))}
           />
+          <Button
+            disabled={!selectedIds.length}
+            onClick={() => {
+              setCategoryValue('');
+              setCategoryOpen(true);
+            }}
+          >
+            批量改分类{selectedIds.length ? `（${selectedIds.length}）` : ''}
+          </Button>
           <Popconfirm
             title={`确认删除选中的 ${selectedIds.length} 个剧本？`}
             description="删除后不可恢复；历史接待明细不受影响"
@@ -395,6 +432,31 @@ export default function Scripts() {
             </Button>
           )}
         </div>
+      </Modal>
+
+      {/* 批量改分类（2026-10-09 客户新增）：勾选剧本后统一归到一个分类，新分类自动登记进字典 */}
+      <Modal
+        open={categoryOpen}
+        title={`批量修改分类（已选 ${selectedIds.length} 个剧本）`}
+        onCancel={() => setCategoryOpen(false)}
+        onOk={applyCategory}
+        okText="确认修改"
+        cancelText="取消"
+        confirmLoading={categorySaving}
+        width={420}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          从字典中选择已有分类，或直接输入新分类名（新分类会自动登记到《数据字典》的「剧本分类」中）。
+        </Typography.Paragraph>
+        <AutoComplete
+          value={categoryValue}
+          onChange={(v) => setCategoryValue(v)}
+          style={{ width: '100%' }}
+          placeholder="选择或输入分类名称"
+          options={(options.scriptCategories || []).map((c: any) => ({ value: c.name, label: `${c.name}（现有 ${c.scriptCount ?? 0} 个剧本）` }))}
+          filterOption={(input, option) => String(option?.value || '').includes(input)}
+        />
       </Modal>
 
       <Modal

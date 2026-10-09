@@ -325,6 +325,35 @@ export class ScriptsService {
     return { success: true, deleted: existing.length, total: unique.length };
   }
 
+  /**
+   * 批量修改剧本分类（2026-10-09 客户新增）：配合剧本列表的分类筛选，
+   * 把存量剧本归到字典里的分类。分类名若不在《数据字典》的「剧本分类」里会自动登记，
+   * 保证筛选框选项与剧本数据始终同源。
+   */
+  async updateCategoryMany(ids: number[], category: string) {
+    const name = String(category || '').trim();
+    if (!name) throw new BizError(ERR.PARAM, '请填写要设置的分类');
+    if (name.length > 30) throw new BizError(ERR.PARAM, '分类名称不能超过 30 个字');
+    const unique = [...new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!unique.length) throw new BizError(ERR.PARAM, '请先选择要修改的剧本');
+    if (unique.length > 500) throw new BizError(ERR.PARAM, '单次最多修改 500 个剧本，请分批操作');
+    // SELECT 只用 id 占位（$1 起）；UPDATE 里 category 占 $1、id 占 $2 起
+    const existingRows = await this.db.many<{ id: number }>(
+      `SELECT id FROM scripts WHERE id IN (${unique.map((_, i) => `$${i + 1}`).join(',')})`,
+      unique
+    );
+    const existing = (existingRows || []).map((row) => Number(row.id));
+    if (!existing.length) return { success: true, updated: 0, total: 0 };
+    await this.db.query(`UPDATE scripts SET category = $1 WHERE id IN (${existing.map((_, i) => `$${i + 2}`).join(',')})`, [name, ...existing]);
+    // 分类名自动登记进字典（type=script），与筛选框/新建表单选项保持同源
+    const dictRow = await this.db.one<{ id: number }>(`SELECT id FROM categories WHERE type = 'script' AND name = $1`, [name]);
+    if (!dictRow) {
+      const maxSort = await this.db.one<{ max: number }>(`SELECT COALESCE(max(sort),0)::int AS max FROM categories WHERE type = 'script'`);
+      await this.db.query(`INSERT INTO categories (type, name, parent_id, sort) VALUES ('script',$1,NULL,$2)`, [name, (maxSort?.max || 0) + 1]);
+    }
+    return { success: true, updated: existing.length, total: unique.length, category: name };
+  }
+
   /** 批量生成：背景 × 内容 交叉组合，风格按占比分配。 */
   async batchGenerate(
     accountId: number,

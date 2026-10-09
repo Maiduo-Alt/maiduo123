@@ -78,4 +78,11 @@ export class ScriptsController {
   removeMany(@Body() body: { ids: number[] }) {
     return this.scripts.removeMany(body.ids || []);
   }
+
+  /** 批量修改剧本分类（2026-10-09 客户新增）：勾选剧本后统一归到一个分类。 */
+  @Roles('admin', 'leader')
+  @Post('batch-update-category')
+  updateCategoryMany(@Body() body: { ids: number[]; category?: string }) {
+    return this.scripts.updateCategoryMany(body.ids || [], body.category || '');
+  }
 }
