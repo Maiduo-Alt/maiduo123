@@ -36,6 +36,27 @@ chrome.action.onClicked.addListener(async (tab) => {
     payload = null;
   }
   if (payload) payload.extensionVersion = chrome.runtime.getManifest().version;
+  // 京东：PC 页骨架化导致规格/参数经常抓不到；后台直连移动版商品页（带登录态 Cookie），
+  // 内嵌 _itemInfo.skuPro 有完整规格组（propName+propSeq），登录后参数表也可能服务端渲染（2026-10-09 v1.2.0）
+  if (payload && payload.platform === '京东') {
+    const m = (tab.url || '').match(/item\.jd\.com\/(\d+)\.html/);
+    if (m) {
+      try {
+        const resp = await fetch(`https://item.m.jd.com/product/${m[1]}.html`, { credentials: 'include' });
+        if (resp.ok) {
+          const html = await resp.text();
+          if (!payload.skus || !payload.skus.length) {
+            payload.skus = parseJdMobileSkus(html);
+          }
+          if (!payload.attributes || !payload.attributes.length) {
+            payload.attributes = parseJdMobileAttrs(html);
+          }
+        }
+      } catch {
+        /* 移动页拿不到就退回 PC 页已采集的数据 */
+      }
+    }
+  }
   if (!payload || (!payload.title && !payload.price)) {
     await chrome.storage.local.set({
       quickAddError: '未能从当前页面识别商品信息，请确认打开的是商品详情页、页面加载完成且已登录',
@@ -73,6 +94,89 @@ async function scrollAndWait() {
   };
   for (let i = 0; i < 16 && !ready(); i++) await sleep(500);
   return ready();
+}
+
+/**
+ * 从京东移动版商品页 HTML 内嵌数据解析 SKU 规格组（沙箱已验证结构：window._itemInfo 静态 JSON 里的
+ * "saleProp":{"1":"颜色","2":"尺码"} + "salePropSeq":{"1":[...],"2":[...]}，无需登录；
+ * skuPro 是运行时 JS 拼的，静态 HTML 里没有，不能用它）。
+ * 第一组作规格名，组名含「码/尺寸」的作尺码；笛卡尔组合，最多 30 个。
+ */
+function parseJdMobileSkus(html) {
+  try {
+    const pName = html.match(/"saleProp":(\{[^{}]*\})/);
+    const pSeq = html.match(/"salePropSeq":(\{[^{}]*\})/);
+    if (!pName || !pSeq) return [];
+    const nameMap = JSON.parse(pName[1]);
+    const seq = JSON.parse(pSeq[1]);
+    const groups = Object.keys(nameMap)
+      .map((k) => ({ name: String(nameMap[k] || ''), options: (seq[k] || []).map(String) }))
+      .filter((g) => g.options.length);
+    if (!groups.length) return [];
+    const sizeIdx = groups.findIndex((g) => /码|尺寸|尺码/.test(g.name));
+    const nameIdx = sizeIdx === 0 ? (groups.length > 1 ? 1 : 0) : 0;
+    const gName = groups[nameIdx];
+    const gSize = sizeIdx >= 0 && sizeIdx !== nameIdx ? groups[sizeIdx] : null;
+    let items = [];
+    if (gSize) items = gName.options.flatMap((n) => gSize.options.map((s) => ({ name: n, size: s })));
+    else items = gName.options.map((n) => ({ name: n, size: '' }));
+    const seen = new Set();
+    return items
+      .filter((it) => {
+        const k = it.name + '|' + it.size;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .slice(0, 30)
+      .map((it) => ({ ...it, price: null, stock: null }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 从京东移动版商品页 HTML 解析服务端渲染的商品参数（登录后解锁「商品参数」）。
+ * 只扫参数容器（.Ptable/.p-parameter/.parameter2 等），绝不做全文档扫描——
+ * cd.jd.com 描述接口的教训：全 body 扫会把页脚导航（购物指南/配送方式…）当属性（2026-10-09）。
+ */
+function parseJdMobileAttrs(html) {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const roots = ['.Ptable', '.p-parameter', '.p-parameter-list', '.parameter2', '#J-detail-pop']
+      .map((s) => doc.querySelector(s))
+      .filter(Boolean);
+    if (!roots.length) return [];
+    const out = [];
+    const seen = new Set();
+    const push = (k, v) => {
+      k = String(k || '').replace(/[：:\s]+$/, '').trim();
+      v = String(v || '').replace(/\s+/g, ' ').trim();
+      if (!k || !v || k.length > 20 || v.length > 80) return;
+      const key = k + '|' + v;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ name: k, value: v });
+    };
+    for (const root of roots) {
+      root.querySelectorAll('tr').forEach((tr) => {
+        const cells = [...tr.querySelectorAll('th,td')].map((c) => (c.textContent || '').trim()).filter(Boolean);
+        if (cells.length >= 2) for (let i = 0; i + 1 < cells.length; i += 2) push(cells[i], cells[i + 1]);
+      });
+      root.querySelectorAll('dt').forEach((dt) => {
+        const dd = dt.nextElementSibling;
+        if (dd && dd.tagName === 'DD') push(dt.textContent, dd.textContent);
+      });
+      root.querySelectorAll('li').forEach((li) => {
+        const t = (li.textContent || '').trim();
+        const m = t.match(/^([^：:]{1,20})[：:]\s*(\S.{0,79})$/);
+        if (m) push(m[1], m[2]);
+      });
+    }
+    return out.slice(0, 40);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -213,9 +317,22 @@ async function extractProduct() {
     const specImg = document.querySelector('#spec-img') || document.querySelector('.main-img img');
     r.coverUrl = (specImg && specImg.src) || abs(specImg?.getAttribute?.('src') || '') || meta('og:image');
     r.detailImages = uniq(
-      imgs.filter(
-        (u) => u.includes('360buyimg.com') && /jfs|\/n1\//.test(u) && !/icon|logo|sprite|gif/i.test(u)
-      )
+      [...document.querySelectorAll('img')]
+        .filter((i) => {
+          // 排除页头/页脚/服务/推荐/悬浮区的图标（公共购物车、企、JD logo 等都从这里混入，2026-10-09 沙箱确认）
+          if (
+            i.closest &&
+            i.closest(
+              '[class*=footer],[id*=footer],[class*=header],[id*=header],[class*=service],[id*=service],[class*=recommend],[id*=recommend],[class*=toolbar],[class*=suspend],[class*=copyright],[class*=popover],[class*=qrcode]'
+            )
+          )
+            return false;
+          const u = i.src || i.getAttribute('data-src') || i.getAttribute('data-lazy-src') || i.getAttribute('src') || '';
+          if (!u.includes('360buyimg.com') || !/jfs|\/n1\//.test(u) || /pcpubliccms|icon|logo|sprite|gif|blank/i.test(u)) return false;
+          const w = i.naturalWidth || 0;
+          return !w || w >= 150;
+        })
+        .map((i) => i.src || abs(i.getAttribute('data-src') || i.getAttribute('data-lazy-src') || i.getAttribute('src') || ''))
     ).slice(0, 5);
     // 商品描述区（详情页长图）优先：接待页详情展示要的是这些图；画廊图作为补充，合并去重最多 10 张
     const descEls = [
@@ -239,36 +356,9 @@ async function extractProduct() {
         '#choose-attrs .p-choose-type, #choose .p-choose-type, #choose-color, #choose-version, #choose-attr-1, #choose-attr-2'
       )
     );
-    // 商品属性：优先直调京东描述接口——返回的 HTML 里自带「规格与包装」参数表，
-    // 不依赖 tab 是否点开、也不受新版页面结构调整影响（2026-10-09 v1.1.0）。
-    // 接口失败（CORS/频控）再退回「程序化激活 tab + 等待渲染」方案。
-    const skuMatch = location.pathname.match(/\/(\d+)\.html/);
-    const skuId = skuMatch && skuMatch[1];
-    if (skuId) {
-      try {
-        const resp = await fetch(
-          `https://cd.jd.com/description/channel?skuId=${skuId}&mainSkuId=${skuId}&charset=utf-8&cdn=2&isGeek=0`,
-          { credentials: 'include' }
-        );
-        if (resp.ok) {
-          const html = await resp.text();
-          const descDoc = new DOMParser().parseFromString(html, 'text/html');
-          const apiAttrs = parseAttrs(
-            [
-              descDoc.querySelector('.Ptable'),
-              descDoc.querySelector('.p-parameter'),
-              descDoc.querySelector('.parameter2'),
-              descDoc.querySelector('#J-detail-pop'),
-              descDoc.body,
-            ],
-            true
-          );
-          if (apiAttrs.length) r.attributes = apiAttrs;
-        }
-      } catch (e) {
-        /* 接口失败走 tab 兜底方案 */
-      }
-    }
+    // 商品属性：cd.jd.com 描述接口已废弃（对第三方商品只返回页脚导航垃圾，2026-10-09 沙箱验证），
+    // 改由后台直连移动版商品页解析（见 parseJdMobileAttrs）；这里只保留 PC 页 DOM 采集：
+    // 「规格与包装」tab 内容点击后才渲染——程序化激活该 tab，等参数内容就绪（最多 4 秒）。
     if (!r.attributes.length) {
       // 「规格与包装」tab 的内容是点击后才异步渲染进 DOM 的：先程序化激活该 tab，再等参数内容就绪（最多 4 秒）
       try {
@@ -349,9 +439,11 @@ async function extractProduct() {
       true
     );
   }
-  // 兜底：属性仍为空时，全文档扫「含 ≥2 个 dt」的 dl 参数块（京东/淘宝通用）
+  // 兜底：属性仍为空时，在详情区（#J-detail）内扫「含 ≥2 个 dt」的 dl 参数块；
+  // 必须在详情区内——全文档扫会把页脚导航 dl（购物指南/配送方式…）当属性
   if (!r.attributes.length) {
-    const dls = [...document.querySelectorAll('dl')].filter((dl) => dl.querySelectorAll('dt').length >= 2).slice(0, 30);
+    const scope = document.querySelector('#J-detail') || document.querySelector('.detail') || document.body;
+    const dls = [...scope.querySelectorAll('dl')].filter((dl) => dl.querySelectorAll('dt').length >= 2).slice(0, 30);
     r.attributes = parseAttrs(dls, false);
   }
   if (!r.coverUrl && r.detailImages.length) r.coverUrl = r.detailImages[0];
