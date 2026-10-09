@@ -160,6 +160,16 @@ function extractProduct() {
         (u) => u.includes('360buyimg.com') && /jfs|\/n1\//.test(u) && !/icon|logo|sprite|gif/i.test(u)
       )
     ).slice(0, 5);
+    // 商品描述区（详情页长图）优先：接待页详情展示要的是这些图；画廊图作为补充，合并去重最多 10 张
+    const descEls = [
+      ...document.querySelectorAll('#J-detail-content img, .detail-content img, .describe img'),
+    ];
+    const descImgs = uniq(
+      descEls
+        .map((i) => i.src || abs(i.getAttribute('data-src') || i.getAttribute('src')))
+        .filter((u) => u && u.includes('360buyimg.com') && !/blank|icon|logo|spacer|gif|1x1/i.test(u))
+    );
+    r.detailImages = uniq([...descImgs, ...r.detailImages]).slice(0, 10);
     // SKU 规格组：新版页 #choose-attrs，旧版页 #choose/#choose-color/#choose-version 等
     r.skus = buildSkus(
       document.querySelectorAll(
@@ -187,6 +197,16 @@ function extractProduct() {
     r.detailImages = uniq(
       imgs.filter((u) => u.includes('alicdn.com') && /imgextra|wwcdn/.test(u) && !/icon|logo|tfs|sprite|gif/i.test(u))
     ).slice(0, 5);
+    // 商品描述区（详情页长图）优先，画廊图补充，合并去重最多 10 张
+    const descEls = [...document.querySelectorAll('#J_DescContent img, .description img')];
+    const descImgs = uniq(
+      descEls
+        .map((i) => i.src || abs(i.getAttribute('data-src') || i.getAttribute('src')))
+        .filter(
+          (u) => u && u.includes('alicdn.com') && /imgextra|uploaded/i.test(u) && !/blank|icon|logo|sprite|gif|1x1/i.test(u)
+        )
+    );
+    r.detailImages = uniq([...descImgs, ...r.detailImages]).slice(0, 10);
     // SKU 规格组：淘宝 .J_Prop（.tb-property-type 组名 + li 选项），天猫 dl.tm-sale-prop
     r.skus = buildSkus(document.querySelectorAll('.tb-key .J_Prop, .tb-skin .J_Prop, dl.tm-sale-prop'));
   }

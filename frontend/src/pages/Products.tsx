@@ -603,7 +603,7 @@ export default function Products() {
               </Space>
             </Space>
           </Form.Item>
-          <Form.Item label="商品详情图" tooltip="最多 5 张，用于接待页商品卡片与详情展示">
+          <Form.Item label="商品详情图" tooltip="最多 10 张，用于接待页商品卡片与详情展示">
             <Upload
               listType="picture-card"
               accept="image/*"
@@ -633,7 +633,7 @@ export default function Products() {
                 setDetailImages(filtered);
               }}
             >
-              {(detailImages || []).length >= 5 ? null : (
+              {(detailImages || []).length >= 10 ? null : (
                 <div>
                   <PlusOutlined />
                   <div style={{ marginTop: 8 }}>上传详情图</div>
