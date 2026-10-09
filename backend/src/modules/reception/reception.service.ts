@@ -1277,7 +1277,7 @@ export class ReceptionService implements OnModuleInit {
        * 所以会话快照里的商品要把属性字段一次带全（规格 SKU、服务承诺、适用场景、库存、划线价、
        * 分类、详情图、上架状态），前端弹窗直接渲染这些数据，不再另发请求。
        */
-      `SELECT p.id, p.product_no AS "productNo", p.title, p.price, p.cover_url AS "coverUrl", p.skus, p.services,
+      `SELECT p.id, p.product_no AS "productNo", p.title, p.price, p.cover_url AS "coverUrl", p.skus, p.attributes, p.services,
               p.scenes, p.stock, p.origin_price AS "originPrice", p.category, p.status,
               p.detail_images AS "detailImages"
        FROM products p WHERE p.id IN (${ids.map((_, i) => `$${i + 1}`).join(',')}) AND p.deleted_at IS NULL ORDER BY p.id`,

@@ -16,6 +16,7 @@ export interface ProductInput {
   originPrice?: number;
   stock?: number;
   skus?: any[];
+  attributes?: any[];
   services?: string[];
   scenes?: string[];
   category?: string;
@@ -58,7 +59,7 @@ export class ProductsService {
     const total = await this.db.one<{ count: string }>(`SELECT count(*)::text AS count FROM products p WHERE ${whereSql}`, args);
     const rows = await this.db.many<any>(
       `SELECT p.id, p.product_no AS "productNo", p.title, p.cover_url AS "coverUrl", p.price, p.origin_price AS "originPrice",
-              p.stock, p.skus, p.services, p.scenes, p.category, p.status
+              p.stock, p.skus, p.attributes, p.services, p.scenes, p.category, p.status
        FROM products p WHERE ${whereSql}
        ORDER BY p.id DESC OFFSET $${args.length + 1} LIMIT $${args.length + 2}`,
       [...args, offset, limit]
@@ -141,7 +142,7 @@ export class ProductsService {
   async detail(id: number) {
     const row = await this.db.one(
       `SELECT p.id, p.product_no AS "productNo", p.title, p.cover_url AS "coverUrl", p.detail_images AS "detailImages",
-              p.price, p.origin_price AS "originPrice", p.stock, p.skus, p.services, p.scenes, p.category, p.status
+              p.price, p.origin_price AS "originPrice", p.stock, p.skus, p.attributes, p.services, p.scenes, p.category, p.status
        FROM products p WHERE p.id = $1 AND p.deleted_at IS NULL`,
       [id]
     );
@@ -159,8 +160,8 @@ export class ProductsService {
     const exists = await this.db.one(`SELECT id FROM products WHERE product_no = $1`, [input.productNo]);
     if (exists) throw new BizError(ERR.PARAM, '商品ID已存在');
     const row = await this.db.one<{ id: number }>(
-      `INSERT INTO products (product_no, title, cover_url, detail_images, price, origin_price, stock, skus, services, scenes, category, status)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12) RETURNING id`,
+      `INSERT INTO products (product_no, title, cover_url, detail_images, price, origin_price, stock, skus, attributes, services, scenes, category, status)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13) RETURNING id`,
       [
         input.productNo,
         input.title,
@@ -170,6 +171,7 @@ export class ProductsService {
         input.originPrice ?? null,
         input.stock ?? 0,
         JSON.stringify(input.skus || []),
+        JSON.stringify(input.attributes || []),
         JSON.stringify(input.services || []),
         JSON.stringify(input.scenes || []),
         input.category || '未分类',
@@ -187,8 +189,9 @@ export class ProductsService {
                            detail_images = COALESCE($4::jsonb, detail_images),
                            price = COALESCE($5, price), origin_price = COALESCE($6, origin_price),
                            stock = COALESCE($7, stock), skus = COALESCE($8::jsonb, skus),
-                           services = COALESCE($9::jsonb, services), scenes = COALESCE($10::jsonb, scenes),
-                           category = COALESCE($11, category), status = COALESCE($12, status)
+                           attributes = COALESCE($9::jsonb, attributes),
+                           services = COALESCE($10::jsonb, services), scenes = COALESCE($11::jsonb, scenes),
+                           category = COALESCE($12, category), status = COALESCE($13, status)
        WHERE id = $1`,
       [
         id,
@@ -199,6 +202,7 @@ export class ProductsService {
         input.originPrice ?? null,
         input.stock ?? null,
         input.skus ? JSON.stringify(input.skus) : null,
+        input.attributes ? JSON.stringify(input.attributes) : null,
         input.services ? JSON.stringify(input.services) : null,
         input.scenes ? JSON.stringify(input.scenes) : null,
         input.category ?? null,

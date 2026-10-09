@@ -81,7 +81,7 @@ async function scrollAndWait() {
  */
 function extractProduct() {
   const host = location.hostname;
-  const r = { platform: '', title: '', price: null, originPrice: null, coverUrl: '', detailImages: [], skus: [] };
+  const r = { platform: '', title: '', price: null, originPrice: null, coverUrl: '', detailImages: [], skus: [], attributes: [] };
   const meta = (prop) =>
     ((document.querySelector(`meta[property="${prop}"], meta[name="${prop}"]`) || {}).getAttribute?.('content') || '').trim();
   const text = (sel) => {
@@ -99,6 +99,45 @@ function extractProduct() {
     return '';
   };
   const uniq = (arr) => [...new Set(arr.filter(Boolean))];
+  /**
+   * 采集商品属性（详情页参数表，2026-10-09 客户新增）：
+   * 表格行 th/td 两两成对（京东参数表/尺码表）、dl 的 dt/dd、
+   * 「属性名: 值」形态的列表项（淘宝 attributes-list），去重后最多 40 项。
+   */
+  const parseAttrs = (roots, parseListItems) => {
+    const out = [];
+    const seen = new Set();
+    const push = (k, v) => {
+      k = String(k || '').replace(/[：:\s]+$/, '').trim();
+      v = String(v || '').replace(/\s+/g, ' ').trim();
+      if (!k || !v || k.length > 20 || v.length > 80) return;
+      const key = k + '|' + v;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ name: k, value: v });
+    };
+    for (const root of roots) {
+      if (!root) continue;
+      root.querySelectorAll('tr').forEach((tr) => {
+        const cells = [...tr.querySelectorAll('th,td')].map((c) => (c.textContent || '').trim()).filter(Boolean);
+        if (cells.length >= 2) {
+          for (let i = 0; i + 1 < cells.length; i += 2) push(cells[i], cells[i + 1]);
+        }
+      });
+      root.querySelectorAll('dt').forEach((dt) => {
+        const dd = dt.nextElementSibling;
+        if (dd && dd.tagName === 'DD') push(dt.textContent, dd.textContent);
+      });
+      if (parseListItems) {
+        root.querySelectorAll('li').forEach((li) => {
+          const t = (li.textContent || '').trim();
+          const m = t.match(/^([^：:]{1,20})[：:]\s*(\S.{0,79})$/);
+          if (m) push(m[1], m[2]);
+        });
+      }
+    }
+    return out.slice(0, 40);
+  };
   /**
    * 采集 SKU 规格选项：按规格组（颜色/尺码/版本…）抓选项名，
    * 输出结构化 {name, size}：第一组作规格名（通常是颜色/款式），尺码类组（组名含 码/尺寸/尺码）
@@ -193,6 +232,17 @@ function extractProduct() {
         '#choose-attrs .p-choose-type, #choose .p-choose-type, #choose-color, #choose-version, #choose-attr-1, #choose-attr-2'
       )
     );
+    // 商品属性：详情区参数表（Ptable/参数表格），新旧版容器都扫，去重
+    r.attributes = parseAttrs(
+      [
+        document.querySelector('#J-detail'),
+        document.querySelector('#J-detail-content'),
+        document.querySelector('.detail-content'),
+        document.querySelector('.describe'),
+        document.querySelector('.Ptable'),
+      ],
+      false
+    );
   } else if (host.endsWith('taobao.com') || host.endsWith('tmall.com')) {
     r.platform = host.endsWith('tmall.com') ? '天猫' : '淘宝';
     const rawTitle = text('.tb-main-title') || text('.tb-detail-hd h1') || meta('og:title') || document.title || '';
@@ -226,6 +276,16 @@ function extractProduct() {
     r.detailImages = uniq([...descImgs, ...r.detailImages]).slice(0, 10);
     // SKU 规格组：淘宝 .J_Prop（.tb-property-type 组名 + li 选项），天猫 dl.tm-sale-prop
     r.skus = buildSkus(document.querySelectorAll('.tb-key .J_Prop, .tb-skin .J_Prop, dl.tm-sale-prop'));
+    // 商品属性：淘宝/天猫属性列表（「属性名: 值」形态）+ 详情区表格
+    r.attributes = parseAttrs(
+      [
+        document.querySelector('#J_AttrList'),
+        document.querySelector('.attributes-list'),
+        document.querySelector('dl.tm-attributes-box'),
+        document.querySelector('#J_DescContent'),
+      ],
+      true
+    );
   }
   if (!r.coverUrl && r.detailImages.length) r.coverUrl = r.detailImages[0];
   return r;

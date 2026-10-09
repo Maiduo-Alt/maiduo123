@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS products (
   origin_price  NUMERIC(10,2),
   stock         INTEGER NOT NULL DEFAULT 0,
   skus          JSONB NOT NULL DEFAULT '[]'::jsonb,
+  attributes    JSONB NOT NULL DEFAULT '[]'::jsonb,
   services      JSONB NOT NULL DEFAULT '[]'::jsonb,
   scenes        JSONB NOT NULL DEFAULT '[]'::jsonb,
   category      VARCHAR(64),
@@ -325,4 +326,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_attempt ON sessions(attempt_id);
 CREATE INDEX IF NOT EXISTS idx_attempts_account ON attempts(account_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scripts_qa ON scripts(qa_id);
 CREATE INDEX IF NOT EXISTS idx_scripts_status ON scripts(status);
+
+-- 2026-10-09 商品属性（插件采集详情页参数表）：已有库幂等补列
+ALTER TABLE products ADD COLUMN IF NOT EXISTS attributes JSONB NOT NULL DEFAULT '[]'::jsonb;
 `;

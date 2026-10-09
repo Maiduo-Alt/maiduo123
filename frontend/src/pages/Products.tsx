@@ -264,6 +264,13 @@ export default function Products() {
           };
         })
         .filter((s: any) => s.name || s.size),
+      // 插件采集的商品属性（2026-10-09 客户新增）：详情页参数表（材质/版型/货号等）
+      attributes: (data.attributes || [])
+        .map((a: any) => ({
+          name: String(a.name || a.key || '').replace(/[：:]$/, '').trim(),
+          value: String(a.value || '').trim(),
+        }))
+        .filter((a: any) => a.name && a.value),
       services: [],
       scenes: [],
     });
@@ -424,7 +431,7 @@ export default function Products() {
       const data = JSON.parse(raw);
       applyPrefill(data);
       message.success(
-        `已${data.platform ? `从${data.platform}` : ''}采集商品信息（插件 v${data.extensionVersion || '?'}：价格${data.price ?? '未获取'}，图片${(data.detailImages || []).length + (data.coverUrl ? 1 : 0)}张${(data.skus || []).length ? `，规格${(data.skus || []).length}个` : ''}），请核对后保存（商品ID 需手动填写）`,
+        `已${data.platform ? `从${data.platform}` : ''}采集商品信息（插件 v${data.extensionVersion || '?'}：价格${data.price ?? '未获取'}，图片${(data.detailImages || []).length + (data.coverUrl ? 1 : 0)}张${(data.skus || []).length ? `，规格${(data.skus || []).length}个` : ''}${(data.attributes || []).length ? `，属性${(data.attributes || []).length}项` : ''}），请核对后保存（商品ID 需手动填写）`,
         6
       );
       if (!data.price || !data.coverUrl) message.warning('价格或主图未采集完整，请手动补充', 6);
@@ -484,6 +491,10 @@ export default function Products() {
       // 客户 2026-10-03：规格（SKU）交给管理员维护，接待页「规格/属性」读的就是这份数据
       skus: (values.skus || []).filter(
         (item: any) => item && (String(item.name || '').trim() || String(item.size || '').trim())
+      ),
+      // 商品属性（2026-10-09 客户新增）：详情页参数表，接待页同步展示
+      attributes: (values.attributes || []).filter(
+        (item: any) => item && String(item.name || '').trim() && String(item.value || '').trim()
       ),
     };
     try {
@@ -692,6 +703,7 @@ export default function Products() {
                           detailImages: detail.detailImages || [],
                           // 列表接口不返回规格，编辑时一并补上，避免保存时把已有规格覆盖成空
                           skus: detail.skus || [],
+                          attributes: detail.attributes || [],
                         });
                         setCoverUrl(detail.coverUrl || '');
                         setDetailImages(detail.detailImages || []);
@@ -907,6 +919,32 @@ export default function Products() {
                   ))}
                   <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ name: '', size: '', price: undefined, stock: undefined })}>
                     添加规格
+                  </Button>
+                </div>
+              )}
+            </Form.List>
+          </Form.Item>
+          {/**
+           * 商品属性（2026-10-09 客户新增）：详情页参数表（材质/版型/货号/适用季节等），
+           * 插件采集时自动带出，接待页「规格/属性」弹窗同步展示。
+           */}
+          <Form.Item label="商品属性" tooltip="详情页参数表内容；接待页点「规格/属性」会一并展示">
+            <Form.List name="attributes">
+              {(fields, { add, remove }) => (
+                <div>
+                  {fields.map((field) => (
+                    <Space key={field.key} align="baseline" style={{ marginBottom: 8 }}>
+                      <Form.Item name={[field.name, 'name']} rules={[{ required: true, message: '请输入属性名' }]}>
+                        <Input placeholder="属性名，如 材质" style={{ width: 160 }} />
+                      </Form.Item>
+                      <Form.Item name={[field.name, 'value']}>
+                        <Input placeholder="属性值，如 棉 100%" style={{ width: 280 }} />
+                      </Form.Item>
+                      <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
+                    </Space>
+                  ))}
+                  <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ name: '', value: '' })}>
+                    添加属性
                   </Button>
                 </div>
               )}
