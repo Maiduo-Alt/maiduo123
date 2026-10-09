@@ -101,8 +101,8 @@ function extractProduct() {
   const uniq = (arr) => [...new Set(arr.filter(Boolean))];
   /**
    * 采集 SKU 规格选项：按规格组（颜色/尺码/版本…）抓选项名，
-   * 组数≥2 时做笛卡尔组合（如 黑色/S），超过 30 个则退化为全部选项平铺去重。
-   * 每组选项名取 img.alt（颜色图）或元素文本；每个 SKU 的价格/库存页面不直接暴露，留空由用户核对。
+   * 输出结构化 {name, size}：第一组作规格名（通常是颜色/款式），尺码类组（组名含 码/尺寸/尺码）
+   * 作尺码；多组笛卡尔组合，超过 30 个退化为全部选项平铺。价格/库存页面不直接暴露，留空由用户核对。
    */
   const pickOptionName = (el) => {
     const img = el.querySelector('img');
@@ -117,16 +117,33 @@ function extractProduct() {
       if (options.length) groups.push({ name: gn, options });
     }
     if (!groups.length) return [];
-    let names = [];
+    const sizeLike = (g) => /码|尺寸|尺码/.test(g.name || '');
+    let items = [];
     if (groups.length >= 2) {
-      names = groups.reduce((acc, g) => acc.flatMap((a) => g.options.map((o) => (a ? `${a}/${o}` : o))), ['']);
-      if (names.length > 30) names = uniq(groups.flatMap((g) => g.options));
+      const [first, ...rest] = groups;
+      const restCombos = rest.reduce(
+        (acc, g) => acc.flatMap((a) => g.options.map((o) => (a ? `${a}/${o}` : o))),
+        ['']
+      );
+      items = first.options.flatMap((n) => restCombos.map((s) => ({ name: n, size: s })));
+      if (items.length > 30) {
+        items = groups.flatMap((g) => g.options.map((o) => (sizeLike(g) ? { name: '', size: o } : { name: o, size: '' })));
+      }
+    } else if (sizeLike(groups[0])) {
+      items = groups[0].options.map((o) => ({ name: '', size: o }));
     } else {
-      names = groups[0].options;
+      items = groups[0].options.map((o) => ({ name: o, size: '' }));
     }
-    return uniq(names)
+    const seen = new Set();
+    return items
+      .filter((it) => {
+        const k = `${it.name}|${it.size}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
       .slice(0, 30)
-      .map((name) => ({ name, price: null, stock: null }));
+      .map((it) => ({ ...it, price: null, stock: null }));
   };
   // img.src 属性反映懒加载后的真实地址；getAttribute 可能拿到占位图，所以优先属性
   const imgs = [...document.querySelectorAll('img')]

@@ -19,7 +19,7 @@ export interface ProductAttr {
   category?: string | null;
   status?: number | null;
   coverUrl?: string | null;
-  skus?: { name?: string; price?: number | string; stock?: number | string }[] | null;
+  skus?: { name?: string; size?: string; price?: number | string; stock?: number | string }[] | null;
   services?: string[] | null;
   scenes?: string[] | null;
   detailImages?: string[] | null;
@@ -45,7 +45,9 @@ function Line({ label, children }: { label: string; children: any }) {
 }
 
 export default function ProductSpecModal({ open, product, onClose }: Props) {
-  const skus = (product?.skus || []).filter((item) => item && (item.name || item.price !== undefined));
+  const skus = (product?.skus || []).filter(
+    (item) => item && (item.name || item.size || item.price !== undefined)
+  );
   const services = product?.services || [];
   const scenes = product?.scenes || [];
   const detailImages = product?.detailImages || [];
@@ -90,13 +92,14 @@ export default function ProductSpecModal({ open, product, onClose }: Props) {
               dataSource={skus}
               columns={[
                 { title: '规格', dataIndex: 'name', render: (v) => v || '默认规格' },
+                { title: '尺码', dataIndex: 'size', width: 80, render: (v) => v || '—' },
                 { title: '价格', dataIndex: 'price', width: 110, render: (v) => yuan(v) },
                 { title: '库存', dataIndex: 'stock', width: 90, render: (v) => (v === undefined || v === null ? '—' : v) },
               ]}
             />
           ) : (
             <div style={{ color: '#8c8c8c', fontSize: 12, marginTop: 6 }}>
-              该商品在《商品库》里还没有维护规格，管理员可在商品编辑里补充规格（名称 / 价格 / 库存）。
+              该商品在《商品库》里还没有维护规格，管理员可在商品编辑里补充规格（规格名 / 尺码 / 价格 / 库存）。
             </div>
           )}
 

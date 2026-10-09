@@ -68,14 +68,29 @@ export default function Products() {
       originPrice: data.originPrice ?? undefined,
       coverUrl: data.coverUrl || '',
       detailImages: data.detailImages || [],
-      // 插件采集的 SKU 规格（2026-10-09）：名称自动填入，价格/库存页面不直接暴露，留空由用户核对
+      // 插件采集的 SKU 规格（2026-10-09）：名称/尺码自动填入，价格/库存页面不直接暴露，留空由用户核对
       skus: (data.skus || [])
-        .map((s: any) => ({
-          name: String(s.name || '').trim(),
-          price: typeof s.price === 'number' ? s.price : undefined,
-          stock: typeof s.stock === 'number' ? s.stock : undefined,
-        }))
-        .filter((s: any) => s.name),
+        .map((s: any) => {
+          let name = String(s.name || '').trim();
+          let size = String(s.size || '').trim();
+          // 兼容插件旧格式「颜色/尺码」合并名：拆成 名称 + 尺码；只有尺码时名称兜底用尺码
+          if (!size && name.includes('/')) {
+            const i = name.indexOf('/');
+            size = name.slice(i + 1).trim();
+            name = name.slice(0, i).trim();
+          }
+          if (!name && size) {
+            name = size;
+            size = '';
+          }
+          return {
+            name,
+            size,
+            price: typeof s.price === 'number' ? s.price : undefined,
+            stock: typeof s.stock === 'number' ? s.stock : undefined,
+          };
+        })
+        .filter((s: any) => s.name || s.size),
       services: [],
       scenes: [],
     });
@@ -294,7 +309,9 @@ export default function Products() {
       services: values.services || [],
       scenes: values.scenes || [],
       // 客户 2026-10-03：规格（SKU）交给管理员维护，接待页「规格/属性」读的就是这份数据
-      skus: (values.skus || []).filter((item: any) => item && String(item.name || '').trim()),
+      skus: (values.skus || []).filter(
+        (item: any) => item && (String(item.name || '').trim() || String(item.size || '').trim())
+      ),
     };
     try {
       if (modal.record) await api(`/products/${modal.record.id}`, { method: 'PUT', body });
@@ -686,7 +703,7 @@ export default function Products() {
           </Form.Item>
           {/**
            * 客户 2026-10-03：接待页点「规格/属性」要能看到管理员在这里配的真实商品信息，
-           * 所以商品库补上「规格（SKU）」的维护入口（名称 / 价格 / 库存），接待页弹窗直接读它。
+           * 所以商品库补上「规格（SKU）」的维护入口（2026-10-09 调整为：规格名 / 尺码 / 价格 / 库存），接待页弹窗直接读它。
            */}
           <Form.Item label="规格（SKU）" tooltip="接待页点「规格/属性」看到的就是这里维护的内容；留空表示该商品没有细分规格">
             <Form.List name="skus">
@@ -695,18 +712,21 @@ export default function Products() {
                   {fields.map((field) => (
                     <Space key={field.key} align="baseline" style={{ marginBottom: 8 }}>
                       <Form.Item name={[field.name, 'name']} rules={[{ required: true, message: '请输入规格名' }]}>
-                        <Input placeholder="规格名，如 S 码" style={{ width: 160 }} />
+                        <Input placeholder="规格名，如 黑色" style={{ width: 140 }} />
+                      </Form.Item>
+                      <Form.Item name={[field.name, 'size']}>
+                        <Input placeholder="尺码，如 S" style={{ width: 90 }} />
                       </Form.Item>
                       <Form.Item name={[field.name, 'price']}>
-                        <InputNumber min={0} precision={2} placeholder="价格" style={{ width: 120 }} />
+                        <InputNumber min={0} precision={2} placeholder="价格" style={{ width: 110 }} />
                       </Form.Item>
                       <Form.Item name={[field.name, 'stock']}>
-                        <InputNumber min={0} placeholder="库存" style={{ width: 120 }} />
+                        <InputNumber min={0} placeholder="库存" style={{ width: 90 }} />
                       </Form.Item>
                       <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
                     </Space>
                   ))}
-                  <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ name: '', price: undefined, stock: undefined })}>
+                  <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ name: '', size: '', price: undefined, stock: undefined })}>
                     添加规格
                   </Button>
                 </div>
