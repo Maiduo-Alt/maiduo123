@@ -16,7 +16,7 @@ import {
   Upload,
   message,
 } from 'antd';
-import { DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, AppstoreOutlined, UploadOutlined } from '@ant-design/icons';
 import { api, download, uploadImage } from '../api/client';
 
 export default function Products() {
@@ -39,6 +39,70 @@ export default function Products() {
   const [linkLoading, setLinkLoading] = useState(false);
   /** 使用说明：一键添加商品操作说明卡（2026-10-08 客户新增） */
   const [guideOpen, setGuideOpen] = useState(false);
+  /** 分类管理（2026-10-09 客户新增）：商品分类字典的增删改，复用 /api/categories?type=product */
+  const [dictCategories, setDictCategories] = useState<string[]>([]);
+  const [catOpen, setCatOpen] = useState(false);
+  const [catRows, setCatRows] = useState<any[]>([]);
+  const [catEditing, setCatEditing] = useState<any>(null);
+  const [catForm] = Form.useForm();
+
+  /** 分类下拉 = 商品分类字典 ∪ 商品上已在用的分类（兼容历史未登记的数据） */
+  const categoryOptions = Array.from(new Set([...dictCategories, ...categories]));
+
+  const loadDictCategories = async () => {
+    try {
+      const rows = await api<any[]>('/categories', { query: { type: 'product' } });
+      setDictCategories((Array.isArray(rows) ? rows : []).map((r: any) => r.name));
+    } catch {
+      /* 字典不可用时退回商品上已有的分类 */
+    }
+  };
+
+  const loadCatRows = async () => {
+    try {
+      const rows = await api<any[]>('/categories', { query: { type: 'product' } });
+      setCatRows(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
+
+  const openCatManage = () => {
+    setCatOpen(true);
+    setCatEditing(null);
+    void loadCatRows();
+  };
+
+  const saveCat = async () => {
+    const values = await catForm.validateFields();
+    try {
+      if (catEditing?.id) {
+        const res = await api<any>(`/categories/${catEditing.id}`, { method: 'PUT', body: { name: values.name } });
+        message.success(res.renamed ? `已改名，并同步更新了 ${res.renamed} 个商品的分类` : '已改名');
+      } else {
+        await api('/categories', { method: 'POST', body: { type: 'product', name: values.name } });
+        message.success('已新增分类');
+      }
+      setCatEditing(null);
+      await loadCatRows();
+      await loadDictCategories();
+      load();
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
+
+  const removeCat = async (row: any) => {
+    try {
+      await api(`/categories/${row.id}`, { method: 'DELETE' });
+      message.success('已删除分类');
+      await loadCatRows();
+      await loadDictCategories();
+      load();
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
   const [form] = Form.useForm();
   // 筛选条（方案 F4-05：标题 / 商品ID、分类、价格区间、状态）
   const [filterKeyword, setFilterKeyword] = useState('');
@@ -120,6 +184,7 @@ export default function Products() {
 
   useEffect(() => {
     load({ page: 1 });
+    loadDictCategories();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -198,6 +263,9 @@ export default function Products() {
       title="商品库"
       extra={
         <Space>
+          <Button icon={<AppstoreOutlined />} onClick={openCatManage}>
+            分类管理
+          </Button>
           <Button
             icon={<UploadOutlined />}
             onClick={() => {
@@ -277,7 +345,7 @@ export default function Products() {
           style={{ width: 140 }}
           value={filterCategory}
           onChange={(v) => setFilterCategory(v)}
-          options={categories.map((c) => ({ value: c, label: c }))}
+          options={categoryOptions.map((c) => ({ value: c, label: c }))}
         />
         <Space size={4}>
           <InputNumber
@@ -499,8 +567,20 @@ export default function Products() {
           </Space>
           <Form.Item name="category" label="商品分类">
             <Select
-              options={categories.map((c) => ({ value: c, label: c }))}
+              options={categoryOptions.map((c) => ({ value: c, label: c }))}
               style={{ width: 200 }}
+              placeholder="选择或输入分类"
+              showSearch
+              dropdownRender={(menu) => (
+                <>
+                  {menu}
+                  <div style={{ padding: '4px 8px', borderTop: '1px solid #f0f0f0' }}>
+                    <Button type="link" size="small" onClick={openCatManage}>
+                      管理分类…
+                    </Button>
+                  </div>
+                </>
+              )}
             />
           </Form.Item>
           <Form.Item name="services" label="服务承诺">
@@ -667,6 +747,89 @@ export default function Products() {
           onChange={(e) => setLinkText(e.target.value)}
           placeholder={'例如：https://v.douyin.com/xxxxxx/\n或直接粘贴整段分享文案'}
         />
+      </Modal>
+
+      {/* 分类管理（2026-10-09 客户新增）：商品分类字典，复用 /api/categories?type=product */}
+      <Modal open={catOpen} title="商品分类管理" onCancel={() => setCatOpen(false)} footer={null} width={520} destroyOnClose>
+        <Space style={{ marginBottom: 12 }}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              catForm.resetFields();
+              setCatEditing({ type: 'product' });
+            }}
+          >
+            新增分类
+          </Button>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            改名会同步更新已归类商品；删除前会检查是否还有商品在用。
+          </Typography.Text>
+        </Space>
+        <Table
+          rowKey="id"
+          size="small"
+          dataSource={catRows}
+          pagination={false}
+          locale={{ emptyText: '还没有分类，点击「新增分类」创建' }}
+          columns={[
+            { title: '分类名称', dataIndex: 'name' },
+            {
+              title: '商品数',
+              dataIndex: 'count',
+              width: 90,
+              render: (value: number) =>
+                value ? <Tag color="blue">{value}</Tag> : <Typography.Text type="secondary">0</Typography.Text>,
+            },
+            {
+              title: '操作',
+              width: 140,
+              render: (_, row: any) => (
+                <Space size={4}>
+                  <Button
+                    size="small"
+                    type="link"
+                    onClick={() => {
+                      catForm.setFieldsValue({ name: row.name });
+                      setCatEditing(row);
+                    }}
+                  >
+                    改名
+                  </Button>
+                  <Popconfirm title={`确认删除分类「${row.name}」？`} onConfirm={() => removeCat(row)}>
+                    <Button size="small" type="link" danger>
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+        <Modal
+          open={!!catEditing}
+          title={catEditing?.id ? '修改分类' : '新增分类'}
+          onCancel={() => setCatEditing(null)}
+          onOk={saveCat}
+          okText="保存"
+          width={400}
+          destroyOnClose
+        >
+          <Form form={catForm} layout="vertical">
+            <Form.Item
+              name="name"
+              label="分类名称"
+              rules={[{ required: true, message: '请输入分类名称' }, { max: 64, message: '不超过 64 个字' }]}
+            >
+              <Input placeholder="如：女装上衣" maxLength={64} />
+            </Form.Item>
+            {catEditing?.id ? (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                改名会同步更新已引用该分类的商品，改完不需要再去逐条修改。
+              </Typography.Text>
+            ) : null}
+          </Form>
+        </Modal>
       </Modal>
 
       {/* 使用说明（2026-10-08 客户新增）：一键添加商品操作说明卡 */}
