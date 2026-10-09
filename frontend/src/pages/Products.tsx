@@ -68,9 +68,16 @@ export default function Products() {
       originPrice: data.originPrice ?? undefined,
       coverUrl: data.coverUrl || '',
       detailImages: data.detailImages || [],
+      // 插件采集的 SKU 规格（2026-10-09）：名称自动填入，价格/库存页面不直接暴露，留空由用户核对
+      skus: (data.skus || [])
+        .map((s: any) => ({
+          name: String(s.name || '').trim(),
+          price: typeof s.price === 'number' ? s.price : undefined,
+          stock: typeof s.stock === 'number' ? s.stock : undefined,
+        }))
+        .filter((s: any) => s.name),
       services: [],
       scenes: [],
-      skus: [],
     });
     setCoverUrl(data.coverUrl || '');
     setDetailImages(data.detailImages || []);
@@ -229,7 +236,7 @@ export default function Products() {
       const data = JSON.parse(raw);
       applyPrefill(data);
       message.success(
-        `已${data.platform ? `从${data.platform}` : ''}采集商品信息（插件 v${data.extensionVersion || '?'}：价格${data.price ?? '未获取'}，图片${(data.detailImages || []).length + (data.coverUrl ? 1 : 0)}张），请核对后保存（商品ID 需手动填写）`,
+        `已${data.platform ? `从${data.platform}` : ''}采集商品信息（插件 v${data.extensionVersion || '?'}：价格${data.price ?? '未获取'}，图片${(data.detailImages || []).length + (data.coverUrl ? 1 : 0)}张${(data.skus || []).length ? `，规格${(data.skus || []).length}个` : ''}），请核对后保存（商品ID 需手动填写）`,
         6
       );
       if (!data.price || !data.coverUrl) message.warning('价格或主图未采集完整，请手动补充', 6);

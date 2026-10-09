@@ -81,7 +81,7 @@ async function scrollAndWait() {
  */
 function extractProduct() {
   const host = location.hostname;
-  const r = { platform: '', title: '', price: null, originPrice: null, coverUrl: '', detailImages: [] };
+  const r = { platform: '', title: '', price: null, originPrice: null, coverUrl: '', detailImages: [], skus: [] };
   const meta = (prop) =>
     ((document.querySelector(`meta[property="${prop}"], meta[name="${prop}"]`) || {}).getAttribute?.('content') || '').trim();
   const text = (sel) => {
@@ -99,6 +99,35 @@ function extractProduct() {
     return '';
   };
   const uniq = (arr) => [...new Set(arr.filter(Boolean))];
+  /**
+   * 采集 SKU 规格选项：按规格组（颜色/尺码/版本…）抓选项名，
+   * 组数≥2 时做笛卡尔组合（如 黑色/S），超过 30 个则退化为全部选项平铺去重。
+   * 每组选项名取 img.alt（颜色图）或元素文本；每个 SKU 的价格/库存页面不直接暴露，留空由用户核对。
+   */
+  const pickOptionName = (el) => {
+    const img = el.querySelector('img');
+    return ((img && (img.alt || img.getAttribute('alt'))) || el.textContent || '').replace(/\s+/g, ' ').trim();
+  };
+  const buildSkus = (groupEls) => {
+    const groups = [];
+    for (const g of groupEls) {
+      const labelEl = g.querySelector('.dt, .tb-property-type, dt');
+      const gn = ((labelEl && labelEl.textContent) || '').replace(/[：:]/g, '').trim();
+      const options = uniq([...g.querySelectorAll('.item, li')].map(pickOptionName).filter(Boolean));
+      if (options.length) groups.push({ name: gn, options });
+    }
+    if (!groups.length) return [];
+    let names = [];
+    if (groups.length >= 2) {
+      names = groups.reduce((acc, g) => acc.flatMap((a) => g.options.map((o) => (a ? `${a}/${o}` : o))), ['']);
+      if (names.length > 30) names = uniq(groups.flatMap((g) => g.options));
+    } else {
+      names = groups[0].options;
+    }
+    return uniq(names)
+      .slice(0, 30)
+      .map((name) => ({ name, price: null, stock: null }));
+  };
   // img.src 属性反映懒加载后的真实地址；getAttribute 可能拿到占位图，所以优先属性
   const imgs = [...document.querySelectorAll('img')]
     .map((i) => i.src || abs(i.getAttribute('data-src') || i.getAttribute('data-lazy-src') || i.getAttribute('src')))
@@ -131,6 +160,12 @@ function extractProduct() {
         (u) => u.includes('360buyimg.com') && /jfs|\/n1\//.test(u) && !/icon|logo|sprite|gif/i.test(u)
       )
     ).slice(0, 5);
+    // SKU 规格组：新版页 #choose-attrs，旧版页 #choose/#choose-color/#choose-version 等
+    r.skus = buildSkus(
+      document.querySelectorAll(
+        '#choose-attrs .p-choose-type, #choose .p-choose-type, #choose-color, #choose-version, #choose-attr-1, #choose-attr-2'
+      )
+    );
   } else if (host.endsWith('taobao.com') || host.endsWith('tmall.com')) {
     r.platform = host.endsWith('tmall.com') ? '天猫' : '淘宝';
     const rawTitle = text('.tb-main-title') || text('.tb-detail-hd h1') || meta('og:title') || document.title || '';
@@ -152,6 +187,8 @@ function extractProduct() {
     r.detailImages = uniq(
       imgs.filter((u) => u.includes('alicdn.com') && /imgextra|wwcdn/.test(u) && !/icon|logo|tfs|sprite|gif/i.test(u))
     ).slice(0, 5);
+    // SKU 规格组：淘宝 .J_Prop（.tb-property-type 组名 + li 选项），天猫 dl.tm-sale-prop
+    r.skus = buildSkus(document.querySelectorAll('.tb-key .J_Prop, .tb-skin .J_Prop, dl.tm-sale-prop'));
   }
   if (!r.coverUrl && r.detailImages.length) r.coverUrl = r.detailImages[0];
   return r;
