@@ -1,20 +1,20 @@
 {
   "manifest_version": 3,
   "name": "CS-Training 商品采集助手",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "在淘宝/京东/天猫商品页一键采集标题、价格、图片到客服模拟接待训练系统（需已在浏览器登录对应平台）",
   "permissions": ["storage", "scripting"],
   "host_permissions": [
     "*://item.taobao.com/*",
     "*://detail.tmall.com/*",
     "*://item.jd.com/*",
-    "*://1.14.102.186:8080/*"
+    "*://1.14.102.186/*"
   ],
   "background": { "service_worker": "background.js" },
   "action": { "default_title": "采集当前商品到训练系统" },
   "content_scripts": [
     {
-      "matches": ["*://1.14.102.186:8080/*"],
+      "matches": ["*://1.14.102.186/*"],
       "js": ["content-system.js"],
       "run_at": "document_idle"
     }

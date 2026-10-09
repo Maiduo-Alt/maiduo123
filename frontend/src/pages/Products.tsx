@@ -45,6 +45,36 @@ export default function Products() {
   const [catRows, setCatRows] = useState<any[]>([]);
   const [catEditing, setCatEditing] = useState<any>(null);
   const [catForm] = Form.useForm();
+  /**
+   * 预填数据暂存（2026-10-09 修复）：新建商品弹窗开启 destroyOnClose，
+   * 表单字段在弹窗动画期间才挂载，同步 setFieldsValue 会丢失图片类字段
+   * （插件采集与链接识别都中过招），改为弹窗完全打开后（afterOpenChange）再填值。
+   */
+  const [pendingPrefill, setPendingPrefill] = useState<any>(null);
+
+  const applyPrefill = (data: any) => {
+    setPendingPrefill(data);
+    setModal({ open: true });
+  };
+
+  const fillFormAfterOpen = () => {
+    if (!pendingPrefill) return;
+    const data = pendingPrefill;
+    setPendingPrefill(null);
+    form.resetFields();
+    form.setFieldsValue({
+      title: data.title || '',
+      price: data.price ?? undefined,
+      originPrice: data.originPrice ?? undefined,
+      coverUrl: data.coverUrl || '',
+      detailImages: data.detailImages || [],
+      services: [],
+      scenes: [],
+      skus: [],
+    });
+    setCoverUrl(data.coverUrl || '');
+    setDetailImages(data.detailImages || []);
+  };
 
   /** 分类下拉 = 商品分类字典 ∪ 商品上已在用的分类（兼容历史未登记的数据） */
   const categoryOptions = Array.from(new Set([...dictCategories, ...categories]));
@@ -110,8 +140,11 @@ export default function Products() {
   const [filterMinPrice, setFilterMinPrice] = useState<number | null>(null);
   const [filterMaxPrice, setFilterMaxPrice] = useState<number | null>(null);
   const [filterStatus, setFilterStatus] = useState<number | undefined>();
-  const coverUrl = Form.useWatch('coverUrl', form);
-  const detailImages = Form.useWatch('detailImages', form) as string[] | undefined;
+  // 2026-10-09 修复：coverUrl/detailImages 是未注册字段（Form.Item 无 name），
+  // setFieldsValue 写入后 Form.useWatch 不会触发重渲染，导致预填的图片不显示。
+  // 改为受控 state + form store 双写：渲染读 state，保存时 validateFields 仍从 store 取值。
+  const [coverUrl, setCoverUrl] = useState('');
+  const [detailImages, setDetailImages] = useState<string[]>([]);
 
   const applyFilter = () =>
     load({
@@ -161,18 +194,7 @@ export default function Products() {
       const data = await api<any>('/products/import-from-link', { method: 'POST', body: { url: linkText.trim() } });
       setLinkOpen(false);
       setLinkText('');
-      setModal({ open: true });
-      form.resetFields();
-      form.setFieldsValue({
-        title: data.title || '',
-        price: data.price ?? undefined,
-        originPrice: data.originPrice ?? undefined,
-        coverUrl: data.coverUrl || '',
-        detailImages: data.detailImages || [],
-        services: [],
-        scenes: [],
-        skus: [],
-      });
+      applyPrefill(data);
       message.success('已识别商品信息，请核对后保存（商品ID 需手动填写）');
       if (data.notice) message.warning(data.notice, 6);
     } catch (e) {
@@ -205,21 +227,10 @@ export default function Products() {
       if (!raw) return;
       window.localStorage.removeItem('cs-training-quickadd');
       const data = JSON.parse(raw);
-      setModal({ open: true });
-      form.resetFields();
-      form.setFieldsValue({
-        title: data.title || '',
-        price: data.price ?? undefined,
-        originPrice: data.originPrice ?? undefined,
-        coverUrl: data.coverUrl || '',
-        detailImages: data.detailImages || [],
-        services: [],
-        scenes: [],
-        skus: [],
-      });
+      applyPrefill(data);
       message.success(
-        `已从浏览器插件采集${data.platform ? `（${data.platform}）` : ''}商品信息，请核对后保存（商品ID 需手动填写）`,
-        5
+        `已${data.platform ? `从${data.platform}` : ''}采集商品信息（插件 v${data.extensionVersion || '?'}：价格${data.price ?? '未获取'}，图片${(data.detailImages || []).length + (data.coverUrl ? 1 : 0)}张），请核对后保存（商品ID 需手动填写）`,
+        6
       );
       if (!data.price || !data.coverUrl) message.warning('价格或主图未采集完整，请手动补充', 6);
     } catch {
@@ -365,6 +376,8 @@ export default function Products() {
             onClick={() => {
               setModal({ open: true });
               form.resetFields();
+              setCoverUrl('');
+              setDetailImages([]);
             }}
           >
             新建商品
@@ -472,16 +485,20 @@ export default function Products() {
                   onClick={() => {
                     setModal({ open: true, record: row });
                     form.setFieldsValue(row);
+                    setCoverUrl(row.coverUrl || '');
+                    setDetailImages(row.detailImages || []);
                     // 列表不返回详情图，编辑时补拉一次，避免保存时把已有详情图覆盖掉
                     api<any>(`/products/${row.id}`)
-                      .then((detail) =>
+                      .then((detail) => {
                         form.setFieldsValue({
                           coverUrl: detail.coverUrl || '',
                           detailImages: detail.detailImages || [],
                           // 列表接口不返回规格，编辑时一并补上，避免保存时把已有规格覆盖成空
                           skus: detail.skus || [],
-                        })
-                      )
+                        });
+                        setCoverUrl(detail.coverUrl || '');
+                        setDetailImages(detail.detailImages || []);
+                      })
                       .catch(() => undefined);
                   }}
                 >
@@ -516,6 +533,9 @@ export default function Products() {
         onOk={save}
         width={680}
         destroyOnClose
+        afterOpenChange={(open) => {
+          if (open) fillFormAfterOpen();
+        }}
       >
         <Form form={form} layout="vertical">
           <Form.Item name="productNo" label="商品ID" rules={[{ required: true, message: '请输入商品ID' }]}>
@@ -534,6 +554,7 @@ export default function Products() {
                   try {
                     const url = await uploadImage(file as File);
                     form.setFieldValue('coverUrl', url);
+                    setCoverUrl(url);
                     onSuccess?.({});
                   } catch (e) {
                     message.error((e as Error).message);
@@ -553,12 +574,22 @@ export default function Products() {
               <Space direction="vertical" size={4}>
                 <Input
                   value={coverUrl}
-                  onChange={(e) => form.setFieldValue('coverUrl', e.target.value)}
+                  onChange={(e) => {
+                    form.setFieldValue('coverUrl', e.target.value);
+                    setCoverUrl(e.target.value);
+                  }}
                   placeholder="也可直接填写图片地址"
                   style={{ width: 320 }}
                 />
                 {coverUrl ? (
-                  <Button size="small" type="link" onClick={() => form.setFieldValue('coverUrl', '')}>
+                  <Button
+                    size="small"
+                    type="link"
+                    onClick={() => {
+                      form.setFieldValue('coverUrl', '');
+                      setCoverUrl('');
+                    }}
+                  >
                     清除主图
                   </Button>
                 ) : null}
@@ -578,7 +609,9 @@ export default function Products() {
               customRequest={async ({ file, onSuccess, onError }: any) => {
                 try {
                   const url = await uploadImage(file as File);
-                  form.setFieldValue('detailImages', [...(form.getFieldValue('detailImages') || []), url]);
+                  const next = [...(form.getFieldValue('detailImages') || []), url];
+                  form.setFieldValue('detailImages', next);
+                  setDetailImages(next);
                   onSuccess?.({});
                 } catch (e) {
                   message.error((e as Error).message);
@@ -586,10 +619,11 @@ export default function Products() {
                 }
               }}
               onRemove={(file) => {
-                form.setFieldValue(
-                  'detailImages',
-                  (form.getFieldValue('detailImages') || []).filter((url: string) => url !== (file as any).url)
+                const filtered = (form.getFieldValue('detailImages') || []).filter(
+                  (url: string) => url !== (file as any).url
                 );
+                form.setFieldValue('detailImages', filtered);
+                setDetailImages(filtered);
               }}
             >
               {(detailImages || []).length >= 5 ? null : (
