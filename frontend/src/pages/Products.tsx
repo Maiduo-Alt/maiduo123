@@ -189,6 +189,52 @@ export default function Products() {
   }, []);
 
   /**
+   * 浏览器插件「一键采集」预填（2026-10-09 客户新增）：
+   * 插件把商品页采集结果写入 localStorage 并派发事件，这里消费后打开新建表单。
+   * 挂载时读一次（兜底），事件再兜一次（插件注入晚于 React 挂载的场景）。
+   */
+  const consumeQuickAdd = () => {
+    try {
+      const err = window.localStorage.getItem('cs-training-quickadd-error');
+      if (err) {
+        window.localStorage.removeItem('cs-training-quickadd-error');
+        message.warning(err, 6);
+        return;
+      }
+      const raw = window.localStorage.getItem('cs-training-quickadd');
+      if (!raw) return;
+      window.localStorage.removeItem('cs-training-quickadd');
+      const data = JSON.parse(raw);
+      setModal({ open: true });
+      form.resetFields();
+      form.setFieldsValue({
+        title: data.title || '',
+        price: data.price ?? undefined,
+        originPrice: data.originPrice ?? undefined,
+        coverUrl: data.coverUrl || '',
+        detailImages: data.detailImages || [],
+        services: [],
+        scenes: [],
+        skus: [],
+      });
+      message.success(
+        `已从浏览器插件采集${data.platform ? `（${data.platform}）` : ''}商品信息，请核对后保存（商品ID 需手动填写）`,
+        5
+      );
+      if (!data.price || !data.coverUrl) message.warning('价格或主图未采集完整，请手动补充', 6);
+    } catch {
+      /* 忽略坏数据 */
+    }
+  };
+
+  useEffect(() => {
+    consumeQuickAdd();
+    window.addEventListener('cs-training-quickadd', consumeQuickAdd);
+    return () => window.removeEventListener('cs-training-quickadd', consumeQuickAdd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
    * 批量删除商品（2026-10-07 客户新增）：未被剧本引用的软删除；
    * 被剧本引用的逐个跳过并提示——先在《客户问题剧本》删掉相关剧本，再回来删商品。
    */
