@@ -37,12 +37,15 @@ export default function Scripts() {
     products: any[];
     styles: any[];
     cases: any[];
+    /** 剧本分类：来自《数据字典》type=script，与筛选、新建表单的分类选项共用一份数据（客户 2026-10-09） */
+    scriptCategories: any[];
   }>({
     backgrounds: [],
     contents: [],
     products: [],
     styles: [],
     cases: [],
+    scriptCategories: [],
   });
   const [form] = Form.useForm();
   /** 异步批量生成任务（超过阈值时后端返回任务 ID） */
@@ -71,7 +74,7 @@ export default function Scripts() {
   };
 
   const loadOptions = async () => {
-    const [backgrounds, contents, products, styles, cases] = await Promise.all([
+    const [backgrounds, contents, products, styles, cases, scriptCategories] = await Promise.all([
       api<any>('/backgrounds', { query: { pageSize: 200 } }),
       api<any>('/contents', { query: { pageSize: 200 } }),
       // 方案 9.1：下架商品不应出现在新剧本的商品选择中
@@ -79,6 +82,8 @@ export default function Scripts() {
       api<any>('/styles'),
       // 按案例创建用（方案 F3-07）
       api<any>('/cases', { query: { pageSize: 200 } }).catch(() => ({ list: [] })),
+      // 剧本分类：与《数据字典》里的「剧本分类」词条同源
+      api<any[]>('/categories', { query: { type: 'script' } }).catch(() => []),
     ]);
     setOptions({
       backgrounds: backgrounds.list || [],
@@ -86,6 +91,7 @@ export default function Scripts() {
       products: products.list || [],
       styles: Array.isArray(styles) ? styles : styles.list || [],
       cases: cases.list || [],
+      scriptCategories: Array.isArray(scriptCategories) ? scriptCategories : [],
     });
   };
 
@@ -250,6 +256,15 @@ export default function Scripts() {
             allowClear
             showSearch
             optionFilterProp="label"
+            placeholder="剧本分类"
+            style={{ width: 130 }}
+            onChange={(v) => load({ category: v, page: 1 })}
+            options={(options.scriptCategories || []).map((c: any) => ({ value: c.name, label: c.name }))}
+          />
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
             placeholder="买家风格"
             style={{ width: 140 }}
             onChange={(v) => load({ styleId: v, page: 1 })}
@@ -316,6 +331,7 @@ export default function Scripts() {
         columns={[
           { title: '剧本编号', dataIndex: 'scriptNo', width: 170 },
           { title: '剧本名称', dataIndex: 'name', ellipsis: true },
+          { title: '剧本分类', dataIndex: 'category', width: 100, render: (v) => v || '-' },
           { title: '接待类型', dataIndex: 'stage', width: 100, render: (v) => (v === 'aftersale' ? '售后' : '售前') },
           { title: '买家风格', dataIndex: 'styleName', width: 120 },
           {
@@ -426,7 +442,12 @@ export default function Scripts() {
             <Form.Item name="category" label="剧本分类" rules={[{ required: true, message: '请选择剧本分类' }]}>
               <Select
                 style={{ width: 200 }}
-                options={['培训', '售前', '售后', '退款', '物流', '其他'].map((v) => ({ value: v, label: v }))}
+                placeholder="请选择剧本分类"
+                // 选项来自《数据字典》的「剧本分类」，字典里增删改这里同步生效
+                options={(options.scriptCategories.length
+                  ? options.scriptCategories.map((c: any) => c.name)
+                  : ['培训', '售前', '售后', '退款', '物流', '其他']
+                ).map((v) => ({ value: v, label: v }))}
               />
             </Form.Item>
             <Form.Item name="name" label="剧本名称" tooltip="批量生成时自动拼接为「接待类型-背景-内容」，无需手动填写">
@@ -520,6 +541,7 @@ export default function Scripts() {
             <Typography.Title level={5}>{detail.name}</Typography.Title>
             <Space wrap style={{ marginBottom: 12 }}>
               <Tag>{detail.scriptNo}</Tag>
+              {detail.category ? <Tag color="geekblue">{detail.category}</Tag> : null}
               <Tag color="blue">{detail.stage === 'aftersale' ? '售后' : '售前'}</Tag>
               <Tag color="purple">{detail.styleName}</Tag>
               <Tag>{detail.roundsWarning || '轮数符合要求'}</Tag>
