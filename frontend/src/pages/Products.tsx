@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -9,6 +9,7 @@ import {
   Modal,
   Popconfirm,
   Select,
+  Slider,
   Space,
   Table,
   Tag,
@@ -16,8 +17,133 @@ import {
   Upload,
   message,
 } from 'antd';
-import { DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, AppstoreOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, AppstoreOutlined, ScissorOutlined, UploadOutlined } from '@ant-design/icons';
 import { api, download, uploadImage } from '../api/client';
+
+/**
+ * 长截图智能切分（2026-10-09 客户新增）：把商品详情页长截图按空白/纯色间隙切成详情图分段。
+ * range 为框选区域（百分比），只切框选范围；每段最短 80px、最长 1600px，
+ * 切点取空白间隙带的中点（间隙里不留白边）。
+ */
+const sliceLongScreenshot = async (file: File, range: [number, number]): Promise<Blob[]> => {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('读取图片失败'));
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('图片加载失败'));
+    el.src = dataUrl;
+  });
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!w || !h) throw new Error('图片尺寸异常');
+  const startY = Math.max(0, Math.min(h - 1, Math.round((h * range[0]) / 100)));
+  const endY = Math.max(startY + 1, Math.min(h, Math.round((h * range[1]) / 100)));
+  const MAX_H = 1600;
+  const MIN_SEG = 80;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('浏览器不支持画布');
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const blankRow = (y: number): boolean => {
+    const off = y * w * 4;
+    const r0 = data[off];
+    const g0 = data[off + 1];
+    const b0 = data[off + 2];
+    let same = 0;
+    let total = 0;
+    for (let x = 0; x < w; x += 4) {
+      const i = off + x * 4;
+      if (Math.abs(data[i] - r0) < 12 && Math.abs(data[i + 1] - g0) < 12 && Math.abs(data[i + 2] - b0) < 12) same++;
+      total++;
+    }
+    return same / total > 0.97;
+  };
+  // 整幅 sharp 横边界（相邻行大面积突变）= 图片拼接边：详情图无缝并排时靠它找切点
+  const boundaryRow = (y: number): boolean => {
+    const off = y * w * 4;
+    const prev = off - w * 4;
+    let strong = 0;
+    let total = 0;
+    for (let x = 0; x < w; x += 4) {
+      const i = off + x * 4;
+      const j = prev + x * 4;
+      const d =
+        Math.abs(data[i] - data[j]) + Math.abs(data[i + 1] - data[j + 1]) + Math.abs(data[i + 2] - data[j + 2]);
+      if (d > 90) strong++;
+      total++;
+    }
+    return strong / total > 0.5;
+  };
+  interface Cut {
+    at: number;
+    next: number;
+  }
+  const cuts: Cut[] = [];
+  let segStart = startY;
+  while (segStart < endY - MIN_SEG) {
+    const limit = Math.min(segStart + MAX_H, endY);
+    let found: Cut | null = null;
+    for (let y = segStart + MIN_SEG; y < limit; y++) {
+      if (blankRow(y)) {
+        let ge = y;
+        while (ge < limit && ge - y < 60 && blankRow(ge)) ge++;
+        found = { at: y, next: ge }; // 段在空白带前结束，下一段从空白带后开始
+        break;
+      }
+      // 距段首 ≥150px 才认 sharp 边界，避免照片顶部的门框/腰线等整幅横线造成碎段
+      if (y - segStart >= 150 && boundaryRow(y)) {
+        found = { at: y, next: y }; // 边界行归入下一段（照片顶边完整保留）
+        break;
+      }
+    }
+    if (!found) {
+      if (endY - segStart > MAX_H) found = { at: segStart + MAX_H, next: segStart + MAX_H };
+      else break;
+    }
+    cuts.push(found);
+    segStart = found.next;
+  }
+  const toBlob = (c: HTMLCanvasElement) =>
+    new Promise<Blob>((resolve, reject) =>
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error('图片导出失败'))), 'image/png')
+    );
+  // 过碎段（<180px，多为照片顶部门框/腰线误切出的细条）并入其后一段
+  const segs: { from: number; to: number }[] = [];
+  let prev = startY;
+  for (const c of cuts) {
+    segs.push({ from: prev, to: c.at });
+    prev = c.next;
+  }
+  segs.push({ from: prev, to: endY });
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (segs[i].to - segs[i].from < 180) {
+      segs[i + 1].from = segs[i].from;
+      segs.splice(i, 1);
+      i--;
+    }
+  }
+  const parts: Blob[] = [];
+  const pushSegment = async (from: number, to: number) => {
+    if (to - from <= 4) return;
+    const seg = document.createElement('canvas');
+    seg.width = w;
+    seg.height = to - from;
+    const sctx = seg.getContext('2d');
+    if (!sctx) throw new Error('浏览器不支持画布');
+    sctx.drawImage(canvas, 0, from, w, to - from, 0, 0, w, to - from);
+    parts.push(await toBlob(seg));
+  };
+  for (const s of segs) await pushSegment(s.from, s.to);
+  return parts;
+};
 
 export default function Products() {
   const [list, setList] = useState<any[]>([]);
@@ -51,6 +177,53 @@ export default function Products() {
    * （插件采集与链接识别都中过招），改为弹窗完全打开后（afterOpenChange）再填值。
    */
   const [pendingPrefill, setPendingPrefill] = useState<any>(null);
+  /** 长截图切分（2026-10-09 客户新增）：上传详情页长截图，框选商品详情区域后自动切分填入 */
+  const [longshotOpen, setLongshotOpen] = useState(false);
+  const [longshotUrl, setLongshotUrl] = useState('');
+  const [longshotRange, setLongshotRange] = useState<[number, number]>([0, 100]);
+  const [longshotDoing, setLongshotDoing] = useState(false);
+  const longshotFileRef = useRef<File | null>(null);
+  const longshotInputRef = useRef<HTMLInputElement>(null);
+
+  const openLongshotPicker = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (longshotUrl) URL.revokeObjectURL(longshotUrl);
+    longshotFileRef.current = f;
+    setLongshotUrl(URL.createObjectURL(f));
+    setLongshotRange([0, 100]);
+    setLongshotOpen(true);
+  };
+
+  const applyLongshot = async () => {
+    const f = longshotFileRef.current;
+    if (!f) return;
+    setLongshotDoing(true);
+    try {
+      const parts = await sliceLongScreenshot(f, longshotRange);
+      if (!parts.length) throw new Error('框选范围内没有可切分的内容');
+      const room = Math.max(0, 10 - detailImages.length);
+      const hide = message.loading('正在上传切分结果…', 0);
+      const urls: string[] = [];
+      for (const p of parts.slice(0, room)) {
+        urls.push(await uploadImage(new File([p], 'detail.png', { type: 'image/png' })));
+      }
+      hide();
+      const next = [...(form.getFieldValue('detailImages') || []), ...urls];
+      form.setFieldValue('detailImages', next);
+      setDetailImages(next);
+      setLongshotOpen(false);
+      message.success(
+        `长截图已切分 ${parts.length} 段，填入 ${urls.length} 张详情图` +
+          (parts.length > room ? `（超出 10 张上限，${parts.length - room} 段未填入）` : '')
+      );
+    } catch (err) {
+      message.error((err as Error).message);
+    } finally {
+      setLongshotDoing(false);
+    }
+  };
 
   const applyPrefill = (data: any) => {
     setPendingPrefill(data);
@@ -621,15 +794,16 @@ export default function Products() {
             </Space>
           </Form.Item>
           <Form.Item label="商品详情图" tooltip="最多 10 张，用于接待页商品卡片与详情展示">
-            <Upload
-              listType="picture-card"
-              accept="image/*"
-              fileList={(detailImages || []).map((url, index) => ({
-                uid: `detail-${index}`,
-                name: `详情图${index + 1}`,
-                status: 'done',
-                url,
-              })) as any}
+            <Space direction="vertical" size={8}>
+              <Upload
+                listType="picture-card"
+                accept="image/*"
+                fileList={(detailImages || []).map((url, index) => ({
+                  uid: `detail-${index}`,
+                  name: `详情图${index + 1}`,
+                  status: 'done',
+                  url,
+                })) as any}
               customRequest={async ({ file, onSuccess, onError }: any) => {
                 try {
                   const url = await uploadImage(file as File);
@@ -656,7 +830,12 @@ export default function Products() {
                   <div style={{ marginTop: 8 }}>上传详情图</div>
                 </div>
               )}
-            </Upload>
+              </Upload>
+              <Button icon={<ScissorOutlined />} onClick={() => longshotInputRef.current?.click()}>
+                长截图切分填入
+              </Button>
+              <input ref={longshotInputRef} type="file" accept="image/*" hidden onChange={openLongshotPicker} />
+            </Space>
           </Form.Item>
           <Space size={16}>
             <Form.Item name="price" label="销售价" rules={[{ required: true, message: '请输入价格' }]}>
@@ -951,6 +1130,38 @@ export default function Products() {
         <div style={{ maxHeight: '70vh', overflow: 'auto', textAlign: 'center' }}>
           <img src="/guide/product-add-guide.png" alt="一键添加商品使用说明" style={{ width: '100%', maxWidth: 460 }} />
         </div>
+      </Modal>
+
+      {/* 长截图切分（2026-10-09 客户新增）：框选商品详情区域后按空白间隙切分填入详情图 */}
+      <Modal
+        open={longshotOpen}
+        title="长截图切分详情图"
+        onCancel={() => setLongshotOpen(false)}
+        onOk={applyLongshot}
+        okText="切分填入"
+        cancelText="取消"
+        confirmLoading={longshotDoing}
+        width={560}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          {longshotUrl ? (
+            <img
+              src={longshotUrl}
+              alt="长截图预览"
+              style={{ width: '100%', maxHeight: 380, objectFit: 'contain', background: '#f5f5f5', borderRadius: 4 }}
+            />
+          ) : null}
+          <Slider
+            range
+            value={longshotRange}
+            onChange={(v) => setLongshotRange(v as [number, number])}
+            tipFormatter={(v) => `${v}%`}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            拖动两端手柄框选「商品详情」区域（从详情标题到结尾，排除评价/推荐/保障等无关区块），越精准切分越干净；切分后多余的段可在表单里删除。
+          </Typography.Text>
+        </Space>
       </Modal>
     </Card>
   );
