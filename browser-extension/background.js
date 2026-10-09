@@ -223,8 +223,14 @@ async function extractProduct() {
     ];
     const descImgs = uniq(
       descEls
+        // 过滤明显的小图标（箭头/logo/角标）：已加载的图用真实尺寸判断，尺寸未知的保留
+        .filter((i) => {
+          const w = i.naturalWidth || 0;
+          return !w || w >= 150;
+        })
         .map((i) => i.src || abs(i.getAttribute('data-src') || i.getAttribute('src')))
-        .filter((u) => u && u.includes('360buyimg.com') && !/blank|icon|logo|spacer|gif|1x1/i.test(u))
+        // pcpubliccms 是京东 UI 素材库（企业购 logo、公共图标都在这里），不作为商品图
+        .filter((u) => u && u.includes('360buyimg.com') && !/pcpubliccms/i.test(u) && !/blank|icon|logo|spacer|gif|1x1/i.test(u))
     );
     r.detailImages = uniq([...descImgs, ...r.detailImages]).slice(0, 10);
     // SKU 规格组：新版页 #choose-attrs，旧版页 #choose/#choose-color/#choose-version 等
@@ -233,38 +239,67 @@ async function extractProduct() {
         '#choose-attrs .p-choose-type, #choose .p-choose-type, #choose-color, #choose-version, #choose-attr-1, #choose-attr-2'
       )
     );
-    // 商品属性：详情区参数表（Ptable/参数表格），新旧版容器都扫，去重。
-    // 「规格与包装」tab 的内容是点击后才异步渲染进 DOM 的——之前只扫静态容器，
-    // 没点开过该 tab 时参数表根本不在 DOM 里，导致属性漏抓（2026-10-09 修复）：
-    // 先程序化激活该 tab，再等参数内容就绪（最多 4 秒），最后仍为空则全文档扫 dt/dd 兜底。
-    try {
-      const tabEl = [...document.querySelectorAll('.tab-main li, .tab-main div, [data-anchor]')].find(
-        (el) =>
-          /规格|参数/.test((el.textContent || '').trim()) &&
-          /detail/i.test(el.getAttribute('data-anchor') || el.getAttribute('data-href') || el.getAttribute('href') || '')
+    // 商品属性：优先直调京东描述接口——返回的 HTML 里自带「规格与包装」参数表，
+    // 不依赖 tab 是否点开、也不受新版页面结构调整影响（2026-10-09 v1.1.0）。
+    // 接口失败（CORS/频控）再退回「程序化激活 tab + 等待渲染」方案。
+    const skuMatch = location.pathname.match(/\/(\d+)\.html/);
+    const skuId = skuMatch && skuMatch[1];
+    if (skuId) {
+      try {
+        const resp = await fetch(
+          `https://cd.jd.com/description/channel?skuId=${skuId}&mainSkuId=${skuId}&charset=utf-8&cdn=2&isGeek=0`,
+          { credentials: 'include' }
+        );
+        if (resp.ok) {
+          const html = await resp.text();
+          const descDoc = new DOMParser().parseFromString(html, 'text/html');
+          const apiAttrs = parseAttrs(
+            [
+              descDoc.querySelector('.Ptable'),
+              descDoc.querySelector('.p-parameter'),
+              descDoc.querySelector('.parameter2'),
+              descDoc.querySelector('#J-detail-pop'),
+              descDoc.body,
+            ],
+            true
+          );
+          if (apiAttrs.length) r.attributes = apiAttrs;
+        }
+      } catch (e) {
+        /* 接口失败走 tab 兜底方案 */
+      }
+    }
+    if (!r.attributes.length) {
+      // 「规格与包装」tab 的内容是点击后才异步渲染进 DOM 的：先程序化激活该 tab，再等参数内容就绪（最多 4 秒）
+      try {
+        const tabEl = [...document.querySelectorAll('.tab-main li, .tab-main div, [data-anchor]')].find(
+          (el) =>
+            /规格|参数/.test((el.textContent || '').trim()) &&
+            /detail/i.test(el.getAttribute('data-anchor') || el.getAttribute('data-href') || el.getAttribute('href') || '')
+        );
+        if (tabEl && !/curr|active|current|on/i.test(String(tabEl.className || ''))) tabEl.click();
+      } catch (e) {
+        /* 找不到 tab 就按已渲染处理 */
+      }
+      for (let i = 0; i < 10; i++) {
+        if (document.querySelector('#J-detail-pop .Ptable, .Ptable dt, .p-parameter-list li, .parameter2 li')) break;
+        await sleep(400);
+      }
+      r.attributes = parseAttrs(
+        [
+          document.querySelector('#J-detail-pop'),
+          document.querySelector('#J-detail'),
+          document.querySelector('#J-detail-content'),
+          document.querySelector('.detail-content'),
+          document.querySelector('.describe'),
+          document.querySelector('.Ptable'),
+          document.querySelector('.p-parameter'),
+          document.querySelector('.p-parameter-list'),
+          document.querySelector('.parameter2'),
+        ],
+        true
       );
-      if (tabEl && !/curr|active|current|on/i.test(String(tabEl.className || ''))) tabEl.click();
-    } catch (e) {
-      /* 找不到 tab 就按已渲染处理 */
     }
-    for (let i = 0; i < 10; i++) {
-      if (document.querySelector('#J-detail-pop .Ptable, .Ptable dt, .p-parameter-list li, .parameter2 li')) break;
-      await sleep(400);
-    }
-    r.attributes = parseAttrs(
-      [
-        document.querySelector('#J-detail-pop'),
-        document.querySelector('#J-detail'),
-        document.querySelector('#J-detail-content'),
-        document.querySelector('.detail-content'),
-        document.querySelector('.describe'),
-        document.querySelector('.Ptable'),
-        document.querySelector('.p-parameter'),
-        document.querySelector('.p-parameter-list'),
-        document.querySelector('.parameter2'),
-      ],
-      true
-    );
   } else if (host.endsWith('taobao.com') || host.endsWith('tmall.com')) {
     r.platform = host.endsWith('tmall.com') ? '天猫' : '淘宝';
     const rawTitle = text('.tb-main-title') || text('.tb-detail-hd h1') || meta('og:title') || document.title || '';
@@ -290,6 +325,11 @@ async function extractProduct() {
     const descEls = [...document.querySelectorAll('#J_DescContent img, .description img')];
     const descImgs = uniq(
       descEls
+        // 过滤明显的小图标（箭头/logo/角标）：已加载的图用真实尺寸判断，尺寸未知的保留
+        .filter((i) => {
+          const w = i.naturalWidth || 0;
+          return !w || w >= 150;
+        })
         .map((i) => i.src || abs(i.getAttribute('data-src') || i.getAttribute('src')))
         .filter(
           (u) => u && u.includes('alicdn.com') && /imgextra|uploaded/i.test(u) && !/blank|icon|logo|sprite|gif|1x1/i.test(u)
