@@ -124,6 +124,13 @@ function FeigeProductCard({
   const services: string[] = product?.services || [];
   return (
     <div className="feige-product-card">
+      {/* 客户 2026-10-10：对齐飞鸽会话页交互——点击商品图片/标题区域直接弹出商品详情（规格/属性弹窗） */}
+      <div
+        className="feige-product-main"
+        title="点击查看商品详情"
+        onClick={onSpec}
+        style={{ display: 'flex', gap: 10, flex: 1, minWidth: 0, cursor: 'pointer' }}
+      >
       <div className="feige-product-thumb">
         {product?.coverUrl ? <img src={product.coverUrl} alt="" /> : <ShoppingOutlined />}
       </div>
@@ -145,6 +152,7 @@ function FeigeProductCard({
             <span className="feige-product-ship">现货 · 按承诺时效发货</span>
           ) : null}
         </div>
+      </div>
       </div>
       <div className="feige-product-actions">
         <Button size="small" onClick={onQuote}>

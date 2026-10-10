@@ -56,7 +56,7 @@ export default function ProductSpecModal({ open, product, onClose }: Props) {
   const detailImages = product?.detailImages || [];
 
   return (
-    <Modal open={open} title="规格 / 属性" onCancel={onClose} footer={null} width={520}>
+    <Modal open={open} title="商品详情" onCancel={onClose} footer={null} width={520}>
       {!product ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前会话没有关联商品" />
       ) : (
