@@ -25,7 +25,7 @@ import { shouldAbortAsDisconnected } from '../../domain/disconnect';
 import { weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
 import { cloneParams } from '../../domain/params';
-import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder } from '../../domain/order';
+import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef } from '../../domain/order';
 import { mixQuestionSeq } from '../../domain/question-seq';
 import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/seed-content';
 import {
@@ -430,7 +430,7 @@ export class ReceptionService implements OnModuleInit {
       );
       // 开局就按「第一个问题的订单状态」生成订单：售前=待支付/待发货，售后=已发货
       const firstStage: OrderStage = questions[0].orderStage || orderStageForQuestion(questions[0]);
-      const order = this.buildOrder(Number(row.id), firstStage, Date.parse(String(row.join_at)));
+      const order = this.buildOrder(Number(row.id), firstStage, Date.parse(String(row.join_at)), product);
       await this.persistOrder(Number(row.id), order);
       createdSessions.push({
         ...row,
@@ -465,8 +465,8 @@ export class ReceptionService implements OnModuleInit {
    * （下单 → 付款 → 承诺发货 → 发货/物流/签收），也就是"同一笔订单在推进"。
    * 时间锚点用会话进线时间：否则每次推问题都会把「下单时间」往后挪，看着像订单变了。
    */
-  private buildOrder(sessionId: number, stage: OrderStage, anchorMs = Date.now()): SimulatedOrder {
-    return buildSimulatedOrder(sessionId * 7919 + 13, stage, anchorMs);
+  private buildOrder(sessionId: number, stage: OrderStage, anchorMs = Date.now(), product?: OrderProductRef | null): SimulatedOrder {
+    return buildSimulatedOrder(sessionId * 7919 + 13, stage, anchorMs, product);
   }
 
   /** 把订单写回会话（单号/金额冗余在列上，完整快照放 JSONB）。 */
@@ -536,7 +536,7 @@ export class ReceptionService implements OnModuleInit {
      * 售前问题配「待支付 / 待发货」，售后问题配「已发货」——同一笔记订单随问题推进状态。
      */
     const orderStage: OrderStage = question.orderStage || orderStageForQuestion(question);
-    const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)));
+    const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)), session.products?.[0] ?? null);
     await this.persistOrder(sessionId, order);
     for (const text of texts) {
       await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
@@ -1329,6 +1329,7 @@ export class ReceptionService implements OnModuleInit {
             amount: s.order_amount,
             statusText: s.order_status,
             placedAt: new Date(new Date(s.join_at).getTime() - 3600 * 1000).toISOString(),
+            services: (s.products || [])[0]?.services || [],
           }
         : null,
       emotionValue: s.emotion_value,

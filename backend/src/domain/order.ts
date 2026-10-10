@@ -47,7 +47,21 @@ export interface SimulatedOrder {
   /** 脱敏收货人（参考图里的「澈*, 1***」） */
   receiver: string;
   address: string;
+  /** 订单保障（客户 2026-10-10：必须和商品库《服务承诺》一致；空数组时前端回退到默认标签） */
+  services: string[];
 }
+
+/** 生成订单时可参考的商品信息（取会话快照里的商品，字段与商品库一致）。 */
+export interface OrderProductRef {
+  price?: number | string | null;
+  skus?: { name?: string; size?: string; price?: number | string }[] | null;
+  services?: string[] | null;
+}
+
+const toAmount = (value: unknown): number | null => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 
 const PROVINCES = [
   ['湖北省', '襄阳市', '樊城区'],
@@ -76,7 +90,7 @@ const HOUR = 3600 * 1000;
  * 生成（或按新状态刷新）一笔模拟订单。
  * 同一个 seed 会得到同一个订单号与金额——同一局的订单在各状态间是"同一笔订单"在推进。
  */
-export function buildSimulatedOrder(seed: number, stage: OrderStage, now = Date.now()): SimulatedOrder {
+export function buildSimulatedOrder(seed: number, stage: OrderStage, now = Date.now(), product?: OrderProductRef | null): SimulatedOrder {
   const rng = lcg(seed);
   const orderNo = `69${String(Math.floor(rng() * 9e15)).padStart(15, '0').slice(0, 15)}`;
   const amount = Math.round((rng() * 900 + 60) * 100) / 100;
@@ -103,7 +117,28 @@ export function buildSimulatedOrder(seed: number, stage: OrderStage, now = Date.
     signedAt: null,
     receiver,
     address,
+    services: [],
   };
+
+  /**
+   * 客户 2026-10-10：订单保障 / 金额 / 规格必须和商品库一致——
+   * 保障 = 商品《服务承诺》；规格 = 商品 SKU（规格名 / 尺码）；
+   * 金额 = 选中 SKU 价格（无 SKU 价回退商品售价）× 件数。
+   * 上面 rng 调用顺序保持不变（订单号随 seed 稳定），这里只做覆盖。
+   */
+  if (product) {
+    order.services = Array.isArray(product.services) ? product.services.filter((s) => typeof s === 'string' && s.trim()) : [];
+    const skus = Array.isArray(product.skus) ? product.skus.filter((s) => s && (s.name || s.size)) : [];
+    if (skus.length) {
+      const sku = skus[Math.floor(rng() * skus.length)];
+      order.spec = [sku.name, sku.size].filter(Boolean).join(' / ');
+      const unitPrice = toAmount(sku.price) ?? toAmount(product.price);
+      if (unitPrice != null) order.amount = Math.round(unitPrice * order.quantity * 100) / 100;
+    } else {
+      const unitPrice = toAmount(product.price);
+      if (unitPrice != null) order.amount = Math.round(unitPrice * order.quantity * 100) / 100;
+    }
+  }
 
   if (stage === 'unshipped' || stage === 'shipped') {
     order.paidAt = iso(paidAt);

@@ -83,4 +83,36 @@ describe('模拟订单（客户 2026-10-03 三张参考图）', () => {
     expect(orderStageForQuestion({ stage: 'aftersale', question: '快递三天没有更新了！' })).toBe('shipped');
     expect(orderStageForQuestion({ stage: 'aftersale', question: '里面棉跑偏了' })).toBe('shipped');
   });
+
+  /** 客户 2026-10-10：订单保障 / 金额 / 规格必须和商品库一致。 */
+  it('带商品生成订单：保障=商品服务承诺，金额=SKU价×件数，规格=SKU 规格名/尺码', () => {
+    const product = {
+      price: 150.91,
+      services: ['七天无理由', '运费险', '48小时发货'],
+      skus: [
+        { name: '内搭+吊带+裙子', size: 'S', price: 150.91 },
+        { name: '内搭+吊带+裙子', size: 'XL', price: 150.91 },
+        { name: '内搭+吊带', size: 'M', price: 95 },
+      ],
+    };
+    const order = buildSimulatedOrder(555, 'unshipped', now, product);
+    expect(order.services).toEqual(['七天无理由', '运费险', '48小时发货']);
+    /* 金额必须等于选中 SKU 价格 × 件数（不再是 60~960 的随机数） */
+    const picked = product.skus.find((s) => order.spec.startsWith(s.name) && order.spec.endsWith(s.size));
+    expect(picked).toBeTruthy();
+    expect(order.amount).toBeCloseTo(Number(picked!.price) * order.quantity, 2);
+    /* 同一 seed 跨状态稳定 */
+    const again = buildSimulatedOrder(555, 'shipped', now, product);
+    expect(again.orderNo).toBe(order.orderNo);
+    expect(again.amount).toBe(order.amount);
+    expect(again.spec).toBe(order.spec);
+    expect(again.services).toEqual(order.services);
+  });
+
+  it('带商品但 SKU 无价格时回退商品售价；无商品时保障为空数组', () => {
+    const noSkuPrice = buildSimulatedOrder(556, 'unpaid', now, { price: 200, services: ['七天无理由'], skus: [{ name: 'A款', size: 'M' }] });
+    expect(noSkuPrice.amount).toBeCloseTo(200 * noSkuPrice.quantity, 2);
+    const noProduct = buildSimulatedOrder(557, 'unpaid', now);
+    expect(noProduct.services).toEqual([]);
+  });
 });

@@ -39,6 +39,8 @@ export interface OrderView {
   signedAt: string | null;
   receiver: string;
   address: string;
+  /** 订单保障（客户 2026-10-10：与商品库《服务承诺》一致；为空时回退默认标签） */
+  services?: string[];
 }
 
 interface Props {
@@ -166,10 +168,20 @@ export default function OrderCard({ order, product, onSend, onAction, actionPend
             {title} <span style={{ color: '#8c8c8c' }}>[{order.quantity}件]</span>
           </div>
           <div style={{ marginTop: 4 }}>
-            <Tag style={{ marginInlineEnd: 4 }}>源头好货 ›</Tag>
-            <Tag style={{ marginInlineEnd: 4 }}>7天 ›</Tag>
-            <Tag style={{ marginInlineEnd: 4 }}>极速退 ›</Tag>
-            <Tag>+1</Tag>
+            {order.services && order.services.length ? (
+              order.services.map((s, i) => (
+                <Tag key={i} style={{ marginInlineEnd: 4 }}>
+                  {s} ›
+                </Tag>
+              ))
+            ) : (
+              <>
+                <Tag style={{ marginInlineEnd: 4 }}>源头好货 ›</Tag>
+                <Tag style={{ marginInlineEnd: 4 }}>7天 ›</Tag>
+                <Tag style={{ marginInlineEnd: 4 }}>极速退 ›</Tag>
+                <Tag>+1</Tag>
+              </>
+            )}
           </div>
           <Row label="规格" onSend={() => onSend?.(`规格：${spec}`)}>
             {spec}
