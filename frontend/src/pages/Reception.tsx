@@ -59,6 +59,7 @@ import { connectRealtime, sendClientAck } from '../realtime';
 import { useAuth } from '../store/auth';
 import OrderCard from '../components/OrderCard';
 import ProductSpecModal from '../components/ProductSpecModal';
+import ProductPreviewDrawer from '../components/ProductPreviewDrawer';
 import dayjs from 'dayjs';
 
 interface SessionDto {
@@ -112,11 +113,14 @@ const STATE_LABEL: Record<string, string> = {
  */
 function FeigeProductCard({
   product,
+  onPreview,
   onSpec,
   onQuote,
   onInvite,
 }: {
   product?: any;
+  /** 点击卡片图片/标题区域：打开飞鸽式「商品预览」侧滑面板（客户 2026-10-10） */
+  onPreview: () => void;
   onSpec: () => void;
   onQuote: () => void;
   onInvite: () => void;
@@ -124,11 +128,11 @@ function FeigeProductCard({
   const services: string[] = product?.services || [];
   return (
     <div className="feige-product-card">
-      {/* 客户 2026-10-10：对齐飞鸽会话页交互——点击商品图片/标题区域直接弹出商品详情（规格/属性弹窗） */}
+      {/* 客户 2026-10-10：对齐飞鸽会话页交互——点击商品图片/标题区域滑出「商品预览」面板 */}
       <div
         className="feige-product-main"
-        title="点击查看商品详情"
-        onClick={onSpec}
+        title="点击查看商品"
+        onClick={onPreview}
         style={{ display: 'flex', gap: 10, flex: 1, minWidth: 0, cursor: 'pointer' }}
       >
       <div className="feige-product-thumb">
@@ -214,6 +218,12 @@ export default function Reception() {
    * （规格 SKU、售价与划线价、库存、分类、服务承诺、适用场景、详情图），数据来自会话快照里的商品。
    */
   const [specOpen, setSpecOpen] = useState(false);
+  /**
+   * 商品「预览」侧滑面板（客户 2026-10-10）：对齐飞鸽会话页——点击商品卡的图片/标题，
+   * 右侧滑出与真实商品详情页一致的预览（轮播图/价格/保障/规格/产品参数/详情长图）。
+   */
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewProduct, setPreviewProduct] = useState<any>(null);
   /**
    * 客户 2026-10-03：「商品」页签要展示**商品库里的商品**（不是当前会话的咨询宝贝），
    * 所以接待页会把商品库拉一份下来供带教/客服选发；弹「规格/属性」时用被点击的那件商品。
@@ -578,6 +588,18 @@ export default function Reception() {
     setSpecOpen(true);
   };
   const openSpec = () => openSpecOf(activeSession?.product);
+
+  /** 打开飞鸽式「商品预览」侧滑面板：点击商品卡图片/标题时用（客户 2026-10-10） */
+  const openPreviewOf = (product?: any) => {
+    const target = product ?? activeSession?.product;
+    if (!target) {
+      message.warning('请选择一件商品');
+      return;
+    }
+    setPreviewProduct(target);
+    setPreviewOpen(true);
+  };
+  const openPreview = () => openPreviewOf(activeSession?.product);
 
   /** 把指定商品作为卡片发到对话里（商品页签里可以选商品库里任意一件） */
   const sendProductCardOf = (product: any) => {
@@ -1163,6 +1185,7 @@ export default function Reception() {
                 <div className="message-bubble message-bubble-card">
                   <FeigeProductCard
                     product={activeSession.product}
+                    onPreview={openPreview}
                     onSpec={openSpec}
                     onQuote={() => insertPhrase('亲，这款到手价 {价格}，用券后更划算，我帮您算一下～')}
                     onInvite={() => insertPhrase('亲，这款现在有活动价，喜欢可以先拍下，我帮您留意发货～')}
@@ -1238,6 +1261,7 @@ export default function Reception() {
                       return (
                         <FeigeProductCard
                           product={cardProduct}
+                          onPreview={() => openPreviewOf(cardProduct)}
                           onSpec={() => openSpecOf(cardProduct)}
                           onQuote={() =>
                             insertPhrase(
@@ -1741,6 +1765,15 @@ export default function Reception() {
         onClose={() => {
           setSpecOpen(false);
           setSpecProduct(null);
+        }}
+      />
+      {/* 商品「预览」：对齐飞鸽会话页，点击商品卡图片/标题滑出（客户 2026-10-10） */}
+      <ProductPreviewDrawer
+        open={previewOpen}
+        product={previewProduct || activeSession?.product}
+        onClose={() => {
+          setPreviewOpen(false);
+          setPreviewProduct(null);
         }}
       />
       </div>
