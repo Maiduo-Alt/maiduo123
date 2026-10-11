@@ -691,9 +691,11 @@ export class ScriptsService {
     }
     const seqs = new Set(questionSeq.map((question) => String(question.seq)));
     for (const [seq, goals] of Object.entries(config)) {
-      if (!seqs.has(seq) || !Array.isArray(goals)) {
+      if (!Array.isArray(goals)) {
         throw new BizError(ERR.PARAM, `第 ${seq} 轮语义目标配置无效`);
       }
+      // 不同咨询内容的轮数可能不同；未生成到的轮次自然不会附加该目标。
+      if (!seqs.has(seq)) continue;
       for (const goal of goals) {
         if (!goal?.id || !goal.name || !Array.isArray(goal.requiredPoints) || !goal.requiredPoints.length) {
           throw new BizError(ERR.PARAM, `第 ${seq} 轮语义目标需要 id、name 和至少一个 requiredPoints`);

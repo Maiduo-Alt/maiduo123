@@ -23,6 +23,7 @@ import {
 } from 'antd';
 import { BarChartOutlined, DeleteOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, ShoppingOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
+import SemanticGoalBuilder, { semanticQuestionsToRows, semanticRowsToGoalsBySeq } from '../components/SemanticGoalBuilder';
 
 /**
  * 把背景 / 咨询内容按「分类」分组，供 Select 分组展示（客户 2026-10-10：
@@ -56,7 +57,6 @@ export default function Scripts() {
   const [categorySaving, setCategorySaving] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [goalConfigOpen, setGoalConfigOpen] = useState(false);
-  const [goalConfig, setGoalConfig] = useState('[]');
   const [savingGoals, setSavingGoals] = useState(false);
   const [options, setOptions] = useState<{
     backgrounds: any[];
@@ -78,6 +78,7 @@ export default function Scripts() {
     dimensions: [],
   });
   const [form] = Form.useForm();
+  const [goalForm] = Form.useForm();
   /** 异步批量生成任务（超过阈值时后端返回任务 ID） */
   const [genTask, setGenTask] = useState<any>(null);
   /** 剧本统计（方案 F3-12） */
@@ -88,7 +89,11 @@ export default function Scripts() {
   const createWay = Form.useWatch('createWay', form);
   const ruleMode = Form.useWatch('ruleMode', form);
   const productIds = Form.useWatch('productIds', form) as number[] | undefined;
+  const qaIds = Form.useWatch('qaIds', form) as number[] | undefined;
   const selectedProducts = (options.products || []).filter((p) => (productIds || []).includes(p.id));
+  const selectedContents = (options.contents || []).filter((content) => (qaIds || []).includes(content.id));
+  const referenceQuestions: string[] = selectedContents[0]?.questionList || [];
+  const roundLabels = Object.fromEntries(referenceQuestions.map((question, index) => [index + 1, question]));
   /**
    * 客户 2026-10-10：新建剧本改为**三段式向导**——基础设置 → 剧本信息 → 剧本内容，
    * 每一步只填少量字段，点「下一步」时只校验本步字段，避免一屏十几个控件的眼花缭乱。
@@ -203,16 +208,9 @@ export default function Scripts() {
       let semanticGoalsBySeq: Record<string, any[]> | undefined;
       if (values.ruleMode === 'semantic' && values.createWay !== 'case') {
         try {
-          semanticGoalsBySeq = JSON.parse(values.semanticGoalsBySeq || '{}');
-          if (!semanticGoalsBySeq || Array.isArray(semanticGoalsBySeq) || typeof semanticGoalsBySeq !== 'object') {
-            throw new Error();
-          }
-          if (!Object.values(semanticGoalsBySeq).some((goals: any) => Array.isArray(goals) && goals.length > 0)) {
-            message.error('语义目标模式至少需要为一轮配置目标');
-            return;
-          }
-        } catch {
-          message.error('按轮次填写有效的 JSON 对象，例如 {"1": [{"id":"...","name":"...","requiredPoints":[...]}]}');
+          semanticGoalsBySeq = semanticRowsToGoalsBySeq(values.semanticGoalRows || []);
+        } catch (error) {
+          message.error((error as Error).message);
           return;
         }
       }
@@ -298,53 +296,24 @@ export default function Scripts() {
   };
 
   const openGoalConfig = () => {
-    setGoalConfig(JSON.stringify((detail?.questionSeq || []).map((q: any) => ({
-      seq: q.seq,
-      semanticGoals: q.semanticGoals || [],
-    })), null, 2));
+    goalForm.setFieldsValue({ semanticGoalRows: semanticQuestionsToRows(detail?.questionSeq || []) });
     setGoalConfigOpen(true);
   };
 
   const saveGoalConfig = async () => {
-    let rows: any[];
+    let bySeq: Record<string, any[]>;
     try {
-      rows = JSON.parse(goalConfig);
-      if (!Array.isArray(rows)) throw new Error('配置必须是数组');
-      const seqs = new Set<number>();
-      for (const row of rows) {
-        if (!Number.isInteger(row.seq) || seqs.has(row.seq) || !Array.isArray(row.semanticGoals)) {
-          throw new Error('每项需要唯一的整数 seq 和 semanticGoals 数组');
-        }
-        seqs.add(row.seq);
-        for (const goal of row.semanticGoals) {
-          if (!goal.id || !goal.name || !Array.isArray(goal.requiredPoints) || !goal.requiredPoints.length) {
-            throw new Error('每个目标需要 id、name 和至少一个 requiredPoints');
-          }
-          if (goal.requiredPoints.some((point: any) => !point.id || !point.label || !Array.isArray(point.matchAny) || !point.matchAny.length)) {
-            throw new Error('每个子要点需要 id、label 和非空 matchAny 表达');
-          }
-          if (goal.requiredPoints.some((point: any) => point.businessRules &&
-            ['mustIncludeAll', 'mustIncludeAny', 'mustExclude'].some((key) =>
-              point.businessRules[key] !== undefined && !Array.isArray(point.businessRules[key])
-            ))) {
-            throw new Error('businessRules 的 mustIncludeAll、mustIncludeAny、mustExclude 必须是字符串数组');
-          }
-          if (goal.riskRules !== undefined && (!Array.isArray(goal.riskRules) || goal.riskRules.some((risk: any) =>
-            !risk.id || !risk.label || !Array.isArray(risk.matchAny) || !risk.matchAny.length
-          ))) {
-            throw new Error('每个 riskRule 需要 id、label 和非空 matchAny 表达');
-          }
-        }
-      }
+      await goalForm.validateFields();
+      bySeq = semanticRowsToGoalsBySeq(goalForm.getFieldValue('semanticGoalRows') || []);
     } catch (error) {
-      message.error(`语义目标 JSON 无效：${(error as Error).message}`);
+      message.error((error as Error).message || '请检查目标配置');
       return;
     }
 
-    const bySeq = new Map(rows.map((row) => [row.seq, row.semanticGoals]));
+    const goalsBySeq = new Map(Object.entries(bySeq).map(([seq, goals]) => [Number(seq), goals]));
     const questionSeq = (detail.questionSeq || []).map((question: any) => ({
       ...question,
-      semanticGoals: bySeq.get(question.seq) || [],
+      semanticGoals: goalsBySeq.get(question.seq) || [],
     }));
     setSavingGoals(true);
     try {
@@ -658,20 +627,6 @@ export default function Scripts() {
                     <Radio value="semantic">语义目标规则（新模式）</Radio>
                   </Radio.Group>
                 </Form.Item>
-                {ruleMode === 'semantic' && (
-                  <Form.Item
-                    name="semanticGoalsBySeq"
-                    label="按轮次配置语义目标"
-                    rules={[{ required: true, message: '请填写语义目标配置' }]}
-                    extra="JSON 对象的键为问题轮次，值为该轮 semanticGoals 数组。未列出的轮次仍按关键词规则计分。"
-                  >
-                    <Input.TextArea
-                      rows={8}
-                      spellCheck={false}
-                      placeholder={'{\n  "1": [{\n    "id": "size",\n    "name": "尺码说明",\n    "requiredPoints": [{ "id": "normal", "label": "说明尺码正常", "matchAny": ["标准尺码", "尺码正常"] }]\n  }]\n}'}
-                    />
-                  </Form.Item>
-                )}
               </>
             )}
             {createWay === 'case' && (
@@ -834,6 +789,17 @@ export default function Scripts() {
                 optionFilterProp="label"
               />
             </Form.Item>
+            {ruleMode === 'semantic' && (
+              <div style={{ marginTop: 20 }}>
+                <Typography.Title level={5}>配置客服回复目标</Typography.Title>
+                <Typography.Paragraph type="secondary">
+                  按下面的问题提示选择轮次并填写目标。批量选择多条咨询内容时，同一轮配置应用到各剧本对应轮次；其他轮次继续使用关键词规则。
+                </Typography.Paragraph>
+                <div style={{ maxHeight: 440, overflowY: 'auto', paddingRight: 8 }}>
+                  <SemanticGoalBuilder roundLabels={roundLabels} />
+                </div>
+              </div>
+            )}
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
               生成数量 = 背景数 × 内容数；买家沟通风格按《沟通风格》中的占比自动分配，提问序列不足 6 轮时由补充追问池自动补足。
             </Typography.Paragraph>
@@ -879,26 +845,20 @@ export default function Scripts() {
 
       <Modal
         open={goalConfigOpen}
-        title="语义目标配置（JSON）"
-        width={760}
+        title="配置语义目标"
+        width={880}
         onCancel={() => setGoalConfigOpen(false)}
         onOk={saveGoalConfig}
         confirmLoading={savingGoals}
         okText="保存配置"
       >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message="只填写需要启用语义判定的轮次；旧剧本留空时继续使用关键词规则。matchAny 是明确认可的表达，riskRules 用于独立识别错误承诺。向量服务只提供候选；配置 businessRules 后，规则核验通过才算覆盖。"
-          description={'子要点示例：{"id":"size-normal","label":"说明尺码不偏大","matchAny":["标准尺码","正常尺码","不偏大"],"businessRules":{"mustIncludeAny":["尺码","M码"],"mustExclude":["偏大很多"]}}。风险项可设置 id、label、matchAny 和可选 penalty（默认 15 分）。'}
-        />
-        <Input.TextArea
-          value={goalConfig}
-          onChange={(event) => setGoalConfig(event.target.value)}
-          autoSize={{ minRows: 14, maxRows: 24 }}
-          spellCheck={false}
-        />
+        <Form form={goalForm} layout="vertical">
+          <div style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: 8 }}>
+            <SemanticGoalBuilder
+              roundLabels={Object.fromEntries((detail?.questionSeq || []).map((question: any) => [question.seq, question.question]))}
+            />
+          </div>
+        </Form>
       </Modal>
 
       {/* 剧本统计（方案 F3-12）：被练次数、平均分、超时率，用来识别难点剧本 */}
