@@ -72,6 +72,41 @@ describe('评分引擎（方案 4.3）', () => {
     expect(result.solvingScore).toBeCloseTo(35 * 0.6, 1);
   });
 
+  it('语义目标可跨轮次提前覆盖并按子要点比例计分', () => {
+    const semanticQuestions: ScriptQuestion[] = [
+      { seq: 1, question: '退货条件？', keyPoints: [], semanticGoals: [{
+        id: 'return', name: '退货条件', requiredPoints: [
+          { id: 'tag', label: '吊牌', matchAny: ['吊牌'] },
+          { id: 'condition', label: '商品状态', matchAny: ['二次销售'] },
+        ],
+      }] },
+    ];
+    const result = scoreSession({
+      questions: semanticQuestions,
+      messages: [{ sender: 'agent', content: '拆吊牌影响退货', questionSeq: 1, goalMatches: [{ goalId: 'return', pointIds: ['tag'] }] }],
+      emotionFinal: 10,
+      hasEmotionScenario: false,
+      params,
+    });
+    expect(result.solvingScore).toBe(35 * 0.5);
+  });
+
+  it('业务风险在独立维度扣分，不抵消正确的语义目标命中', () => {
+    const result = scoreSession({
+      questions,
+      messages: [
+        ...buildMessages(),
+        { sender: 'agent', content: '肯定给您退', questionSeq: 2, riskItems: [{ ruleId: 'return-promise', label: '无条件承诺退货', penalty: 15 }] },
+      ],
+      emotionFinal: 10,
+      hasEmotionScenario: false,
+      params,
+    });
+    expect(result.riskScore).toBe(15);
+    expect(result.total).toBeLessThan(100);
+    expect(result.deductions.some((item) => item.dimension === 'risk')).toBe(true);
+  });
+
   it('出现禁用词应扣话术规范分', () => {
     const messages = buildMessages();
     messages[1].content = '不知道啊';

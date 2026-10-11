@@ -223,7 +223,10 @@ export class ScriptsService {
   async create(body: any, accountId: number) {
     if (!body.bgId || !body.qaId || !body.styleId) throw new BizError(ERR.PARAM, '买家咨询背景、内容与沟通风格为必填项');
     if (!Array.isArray(body.productIds) || !body.productIds.length) throw new BizError(ERR.PARAM, '请至少关联一个商品');
-    const questionSeq = await this.buildQuestionSeq(body.qaId, body.questionSeq);
+    const questionSeq = this.applySemanticGoals(
+      await this.buildQuestionSeq(body.qaId, body.questionSeq),
+      body.semanticGoalsBySeq
+    );
     const qa = await this.db.one<{ template_name: string }>(`SELECT template_name FROM buyer_qa WHERE id = $1`, [body.qaId]);
     const bg = await this.db.one<{ name: string }>(`SELECT name FROM buyer_bg WHERE id = $1`, [body.bgId]);
     if (!qa || !bg) throw new BizError(ERR.PARAM, '买家咨询背景或内容不存在');
@@ -274,6 +277,32 @@ export class ScriptsService {
     const current = await this.db.one(`SELECT * FROM scripts WHERE id = $1`, [id]);
     if (!current) throw new BizError(ERR.NOT_FOUND, '剧本不存在');
     const questionSeq = body.questionSeq ? body.questionSeq : null;
+    if (questionSeq !== null) {
+      if (!Array.isArray(questionSeq)) throw new BizError(ERR.PARAM, '问题序列必须是数组');
+      const goalIds = new Set<string>();
+      for (const question of questionSeq) {
+        if (question.semanticGoals === undefined) continue;
+        if (!Array.isArray(question.semanticGoals)) throw new BizError(ERR.PARAM, 'semanticGoals 必须是数组');
+        for (const goal of question.semanticGoals) {
+          if (!goal?.id || !goal.name || goalIds.has(goal.id) || !Array.isArray(goal.requiredPoints) || !goal.requiredPoints.length) {
+            throw new BizError(ERR.PARAM, '语义目标需要唯一 id、名称和至少一个子要点');
+          }
+          goalIds.add(goal.id);
+          const pointIds = new Set<string>();
+          for (const point of goal.requiredPoints) {
+            if (!point?.id || !point.label || pointIds.has(point.id) || !Array.isArray(point.matchAny) || !point.matchAny.length) {
+              throw new BizError(ERR.PARAM, `语义目标「${goal.name}」的子要点需要唯一 id、名称和认可表达`);
+            }
+            pointIds.add(point.id);
+          }
+          if (goal.riskRules !== undefined && (!Array.isArray(goal.riskRules) || goal.riskRules.some((rule: any) =>
+            !rule?.id || !rule.label || !Array.isArray(rule.matchAny) || !rule.matchAny.length
+          ))) {
+            throw new BizError(ERR.PARAM, `语义目标「${goal.name}」的风险规则配置无效`);
+          }
+        }
+      }
+    }
     await this.db.query(
       `UPDATE scripts SET name = COALESCE($2, name), category = COALESCE($3, category), stage = COALESCE($4, stage),
                           style_id = COALESCE($5, style_id), style_manual = COALESCE($6, style_manual),
@@ -357,7 +386,7 @@ export class ScriptsService {
   /** 批量生成：背景 × 内容 交叉组合，风格按占比分配。 */
   async batchGenerate(
     accountId: number,
-    body: { bgIds: number[]; qaIds: number[]; productIds: number[]; stage?: string; category?: string; seed?: number }
+    body: { bgIds: number[]; qaIds: number[]; productIds: number[]; stage?: string; category?: string; seed?: number; semanticGoalsBySeq?: Record<string, any[]> }
   ) {
     if (!body.bgIds?.length) throw new BizError(ERR.PARAM, '请至少选择一个买家咨询背景');
     if (!body.qaIds?.length) throw new BizError(ERR.PARAM, '请至少选择一个买家咨询内容');
@@ -522,12 +551,15 @@ export class ScriptsService {
     styleSeq: string[],
     scriptNos: string[],
     index: number,
-    body: { productIds: number[]; stage?: string; category?: string },
+    body: { productIds: number[]; stage?: string; category?: string; semanticGoalsBySeq?: Record<string, any[]> },
     rounds: [number, number]
   ): Promise<{ id: number; name: string; scriptNo: string; styleCode: string; rounds: number }> {
     const styleCode = styleSeq[index];
     const style = styleMap.get(styleCode);
-    const questionSeq = this.buildSeqFromQa(pair.qa, rounds);
+    const questionSeq = this.applySemanticGoals(
+      this.buildSeqFromQa(pair.qa, rounds),
+      body.semanticGoalsBySeq
+    );
     const stageName = (body.stage || pair.qa.stage) === 'aftersale' ? '售后' : '售前';
     // 取背景名冒号之后的部分，避免同前缀背景（如多条「使用场景：」）产生重名剧本。
     const name = `${stageName}-${pair.bg.name.replace(/^[^：:]*[：:]/, '')}-${pair.qa.template_name}`;
@@ -650,5 +682,37 @@ export class ScriptsService {
       },
       rounds
     );
+  }
+
+  private applySemanticGoals(questionSeq: ScriptQuestion[], config?: Record<string, any[]>): ScriptQuestion[] {
+    if (config === undefined) return questionSeq;
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      throw new BizError(ERR.PARAM, 'semanticGoalsBySeq 必须是按轮次配置的 JSON 对象');
+    }
+    const seqs = new Set(questionSeq.map((question) => String(question.seq)));
+    for (const [seq, goals] of Object.entries(config)) {
+      if (!seqs.has(seq) || !Array.isArray(goals)) {
+        throw new BizError(ERR.PARAM, `第 ${seq} 轮语义目标配置无效`);
+      }
+      for (const goal of goals) {
+        if (!goal?.id || !goal.name || !Array.isArray(goal.requiredPoints) || !goal.requiredPoints.length) {
+          throw new BizError(ERR.PARAM, `第 ${seq} 轮语义目标需要 id、name 和至少一个 requiredPoints`);
+        }
+        for (const point of goal.requiredPoints) {
+          if (!point?.id || !point.label || !Array.isArray(point.matchAny) || !point.matchAny.length) {
+            throw new BizError(ERR.PARAM, `第 ${seq} 轮的每个目标要点都需要 id、label 和 matchAny`);
+          }
+        }
+        if (goal.riskRules !== undefined && (!Array.isArray(goal.riskRules) || goal.riskRules.some((rule: any) =>
+          !rule?.id || !rule.label || !Array.isArray(rule.matchAny) || !rule.matchAny.length
+        ))) {
+          throw new BizError(ERR.PARAM, `第 ${seq} 轮风险规则配置无效`);
+        }
+      }
+    }
+    return questionSeq.map((question) => ({
+      ...question,
+      ...(config[String(question.seq)] ? { semanticGoals: config[String(question.seq)] } : {}),
+    }));
   }
 }

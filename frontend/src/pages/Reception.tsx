@@ -1250,7 +1250,9 @@ export default function Reception() {
                   m.isTimeout ||
                   m.ruleResult?.businessAction ||
                   m.ruleResult?.invalid ||
-                  m.ruleResult?.hitPoints?.length > 0) && (
+                  m.ruleResult?.hitPoints?.length > 0 ||
+                  m.ruleResult?.semanticEvaluation?.goalMatches?.length > 0 ||
+                  m.ruleResult?.semanticEvaluation?.riskItems?.length > 0) && (
                   <div className="message-meta">
                     {/* 飞鸽：客服消息右侧有「已读」回执（训练环境按"买家已看到"处理） */}
                     {m.sender === 'agent' ? <span className="message-read">已读</span> : null}
@@ -1272,6 +1274,16 @@ export default function Reception() {
                     {m.ruleResult?.hitPoints?.length > 0 && (
                       <span style={{ color: '#389e0d' }}> · 命中要点 {m.ruleResult.hitPoints.length} 项</span>
                     )}
+                    {m.ruleResult?.semanticEvaluation?.goalMatches?.length > 0 && (
+                      <Tooltip title={(m.ruleResult.goalProgress || []).map((goal: any) =>
+                        `${goal.goal.name}：${goal.status === 'completed' ? '已完成' : goal.status === 'partial' ? `部分完成，缺少 ${goal.missingPointIds.length} 项` : '未触发'}`
+                      ).join('；')}>
+                        <span style={{ color: '#1677ff' }}> · 更新语义目标 {m.ruleResult.semanticEvaluation.goalMatches.length} 个</span>
+                      </Tooltip>
+                    )}
+                    {m.ruleResult?.semanticEvaluation?.riskItems?.map((risk: any) => (
+                      <Tag key={`${risk.ruleId}-${risk.goalId || ''}`} color="red">风险 · {risk.label}</Tag>
+                    ))}
                   </div>
                 )}
               </div>

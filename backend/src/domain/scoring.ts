@@ -25,10 +25,11 @@ function containsAny(text: string, words: string[]): boolean {
 function scoreResponse(
   messages: ScoreMessage[],
   questions: ScriptQuestion[],
-  params: SystemParams
+  params: SystemParams,
+  skippedQuestionSeqs: number[] = []
 ): { score: number; metrics: SessionScore['metrics']; deductions: Deduction[] } {
   const deductions: Deduction[] = [];
-  const rounds = computeResponseRounds(messages, questions, params);
+  const rounds = computeResponseRounds(messages, questions, params, skippedQuestionSeqs);
   const firstResponseSec = rounds.firstResponseSec;
   const avgResponseSec = rounds.avgResponseSec;
   const timeoutCount = rounds.timeoutCount;
@@ -111,6 +112,33 @@ function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: n
     if (q.needTransfer && transferred.has(q.seq)) {
       score += perQuestion;
       solvedCount += 1;
+      continue;
+    }
+    if (q.semanticGoals?.length) {
+      const requiredPoints = q.semanticGoals.flatMap((goal) => goal.requiredPoints || []);
+      const covered = new Set<string>();
+      for (const message of messages) {
+        if (message.sender !== 'agent') continue;
+        for (const match of message.goalMatches || []) {
+          if (q.semanticGoals.some((goal) => goal.id === match.goalId)) {
+            match.pointIds.forEach((id) => covered.add(`${match.goalId}:${id}`));
+          }
+        }
+      }
+      const goalPointCount = new Set(q.semanticGoals.flatMap((goal) => goal.requiredPoints.map((point) => `${goal.id}:${point.id}`))).size;
+      const coveredCount = Math.min(goalPointCount, covered.size);
+      const ratio = goalPointCount ? coveredCount / goalPointCount : 0;
+      const gained = perQuestion * ratio;
+      score += gained;
+      if (ratio === 1) solvedCount += 1;
+      else {
+        deductions.push({
+          dimension: 'solving',
+          reason: `第 ${q.seq} 轮语义目标覆盖 ${coveredCount}/${goalPointCount} 个子要点（${Math.round(ratio * 100)}%）`,
+          points: round1(perQuestion - gained),
+          questionSeq: q.seq,
+        });
+      }
       continue;
     }
     const hits = new Set<string>();
@@ -199,19 +227,34 @@ function scoreEmotion(input: SessionScoreInput): { score: number; deductions: De
 /** 计算单个会话的四维得分。 */
 export function scoreSession(input: SessionScoreInput): SessionScore {
   const { params } = input;
-  const response = scoreResponse(input.messages, input.questions, params);
+  const response = scoreResponse(input.messages, input.questions, params, input.skippedQuestionSeqs || []);
   const solving = scoreSolving(input);
   const wording = scoreWording(input.messages, params);
   const emotion = scoreEmotion(input);
 
-  const total = round1(response.score + solving.score + wording.score + emotion.score);
+  const baseTotal = round1(response.score + solving.score + wording.score + emotion.score);
+  let remainingRiskBudget = baseTotal;
+  const riskDeductions: Deduction[] = [];
+  for (const item of input.messages.filter((message) => message.sender === 'agent').flatMap((message) => message.riskItems || [])) {
+    const points = Math.min(remainingRiskBudget, Math.max(0, item.penalty));
+    if (!points) continue;
+    remainingRiskBudget -= points;
+    riskDeductions.push({
+      dimension: 'risk',
+      reason: `业务风险：${item.label}`,
+      points: round1(points),
+    });
+  }
+  const riskScore = round1(baseTotal - remainingRiskBudget);
+  const total = round1(baseTotal - riskScore);
   return {
     responseScore: response.score,
     solvingScore: solving.score,
     wordingScore: wording.score,
     emotionScore: emotion.score,
+    riskScore,
     total,
-    deductions: [...response.deductions, ...solving.deductions, ...wording.deductions, ...emotion.deductions],
+    deductions: [...response.deductions, ...solving.deductions, ...wording.deductions, ...emotion.deductions, ...riskDeductions],
     metrics: {
       ...response.metrics,
       solvedCount: solving.solvedCount,

@@ -35,6 +35,8 @@ import {
 } from '../../domain/business-actions';
 import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-scope';
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
+import { evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
+import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
 import { TasksService } from '../tasks/tasks.service';
 
 interface SessionRow {
@@ -66,6 +68,7 @@ interface SessionRow {
   emotion_value: number;
   unresolved_streak: number;
   transferred_seqs: number[];
+  skipped_seqs: number[];
   score: string | null;
 }
 
@@ -517,9 +520,59 @@ export class ReceptionService implements OnModuleInit {
   }
 
   async pushNextQuestion(sessionId: number): Promise<void> {
-    const session = await this.loadSession(sessionId);
+    let session = await this.loadSession(sessionId);
     if (!session || ['finished', 'transferred', 'aborted', 'pending'].includes(session.state)) return;
-    const nextSeq = session.current_seq + 1;
+    const recentAgent = await this.db.one<{ content: string }>(
+      `SELECT content FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id DESC LIMIT 1`,
+      [sessionId]
+    );
+    if (recentAgent && isNaturalClosingReply(recentAgent.content)) {
+      const goodbye = '好的，明白了，谢谢您，我先不打扰啦。';
+      await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+        sessionId,
+        goodbye,
+        session.current_seq,
+      ]);
+      const attempt = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [session.attempt_id]);
+      this.gateway.emitToUser(attempt.account_id, 'buyer.message', {
+        attemptId: session.attempt_id,
+        sessionId,
+        seq: session.current_seq,
+        contents: [goodbye],
+        emotion: session.emotion_value,
+        naturalEnding: true,
+        sentAt: new Date().toISOString(),
+      });
+      await this.completeSession(sessionId, 'early');
+      return;
+    }
+
+    const priorMessages = await this.db.many<any>(
+      `SELECT rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
+      [sessionId]
+    );
+    const completedGoals = new Set(getGoalProgress(
+      session.questions,
+      priorMessages.map((row) => row.rule_result?.semanticEvaluation).filter(Boolean)
+    ).filter((progress) => progress.status === 'completed').map((progress) => progress.goal.id));
+    const next = selectNextQuestion(session.questions, session.current_seq, completedGoals, session.skipped_seqs || []);
+    const nextSeq = next.nextSeq ?? session.total_questions + 1;
+    if (next.skippedSeqs.length !== (session.skipped_seqs || []).length) {
+      await this.db.query(`UPDATE sessions SET current_seq = $2, skipped_seqs = $3::jsonb WHERE id = $1`, [
+        sessionId,
+        nextSeq - 1,
+        JSON.stringify(next.skippedSeqs),
+      ]);
+      const countedRounds = await this.db.many<{ sec: number | string }>(
+        `SELECT min(response_sec) AS sec FROM messages
+         WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL GROUP BY seq`,
+        [sessionId]
+      );
+      const activeRoundCount = session.total_questions - next.skippedSeqs.length;
+      const avgResponseSec = weightedAvgResponseSec(countedRounds.map((row) => Number(row.sec)), activeRoundCount);
+      await this.db.query(`UPDATE sessions SET avg_response_sec = $2 WHERE id = $1`, [sessionId, avgResponseSec]);
+      session = { ...session, current_seq: nextSeq - 1, skipped_seqs: next.skippedSeqs };
+    }
     if (nextSeq > session.total_questions) {
       await this.completeSession(sessionId, 'normal');
       return;
@@ -601,7 +654,14 @@ export class ReceptionService implements OnModuleInit {
 
     const currentQuestion = session.questions.find((q) => q.seq === session.current_seq) || null;
     const hitPoints = currentQuestion ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
-    const hitAny = hitPoints.length > 0;
+    const vectorCandidates = await findVectorCandidates(
+      text,
+      buildSemanticCandidates(session.questions),
+      process.env.SEMANTIC_API_URL,
+      Number(process.env.SEMANTIC_MATCH_THRESHOLD || 0.78)
+    );
+    const semanticEvaluation = evaluateSemanticReply(text, session.questions, vectorCandidates);
+    const hitAny = hitPoints.length > 0 || semanticEvaluation.goalMatches.length > 0;
 
     // C6：无效 / 敷衍回复判定（默认关闭）。走领域纯函数，规则来自 param_snapshot。
     const historyRows = await this.db.many<any>(
@@ -613,10 +673,12 @@ export class ReceptionService implements OnModuleInit {
       content: m.content,
       questionSeq: m.rule_result?.questionSeq ?? m.seq,
       hitPoints: m.rule_result?.hitPoints || [],
+      goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
+      riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
     }));
     const currentIndex = historyMessages.length;
     const validityRounds = judgeValidReplies(
-      [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints }],
+      [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints, ...semanticEvaluation }],
       session.questions,
       params
     );
@@ -648,6 +710,13 @@ export class ReceptionService implements OnModuleInit {
     const ruleResult = {
       questionSeq: session.current_seq,
       hitPoints,
+      semanticEvaluation,
+      goalProgress: getGoalProgress(session.questions, [
+        ...historyRows
+          .filter((m) => m.sender === 'agent' && m.rule_result?.semanticEvaluation)
+          .map((m) => m.rule_result.semanticEvaluation),
+        semanticEvaluation,
+      ]),
       missingPoints: currentQuestion ? currentQuestion.keyPoints.filter((p) => !hitPoints.includes(p)) : [],
       emotionDelta: emotion.delta,
       emotionValue: emotion.value,
@@ -675,7 +744,7 @@ export class ReceptionService implements OnModuleInit {
     const maxResponseSec = Math.max(session.max_response_sec || 0, responseSec || 0);
     const avgResponseSec = weightedAvgResponseSec(
       roundRows.map((r) => Number(r.sec)),
-      session.total_questions
+      session.total_questions - (session.skipped_seqs || []).length
     );
     await this.db.query(
       `UPDATE sessions SET state = 'waiting_buyer',
@@ -853,8 +922,11 @@ export class ReceptionService implements OnModuleInit {
         responseSec: m.response_sec,
         isTimeout: m.is_timeout,
         hitPoints: m.rule_result?.hitPoints || [],
+        goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
+        riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
       })),
       transferredQuestionSeqs: session.transferred_seqs || [],
+      skippedQuestionSeqs: session.skipped_seqs || [],
       emotionFinal: session.emotion_value,
       hasEmotionScenario: styleEmotional,
       params,
@@ -864,8 +936,8 @@ export class ReceptionService implements OnModuleInit {
     const finalScore = aborted ? 0 : result.total;
     await this.db.tx(async (client) => {
       await client.query(
-        `INSERT INTO scores (session_id, attempt_id, response_score, solving_score, wording_score, emotion_score, total_score, deductions, metrics)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb) ON CONFLICT (session_id) DO NOTHING`,
+        `INSERT INTO scores (session_id, attempt_id, response_score, solving_score, wording_score, emotion_score, risk_score, total_score, deductions, metrics)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb) ON CONFLICT (session_id) DO NOTHING`,
         [
           sessionId,
           session.attempt_id,
@@ -873,6 +945,7 @@ export class ReceptionService implements OnModuleInit {
           aborted ? 0 : result.solvingScore,
           aborted ? 0 : result.wordingScore,
           aborted ? 0 : result.emotionScore,
+          aborted ? 0 : result.riskScore,
           finalScore,
           JSON.stringify(result.deductions),
           JSON.stringify(result.metrics),
@@ -897,6 +970,7 @@ export class ReceptionService implements OnModuleInit {
               solving: result.solvingScore,
               wording: result.wordingScore,
               emotion: result.emotionScore,
+              risk: result.riskScore,
             },
         deductions: aborted ? [] : result.deductions,
       });
@@ -1093,7 +1167,7 @@ export class ReceptionService implements OnModuleInit {
       `SELECT s.id, s.buyer_name AS "buyerName", s.state, s.finished_reason AS "finishedReason", s.score,
               s.emotion_value AS "emotionValue", s.timeout_count AS "timeoutCount", s.total_questions AS "totalQuestions",
               sc.response_score AS "responseScore", sc.solving_score AS "solvingScore", sc.wording_score AS "wordingScore",
-              sc.emotion_score AS "emotionScore", sc.total_score AS "totalScore", sc.deductions, sc.metrics,
+              sc.emotion_score AS "emotionScore", sc.risk_score AS "riskScore", sc.total_score AS "totalScore", sc.deductions, sc.metrics,
               sc2.name AS "scriptName", sc2.script_no AS "scriptNo", st.name AS "styleName"
        FROM sessions s
        LEFT JOIN scores sc ON sc.session_id = s.id

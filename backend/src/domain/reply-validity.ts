@@ -77,7 +77,9 @@ export function judgeValidReplies(
       .filter(({ m }) => m.sender === 'agent' && m.questionSeq === seq);
 
     // 该轮是否命中过要点（整轮取最大值：任一条命中即算解决）
-    const hitAny = roundIndexes.some(({ m }) => (m.hitPoints || []).length > 0);
+    const hitAny = roundIndexes.some(({ m }) =>
+      (m.hitPoints || []).length > 0 || (m.goalMatches || []).some((match) => match.pointIds.length > 0)
+    );
     if (rule.unresolvedEnabled) {
       unresolvedRun = hitAny ? 0 : unresolvedRun + 1;
     }

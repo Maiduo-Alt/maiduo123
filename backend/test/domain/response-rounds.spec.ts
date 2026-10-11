@@ -62,6 +62,17 @@ describe('响应时长按轮次建模（抖店官方口径）', () => {
     expect(result.firstResponseSec).toBe(18);
     expect(result.avgResponseSec).toBe((18 + UNREPLIED_SECONDS) / 2);
   });
+
+  it('提前覆盖的语义目标轮次不作为未回复轮次扣响应分', () => {
+    const result = computeResponseRounds(
+      [buyer(1), reply(1, 18), buyer(3), reply(3, 24)],
+      questions.slice(0, 3),
+      params,
+      [2]
+    );
+    expect(result.totalRounds).toBe(2);
+    expect(result.avgResponseSec).toBe(21);
+  });
 });
 
 describe('会话级平均响应（写库用）与轮次口径一致', () => {

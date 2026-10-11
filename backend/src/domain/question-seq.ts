@@ -101,6 +101,8 @@ export function mixQuestionSeq(
       needTransfer: false,
       stage,
     };
+    // A replacement question must not inherit semantic goals authored for the old text.
+    delete next[index].semanticGoals;
   }
   // 替换后重新算订单状态：售后里的「催发货 / 改地址 / 改快递」发生在发货前 → 待发货
   return next.map((item) => ({ ...item, orderStage: orderStageForQuestion(item) }));

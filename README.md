@@ -96,6 +96,8 @@ docker compose down               # 停（数据卷 pgdata/uploads 保留）
 `deploy/compose.managed-db.yml`（库走托管、机器只跑 api/worker/web/nginx）。
 前端已支持 `VITE_API_BASE` / `VITE_SOCKET_URL`：前后端分开部署时构建一次即可指向外部 API。
 
+**启用自托管中文语义匹配**：腾讯云轻量服务器可按 [`deploy/SEMANTIC.md`](deploy/SEMANTIC.md) 启动可选的 CPU 向量服务；服务代码与 Compose 配置随仓库提供，模型缓存放在 Docker 卷中。
+
 **用腾讯云 CloudBase（云开发）+ GitHub 仓库部署**：见 `deploy/CLOUDBASE.md` ——
 云托管（CloudBase Run）从 GitHub 构建 `backend/Dockerfile` 跑 API（容器端口 3000、健康检查 `/api/health`、
 启动命令里先 `migrate → seed`），前端放静态网站托管，**数据库必须是外部 PostgreSQL**

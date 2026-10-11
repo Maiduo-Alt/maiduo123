@@ -73,6 +73,7 @@ export default function RecordDetail() {
     { title: '问题解决', dataIndex: 'solvingScore', width: 90, render: (v) => v ?? '-' },
     { title: '话术规范', dataIndex: 'wordingScore', width: 90, render: (v) => v ?? '-' },
     { title: '情绪安抚', dataIndex: 'emotionScore', width: 90, render: (v) => v ?? '-' },
+    { title: '业务风险扣分', dataIndex: 'riskScore', width: 110, render: (v) => Number(v || 0) ? `-${v}` : '0' },
     {
       title: '会话得分',
       dataIndex: 'totalScore',

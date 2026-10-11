@@ -36,6 +36,9 @@ export default function Scripts() {
   const [categoryValue, setCategoryValue] = useState<string>('');
   const [categorySaving, setCategorySaving] = useState(false);
   const [detail, setDetail] = useState<any>(null);
+  const [goalConfigOpen, setGoalConfigOpen] = useState(false);
+  const [goalConfig, setGoalConfig] = useState('[]');
+  const [savingGoals, setSavingGoals] = useState(false);
   const [options, setOptions] = useState<{
     backgrounds: any[];
     contents: any[];
@@ -61,6 +64,7 @@ export default function Scripts() {
   const [guideOpen, setGuideOpen] = useState(false);
   const createMode = Form.useWatch('createMode', form);
   const createWay = Form.useWatch('createWay', form);
+  const ruleMode = Form.useWatch('ruleMode', form);
   const productIds = Form.useWatch('productIds', form) as number[] | undefined;
   const selectedProducts = (options.products || []).filter((p) => (productIds || []).includes(p.id));
 
@@ -140,6 +144,22 @@ export default function Scripts() {
   const generate = async () => {
     const values = await form.validateFields();
     try {
+      let semanticGoalsBySeq: Record<string, any[]> | undefined;
+      if (values.ruleMode === 'semantic' && values.createWay !== 'case') {
+        try {
+          semanticGoalsBySeq = JSON.parse(values.semanticGoalsBySeq || '{}');
+          if (!semanticGoalsBySeq || Array.isArray(semanticGoalsBySeq) || typeof semanticGoalsBySeq !== 'object') {
+            throw new Error();
+          }
+          if (!Object.values(semanticGoalsBySeq).some((goals: any) => Array.isArray(goals) && goals.length > 0)) {
+            message.error('语义目标模式至少需要为一轮配置目标');
+            return;
+          }
+        } catch {
+          message.error('按轮次填写有效的 JSON 对象，例如 {"1": [{"id":"...","name":"...","requiredPoints":[...]}]}');
+          return;
+        }
+      }
       // 按案例创建（方案 F3-07）：案例的买家消息先沉淀成咨询内容，再走标准建剧本流程
       if (values.createWay === 'case') {
         const res = await api<any>('/scripts/from-case', {
@@ -149,6 +169,7 @@ export default function Scripts() {
             productIds: values.productIds,
             styleId: values.styleId,
             name: values.name || undefined,
+            semanticGoalsBySeq,
           },
         });
         message.success('已按案例生成剧本');
@@ -173,6 +194,7 @@ export default function Scripts() {
             stage: values.stage,
             category: values.category || '培训',
             name: values.name || undefined,
+            semanticGoalsBySeq,
           },
         });
         message.success('已生成 1 个剧本');
@@ -188,6 +210,7 @@ export default function Scripts() {
           productIds: values.productIds,
           stage: values.stage,
           category: values.category || '培训',
+          semanticGoalsBySeq,
         },
       });
       // 超过异步阈值时后端返回任务 ID，改为进度条展示（方案 3.3 / 5.7）
@@ -216,6 +239,68 @@ export default function Scripts() {
   const openDetail = async (id: number) => {
     const data = await api<any>(`/scripts/${id}`);
     setDetail(data);
+  };
+
+  const openGoalConfig = () => {
+    setGoalConfig(JSON.stringify((detail?.questionSeq || []).map((q: any) => ({
+      seq: q.seq,
+      semanticGoals: q.semanticGoals || [],
+    })), null, 2));
+    setGoalConfigOpen(true);
+  };
+
+  const saveGoalConfig = async () => {
+    let rows: any[];
+    try {
+      rows = JSON.parse(goalConfig);
+      if (!Array.isArray(rows)) throw new Error('配置必须是数组');
+      const seqs = new Set<number>();
+      for (const row of rows) {
+        if (!Number.isInteger(row.seq) || seqs.has(row.seq) || !Array.isArray(row.semanticGoals)) {
+          throw new Error('每项需要唯一的整数 seq 和 semanticGoals 数组');
+        }
+        seqs.add(row.seq);
+        for (const goal of row.semanticGoals) {
+          if (!goal.id || !goal.name || !Array.isArray(goal.requiredPoints) || !goal.requiredPoints.length) {
+            throw new Error('每个目标需要 id、name 和至少一个 requiredPoints');
+          }
+          if (goal.requiredPoints.some((point: any) => !point.id || !point.label || !Array.isArray(point.matchAny) || !point.matchAny.length)) {
+            throw new Error('每个子要点需要 id、label 和非空 matchAny 表达');
+          }
+          if (goal.requiredPoints.some((point: any) => point.businessRules &&
+            ['mustIncludeAll', 'mustIncludeAny', 'mustExclude'].some((key) =>
+              point.businessRules[key] !== undefined && !Array.isArray(point.businessRules[key])
+            ))) {
+            throw new Error('businessRules 的 mustIncludeAll、mustIncludeAny、mustExclude 必须是字符串数组');
+          }
+          if (goal.riskRules !== undefined && (!Array.isArray(goal.riskRules) || goal.riskRules.some((risk: any) =>
+            !risk.id || !risk.label || !Array.isArray(risk.matchAny) || !risk.matchAny.length
+          ))) {
+            throw new Error('每个 riskRule 需要 id、label 和非空 matchAny 表达');
+          }
+        }
+      }
+    } catch (error) {
+      message.error(`语义目标 JSON 无效：${(error as Error).message}`);
+      return;
+    }
+
+    const bySeq = new Map(rows.map((row) => [row.seq, row.semanticGoals]));
+    const questionSeq = (detail.questionSeq || []).map((question: any) => ({
+      ...question,
+      semanticGoals: bySeq.get(question.seq) || [],
+    }));
+    setSavingGoals(true);
+    try {
+      await api(`/scripts/${detail.id}`, { method: 'PUT', body: { questionSeq } });
+      setDetail({ ...detail, questionSeq });
+      setGoalConfigOpen(false);
+      message.success('语义目标已保存；新接待会使用此配置，进行中的会话保留开局快照');
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setSavingGoals(false);
+    }
   };
 
   /**
@@ -472,7 +557,7 @@ export default function Scripts() {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ category: '培训', stage: 'presale', createMode: 'batch', createWay: 'custom' }}
+          initialValues={{ category: '培训', stage: 'presale', createMode: 'batch', createWay: 'custom', ruleMode: 'keyword' }}
         >
           <div className="script-section">
             <div className="script-section-title">基础设置</div>
@@ -488,6 +573,30 @@ export default function Scripts() {
                 <Radio value="case">根据聊天案例创建</Radio>
               </Radio.Group>
             </Form.Item>
+            {createWay !== 'case' && (
+              <>
+                <Form.Item name="ruleMode" label="规则模式" rules={[{ required: true }]}>
+                  <Radio.Group>
+                    <Radio value="keyword">关键词规则（现有模式）</Radio>
+                    <Radio value="semantic">语义目标规则（新模式）</Radio>
+                  </Radio.Group>
+                </Form.Item>
+                {ruleMode === 'semantic' && (
+                  <Form.Item
+                    name="semanticGoalsBySeq"
+                    label="按轮次配置语义目标"
+                    rules={[{ required: true, message: '请填写语义目标配置' }]}
+                    extra="JSON 对象的键为问题轮次，值为该轮 semanticGoals 数组。未列出的轮次仍按关键词规则计分。"
+                  >
+                    <Input.TextArea
+                      rows={8}
+                      spellCheck={false}
+                      placeholder={'{\n  "1": [{\n    "id": "size",\n    "name": "尺码说明",\n    "requiredPoints": [{ "id": "normal", "label": "说明尺码正常", "matchAny": ["标准尺码", "尺码正常"] }]\n  }]\n}'}
+                    />
+                  </Form.Item>
+                )}
+              </>
+            )}
             {createWay === 'case' && (
               <Form.Item name="caseId" label="选择案例" rules={[{ required: true, message: '请选择案例' }]}>
                 <Select
@@ -615,6 +724,7 @@ export default function Scripts() {
               <br />
               买家接受方案：{detail.acceptedAnswer || '未填写'}
             </Typography.Paragraph>
+            <Button style={{ marginBottom: 12 }} onClick={openGoalConfig}>配置语义目标</Button>
             <Timeline
               items={(detail.questionSeq || []).map((q: any) => ({
                 color: 'blue',
@@ -631,6 +741,30 @@ export default function Scripts() {
           </>
         )}
       </Drawer>
+
+      <Modal
+        open={goalConfigOpen}
+        title="语义目标配置（JSON）"
+        width={760}
+        onCancel={() => setGoalConfigOpen(false)}
+        onOk={saveGoalConfig}
+        confirmLoading={savingGoals}
+        okText="保存配置"
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="只填写需要启用语义判定的轮次；旧剧本留空时继续使用关键词规则。matchAny 是明确认可的表达，riskRules 用于独立识别错误承诺。向量服务只提供候选；配置 businessRules 后，规则核验通过才算覆盖。"
+          description={'子要点示例：{"id":"size-normal","label":"说明尺码不偏大","matchAny":["标准尺码","正常尺码","不偏大"],"businessRules":{"mustIncludeAny":["尺码","M码"],"mustExclude":["偏大很多"]}}。风险项可设置 id、label、matchAny 和可选 penalty（默认 15 分）。'}
+        />
+        <Input.TextArea
+          value={goalConfig}
+          onChange={(event) => setGoalConfig(event.target.value)}
+          autoSize={{ minRows: 14, maxRows: 24 }}
+          spellCheck={false}
+        />
+      </Modal>
 
       {/* 剧本统计（方案 F3-12）：被练次数、平均分、超时率，用来识别难点剧本 */}
       <Drawer open={!!stats} title="剧本统计" width={760} onClose={() => setStats(null)}>

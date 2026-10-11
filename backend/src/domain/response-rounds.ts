@@ -48,14 +48,15 @@ export interface ResponseRoundsResult {
 export function computeResponseRounds(
   messages: ScoreMessage[],
   questions: ScriptQuestion[],
-  params: SystemParams
+  params: SystemParams,
+  skippedQuestionSeqs: number[] = []
 ): ResponseRoundsResult {
   const agentMessages = messages.filter((m) => m.sender === 'agent');
   const timed = agentMessages.filter((m) => typeof m.responseSec === 'number' && (m.responseSec as number) >= 0);
 
   // 轮次边界：优先用提问序列；没有提问序列时退化为「消息里出现过的轮次号」
   const seqs = questions.length
-    ? questions.map((q) => q.seq)
+    ? questions.map((q) => q.seq).filter((seq) => !skippedQuestionSeqs.includes(seq))
     : [...new Set(agentMessages.map((m) => m.questionSeq).filter((v): v is number => typeof v === 'number'))];
 
   const rounds: RoundTiming[] = seqs.map((seq) => {

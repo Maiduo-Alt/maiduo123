@@ -1,5 +1,7 @@
 # 依赖（换设备后 npm install 重新装，约 240MB，不纳入同步）
 node_modules/
+__pycache__/
+*.py[cod]
 
 # 构建产物
 dist/

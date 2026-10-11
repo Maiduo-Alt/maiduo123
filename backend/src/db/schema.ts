@@ -173,6 +173,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   emotion_value INTEGER NOT NULL DEFAULT 20,
   unresolved_streak INTEGER NOT NULL DEFAULT 0,
   transferred_seqs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  skipped_seqs JSONB NOT NULL DEFAULT '[]'::jsonb,
   score         NUMERIC(5,1)
 );
 
@@ -210,11 +211,15 @@ CREATE TABLE IF NOT EXISTS scores (
   solving_score NUMERIC(5,1) NOT NULL,
   wording_score NUMERIC(5,1) NOT NULL,
   emotion_score NUMERIC(5,1) NOT NULL,
+  risk_score    NUMERIC(5,1) NOT NULL DEFAULT 0,
   total_score   NUMERIC(5,1) NOT NULL,
   deductions    JSONB NOT NULL DEFAULT '[]'::jsonb,
   metrics       JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE scores ADD COLUMN IF NOT EXISTS risk_score NUMERIC(5,1) NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS skipped_seqs JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS annotations (
   id            SERIAL PRIMARY KEY,

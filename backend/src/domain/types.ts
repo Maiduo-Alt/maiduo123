@@ -159,6 +159,8 @@ export interface ScriptQuestion {
   seq: number;
   question: string;
   keyPoints: string[];
+  /** Optional semantic goals. Missing/empty keeps the legacy keyword scoring path. */
+  semanticGoals?: SemanticGoal[];
   needTransfer?: boolean;
   /**
    * 该问题属于售前还是售后（方案 3.3 / 客户 2026-10-03 反馈）。
@@ -173,6 +175,33 @@ export interface ScriptQuestion {
   orderStage?: 'unpaid' | 'unshipped' | 'shipped';
 }
 
+export interface SemanticGoalPoint {
+  id: string;
+  label: string;
+  /** Explicit concepts or natural expressions that cover this point. */
+  matchAny: string[];
+  /** A vector match is only a candidate. These deterministic checks must also pass. */
+  businessRules?: {
+    mustIncludeAll?: string[];
+    mustIncludeAny?: string[];
+    mustExclude?: string[];
+  };
+}
+
+export interface SemanticRiskRule {
+  id: string;
+  label: string;
+  matchAny: string[];
+  penalty?: number;
+}
+
+export interface SemanticGoal {
+  id: string;
+  name: string;
+  requiredPoints: SemanticGoalPoint[];
+  riskRules?: SemanticRiskRule[];
+}
+
 /** 会话消息（评分输入）。 */
 export interface ScoreMessage {
   sender: Sender;
@@ -181,19 +210,22 @@ export interface ScoreMessage {
   responseSec?: number | null;
   isTimeout?: boolean;
   hitPoints?: string[];
+  goalMatches?: { goalId: string; pointIds: string[] }[];
+  riskItems?: { ruleId: string; label: string; penalty: number; goalId?: string }[];
 }
 
 export interface SessionScoreInput {
   questions: ScriptQuestion[];
   messages: ScoreMessage[];
   transferredQuestionSeqs?: number[];
+  skippedQuestionSeqs?: number[];
   emotionFinal: number;
   hasEmotionScenario: boolean;
   params: SystemParams;
 }
 
 export interface Deduction {
-  dimension: 'response' | 'solving' | 'wording' | 'emotion';
+  dimension: 'response' | 'solving' | 'wording' | 'emotion' | 'risk';
   reason: string;
   points: number;
   questionSeq?: number | null;
@@ -204,6 +236,7 @@ export interface SessionScore {
   solvingScore: number;
   wordingScore: number;
   emotionScore: number;
+  riskScore: number;
   total: number;
   deductions: Deduction[];
   metrics: {
