@@ -192,6 +192,10 @@ describe('在线模拟接待端到端链路', () => {
     const created = await request(http).get(`/api/scripts/${res.body.data.preview[0].id}`).set(auth);
     expect(created.body.code).toBe(0);
     expect(created.body.data.questionSeq[0].semanticGoals[0].id).toBe('shipping-status');
+    expect(created.body.data.questionSeq[0].goalPriority).toBe('primary');
+    expect(created.body.data.questionSeq[0].primaryGoal).toBeTruthy();
+    expect(created.body.data.questionSeq[0].question).toContain('另外');
+    expect(created.body.data.questionSeq.slice(1).every((question: any) => question.goalPriority !== 'primary')).toBe(true);
     expect(created.body.data.questionSeq.some((question: any) =>
       question.seq > 1 &&
       (question.keyPoints || []).some((point: string) => point !== '有效回应') &&

@@ -91,6 +91,30 @@ describe('评分引擎（方案 4.3）', () => {
     expect(result.solvingScore).toBe(35 * 0.5);
   });
 
+  it('主次目标标记只影响提问方式，不改变评分权重', () => {
+    const weightedQuestion: ScriptQuestion[] = [{
+      seq: 1,
+      question: '商品材质和尺码？',
+      keyPoints: [],
+      semanticGoals: [{
+        id: 'product-info',
+        name: '商品信息',
+        requiredPoints: [
+          { id: 'material', label: '材质', matchAny: ['面料'], isPrimary: true },
+          { id: 'size', label: '尺码', matchAny: ['尺码'] },
+        ],
+      }],
+    }];
+    const result = scoreSession({
+      questions: weightedQuestion,
+      messages: [{ sender: 'agent', content: '面料是棉质', questionSeq: 1, goalMatches: [{ goalId: 'product-info', pointIds: ['material'] }] }],
+      emotionFinal: 10,
+      hasEmotionScenario: false,
+      params,
+    });
+    expect(result.solvingScore).toBe(35 * 0.5);
+  });
+
   it('业务风险在独立维度扣分，不抵消正确的语义目标命中', () => {
     const result = scoreSession({
       questions,

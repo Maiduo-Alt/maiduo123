@@ -159,6 +159,11 @@ export interface ScriptQuestion {
   seq: number;
   question: string;
   keyPoints: string[];
+  /** Generated from selected consultation content to control how detailed the buyer asks. */
+  goalPriority?: 'primary' | 'secondary';
+  primaryGoal?: string;
+  /** Original buyer question before adding the generated primary-goal follow-up. */
+  baseQuestion?: string;
   /** Optional semantic goals. Missing/empty keeps the legacy keyword scoring path. */
   semanticGoals?: SemanticGoal[];
   needTransfer?: boolean;
@@ -178,6 +183,8 @@ export interface ScriptQuestion {
 export interface SemanticGoalPoint {
   id: string;
   label: string;
+  /** Randomly selected central point for this generated round. */
+  isPrimary?: boolean;
   /** Explicit concepts or natural expressions that cover this point. */
   matchAny: string[];
   /** A vector match is only a candidate. These deterministic checks must also pass. */

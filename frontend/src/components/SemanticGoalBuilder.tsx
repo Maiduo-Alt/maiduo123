@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Collapse, Form, Input, InputNumber, Select, Space, Typography } from 'antd';
+import { Alert, Button, Card, Checkbox, Collapse, Form, Input, InputNumber, Select, Space, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 
 const expressionsInput = {
@@ -15,6 +15,7 @@ export function semanticQuestionsToRows(questionSeq: any[] = []) {
       name: goal.name,
       points: (goal.requiredPoints || []).map((point: any) => ({
         label: point.label,
+        isPrimary: Boolean(point.isPrimary),
         matchAny: point.matchAny || [],
         mustIncludeAll: point.businessRules?.mustIncludeAll || [],
         mustIncludeAny: point.businessRules?.mustIncludeAny || [],
@@ -32,6 +33,9 @@ export function semanticQuestionsToRows(questionSeq: any[] = []) {
 /** 表单值转成后端语义目标结构；自动生成 id，用户无需接触 JSON 或标识符。 */
 export function semanticRowsToGoalsBySeq(rows: any[] = []): Record<string, any[]> {
   if (!rows.length) throw new Error('请至少添加一个语义目标');
+  if (rows.reduce((sum, row) => sum + (row.points || []).filter((point: any) => point.isPrimary).length, 0) > 1) {
+    throw new Error('整条剧本只能设置一个主目标');
+  }
   const result: Record<string, any[]> = {};
   rows.forEach((row, goalIndex) => {
     const seq = Number(row.seq);
@@ -51,6 +55,7 @@ export function semanticRowsToGoalsBySeq(rows: any[] = []): Record<string, any[]
       return {
         id: `point-${seq}-${goalIndex + 1}-${pointIndex + 1}`,
         label: String(point.label).trim(),
+        ...(point.isPrimary ? { isPrimary: true } : {}),
         matchAny,
         ...(Object.keys(businessRules).length ? { businessRules } : {}),
       };
@@ -127,13 +132,16 @@ export default function SemanticGoalBuilder({
                   </Form.Item>
                 </Space>
 
-                <Typography.Text strong>客服需要说明的要点</Typography.Text>
+                <Typography.Text strong>客服需要说明的要点（勾选一个主目标，其余为次要目标）</Typography.Text>
                 <Form.List name={[goal.name, 'points']}>
                   {(points, pointOps) => (
                     <Space direction="vertical" style={{ width: '100%', marginTop: 8 }} size={8}>
                       {points.map((point, pointIndex) => (
                         <Card key={point.key} size="small" type="inner">
                           <Space align="start" style={{ width: '100%' }}>
+                            <Form.Item name={[point.name, 'isPrimary']} valuePropName="checked" style={{ marginTop: 30 }}>
+                              <Checkbox>主目标</Checkbox>
+                            </Form.Item>
                             <Form.Item
                               name={[point.name, 'label']}
                               label={`要点 ${pointIndex + 1}`}

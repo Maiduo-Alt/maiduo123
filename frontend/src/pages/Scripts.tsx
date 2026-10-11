@@ -619,7 +619,12 @@ export default function Scripts() {
             </Form.Item>
             {createWay !== 'case' && (
               <>
-                <Form.Item name="ruleMode" label="规则模式" rules={[{ required: true }]}>
+                <Form.Item
+                  name="ruleMode"
+                  label="规则模式"
+                  rules={[{ required: true }]}
+                  extra="随机抽取一个主目标并优先推送更具体的问题，其余要点作为次要目标；评分仍按现有要点规则计算。生成后可在剧本列表调整目标。"
+                >
                   <Radio.Group>
                     <Radio value="keyword">关键词规则（现有模式）</Radio>
                     <Radio value="semantic">自动生成语义目标（推荐）</Radio>
@@ -830,7 +835,20 @@ export default function Scripts() {
                     <Typography.Text strong>
                       第 {q.seq} 轮：{q.question}
                     </Typography.Text>
-                    <div style={{ fontSize: 12, color: '#8c8c8c' }}>期望要点：{q.keyPoints.join('、')}</div>
+                    {q.goalPriority === 'primary' && <Tag color="gold">主目标：{q.primaryGoal}</Tag>}
+                    {q.goalPriority === 'secondary' && <Tag>次要目标</Tag>}
+                    <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+                      期望要点：{q.keyPoints.map((point: string, index: number) => {
+                        const isPrimary = (q.semanticGoals || []).some((goal: any) =>
+                          (goal.requiredPoints || []).some((required: any) => required.label === point && required.isPrimary)
+                        );
+                        return (
+                          <span key={`${q.seq}-${index}`}>
+                            {index ? '、' : ''}{point}{isPrimary && <Tag color="gold" style={{ marginInlineStart: 4 }}>主目标</Tag>}
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
                 ),
               }))}

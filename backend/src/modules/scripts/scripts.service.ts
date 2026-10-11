@@ -10,7 +10,7 @@ import { SettingsService } from '../settings/settings.service';
 import { ScriptQuestion } from '../../domain/types';
 import { BUILTIN_QA_BY_NAME } from '../../db/seed-content';
 import { isProductCompatibleWithQuestions, questionCategoryRule } from '../../domain/product-consistency';
-import { generateSemanticGoals } from '../../domain/semantic-goal-generator';
+import { derivePrimaryQuestion, generateSemanticGoals } from '../../domain/semantic-goal-generator';
 
 /** 案例回流统一使用的背景名（方案 F3-07）。 */
 const CASE_BACKGROUND_NAME = '案例回流';
@@ -573,6 +573,7 @@ export class ScriptsService {
       category?: string;
       autoSemanticGoals?: boolean;
       semanticGoalsBySeq?: Record<string, any[]>;
+      seed?: number;
     },
     rounds: [number, number]
   ): Promise<{ id: number; name: string; scriptNo: string; styleCode: string; rounds: number }> {
@@ -581,7 +582,11 @@ export class ScriptsService {
     const baseQuestionSeq = this.buildSeqFromQa(pair.qa, rounds);
     const questionSeq = this.applySemanticGoals(
       body.autoSemanticGoals
-        ? generateSemanticGoals(baseQuestionSeq, [pair.bg.name, pair.bg.description].filter(Boolean).join(' '))
+        ? generateSemanticGoals(
+          baseQuestionSeq,
+          [pair.bg.name, pair.bg.description].filter(Boolean).join(' '),
+          createRng((body.seed ?? Date.now()) + index * 104729),
+        )
         : baseQuestionSeq,
       body.semanticGoalsBySeq
     );
@@ -623,7 +628,14 @@ export class ScriptsService {
       styleSeq: string[];
       scriptNos: string[];
       rounds: [number, number];
-      body: { productIds: number[]; stage?: string; category?: string };
+      body: {
+        productIds: number[];
+        stage?: string;
+        category?: string;
+        seed?: number;
+        autoSemanticGoals?: boolean;
+        semanticGoalsBySeq?: Record<string, any[]>;
+      };
     }
   ): Promise<void> {
     const pairs = ctx.pairs;
@@ -737,9 +749,33 @@ export class ScriptsService {
         }
       }
     }
-    return questionSeq.map((question) => ({
-      ...question,
-      ...(config[String(question.seq)] ? { semanticGoals: config[String(question.seq)] } : {}),
-    }));
+    const explicitPrimaries = questionSeq.flatMap((question) =>
+      (config[String(question.seq)] || []).flatMap((goal) =>
+        (goal.requiredPoints || []).filter((point: any) => point.isPrimary).map((point: any) => ({ seq: question.seq, point }))
+      )
+    );
+    if (explicitPrimaries.length > 1) throw new BizError(ERR.PARAM, '整条剧本只能设置一个主目标');
+    const existingPrimary = questionSeq.find((question) => question.goalPriority === 'primary');
+    const inferredPoint = existingPrimary && config[String(existingPrimary.seq)]
+      ? (config[String(existingPrimary.seq)] || []).flatMap((goal) => goal.requiredPoints || [])[0]
+      : undefined;
+    const primary = explicitPrimaries[0] || (inferredPoint ? { seq: existingPrimary!.seq, point: inferredPoint } : undefined);
+
+    return questionSeq.map((question) => {
+      const configuredGoals = config[String(question.seq)];
+      const isPrimary = primary?.seq === question.seq;
+      const isOldPrimary = question.goalPriority === 'primary';
+      const primaryGoal = isPrimary ? String(primary.point.label) : undefined;
+      const originalQuestion = question.baseQuestion || question.question;
+      return {
+        ...question,
+        ...(configuredGoals ? { semanticGoals: configuredGoals } : {}),
+        ...(primary ? {
+          goalPriority: isPrimary ? 'primary' as const : 'secondary' as const,
+          ...(isPrimary ? { primaryGoal, baseQuestion: originalQuestion, question: derivePrimaryQuestion(originalQuestion, primaryGoal!) } : {}),
+          ...(!isPrimary && isOldPrimary ? { question: originalQuestion } : {}),
+        } : {}),
+      };
+    });
   }
 }

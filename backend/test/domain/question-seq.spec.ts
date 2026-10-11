@@ -36,6 +36,24 @@ describe('问题序列：问题级接待阶段（客户 2026-10-03）', () => {
   });
 });
 
+describe('问题混合保留主目标', () => {
+  it('混入跨阶段问题时保留主目标轮次', () => {
+    const questions = [
+      { seq: 1, question: '问题一', keyPoints: ['一'], stage: 'presale' as const },
+      { seq: 2, question: '问题二', keyPoints: ['二'], stage: 'presale' as const },
+      { seq: 3, question: '问题三', keyPoints: ['三'], stage: 'presale' as const },
+      { seq: 4, question: '主目标原问题', keyPoints: ['面料'], goalPriority: 'primary' as const, primaryGoal: '面料', stage: 'presale' as const },
+    ];
+    const mixed = mixQuestionSeq(questions, {
+      ratioPct: 25,
+      pool: [{ question: '售后补充问题', keyPoints: ['时间说明'] }],
+      stage: 'aftersale',
+    });
+    expect(mixed.find((question) => question.goalPriority === 'primary')?.question).toBe('主目标原问题');
+    expect(mixed.some((question) => question.question === '售后补充问题')).toBe(true);
+  });
+});
+
 /**
  * 客户 2026-10-03：一次接待里的问题要按比例混合售前 / 售后——
  * 大部分是「还没有订单、只咨询商品信息」的售前问题，小部分是「买完商品后」的订单类售后问题。

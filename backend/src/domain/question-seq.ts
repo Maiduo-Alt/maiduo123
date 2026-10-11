@@ -88,12 +88,17 @@ export function mixQuestionSeq(
   const count = Math.min(Math.max(1, Math.round((seq.length * ratio) / 100)), Math.floor(seq.length / 2), seq.length - 2);
   if (count <= 0) return seq;
 
-  const start = seq.length - count;
   const offset = Math.max(0, Math.round(Number(options.offset) || 0));
   const next = [...seq];
-  for (let i = 0; i < count; i += 1) {
+  // Preserve a generated primary-goal question so the session still exercises its detailed ask.
+  // Replace the latest eligible questions first, then fall back to earlier non-opening rounds.
+  const replacementIndexes = seq
+    .map((item, index) => index)
+    .filter((index) => index > 0 && seq[index].goalPriority !== 'primary')
+    .slice(-count);
+  for (let i = 0; i < replacementIndexes.length; i += 1) {
     const source = pool[(offset + i) % pool.length];
-    const index = start + i;
+    const index = replacementIndexes[i];
     next[index] = {
       ...next[index],
       question: source.question,
@@ -103,6 +108,8 @@ export function mixQuestionSeq(
     };
     // A replacement question must not inherit semantic goals authored for the old text.
     delete next[index].semanticGoals;
+    delete next[index].primaryGoal;
+    if (next[index].goalPriority) next[index].goalPriority = 'secondary';
   }
   // 替换后重新算订单状态：售后里的「催发货 / 改地址 / 改快递」发生在发货前 → 待发货
   return next.map((item) => ({ ...item, orderStage: orderStageForQuestion(item) }));

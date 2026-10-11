@@ -8,6 +8,7 @@ describe('semantic goal form conversion', () => {
       name: '说明尺码正常',
       points: [{
         label: '尺码不偏大',
+        isPrimary: true,
         matchAny: ['标准尺码', ' 尺码正常 '],
         mustIncludeAny: ['尺码', 'M码'],
         mustExclude: ['偏大很多'],
@@ -22,6 +23,7 @@ describe('semantic goal form conversion', () => {
       requiredPoints: [{
         id: 'point-2-1-1',
         label: '尺码不偏大',
+        isPrimary: true,
         matchAny: ['标准尺码', '尺码正常'],
         businessRules: { mustIncludeAny: ['尺码', 'M码'], mustExclude: ['偏大很多'] },
       }],
@@ -38,6 +40,7 @@ describe('semantic goal form conversion', () => {
         requiredPoints: [{
           id: 'old-point',
           label: '说明不偏大',
+          isPrimary: true,
           matchAny: ['正常尺码'],
           businessRules: { mustIncludeAll: ['尺码'] },
         }],
@@ -47,7 +50,7 @@ describe('semantic goal form conversion', () => {
     expect(rows[0]).toMatchObject({
       seq: 1,
       name: '说明尺码',
-      points: [{ label: '说明不偏大', matchAny: ['正常尺码'], mustIncludeAll: ['尺码'] }],
+      points: [{ label: '说明不偏大', isPrimary: true, matchAny: ['正常尺码'], mustIncludeAll: ['尺码'] }],
       riskRules: [{ label: '错误承诺', matchAny: ['一定退款'], penalty: 10 }],
     });
     expect(() => semanticRowsToGoalsBySeq([{
@@ -55,5 +58,14 @@ describe('semantic goal form conversion', () => {
       name: '说明尺码',
       points: [{ label: '说明不偏大', matchAny: [] }],
     }])).toThrow('至少添加一种认可说法');
+  });
+
+  it('only allows one primary target across the script', () => {
+    const row = (seq: number) => ({
+      seq,
+      name: `目标${seq}`,
+      points: [{ label: '商品信息', isPrimary: true, matchAny: ['商品信息'] }],
+    });
+    expect(() => semanticRowsToGoalsBySeq([row(1), row(2)])).toThrow('整条剧本只能设置一个主目标');
   });
 });
