@@ -6,6 +6,7 @@ import {
   Form,
   Input,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Table,
@@ -201,6 +202,29 @@ export default function Accounts() {
                 >
                   开放难度
                 </Button>
+                <Popconfirm
+                  title={`确认删除账号「${row.displayName}（${row.username}）」？`}
+                  description="删除后该账号立即无法登录；历史接待数据保留不受影响"
+                  onConfirm={async () => {
+                    try {
+                      await api(`/accounts/${row.id}`, { method: 'DELETE' });
+                      message.success('账号已删除');
+                      load({ page: 1 });
+                    } catch (e) {
+                      message.error((e as Error).message);
+                    }
+                  }}
+                  disabled={readOnly || row.id === profile?.id}
+                >
+                  <Button
+                    type="link"
+                    danger
+                    disabled={readOnly || row.id === profile?.id}
+                    title={row.id === profile?.id ? '不能删除当前登录的账号' : undefined}
+                  >
+                    删除
+                  </Button>
+                </Popconfirm>
               </Space>
             ),
           },

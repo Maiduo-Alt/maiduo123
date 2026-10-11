@@ -35,7 +35,26 @@ export default function Backgrounds() {
   const [dragId, setDragId] = useState<number | null>(null);
   /** 新建分类弹窗（替代 window.prompt） */
   const [categoryModal, setCategoryModal] = useState<{ open: boolean; name: string }>({ open: false, name: '' });
+  /**
+   * 分类维度（客户 2026-10-10，多维分类 B 类）：/dimensions 返回维度树，
+   * dimValueModal.dimId = 0 表示新建维度，> 0 表示给该维度加可选值。
+   */
+  const [dimensions, setDimensions] = useState<any[]>([]);
+  const [dimValueModal, setDimValueModal] = useState<{ open: boolean; dimId: number; dimName: string; value: string }>({
+    open: false,
+    dimId: 0,
+    dimName: '',
+    value: '',
+  });
   const [total, setTotal] = useState(0);
+
+  const loadDimensions = async () => {
+    try {
+      setDimensions(await api<any[]>('/dimensions'));
+    } catch {
+      setDimensions([]);
+    }
+  };
   const [bgForm] = Form.useForm();
   const [qaForm] = Form.useForm();
   const qaImageUrl = Form.useWatch('imageUrl', qaForm);
@@ -68,7 +87,27 @@ export default function Backgrounds() {
     api<any>('/accounts', { query: { pageSize: 100 } })
       .then((data) => setCreators(data.list || []))
       .catch(() => setCreators([]));
+    loadDimensions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** 新建维度 / 给维度加可选值（共用一个小弹窗） */
+  const saveDimValue = async () => {
+    const value = dimValueModal.value.trim();
+    if (!value) {
+      message.warning('请输入名称');
+      return;
+    }
+    try {
+      if (dimValueModal.dimId === 0) await api('/dimensions', { method: 'POST', body: { name: value } });
+      else await api(`/dimensions/${dimValueModal.dimId}/values`, { method: 'POST', body: { name: value } });
+      message.success('已添加');
+      setDimValueModal({ open: false, dimId: 0, dimName: '', value: '' });
+      loadDimensions();
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
 
   useEffect(() => {
     setSelectedIds([]);
@@ -176,6 +215,7 @@ export default function Backgrounds() {
       imageUrl: values.imageUrl || '',
       stage: values.stage,
       category: values.category,
+      dims: values.dims || {},
     };
     if (qaModal.record) await api(`/contents/${qaModal.record.id}`, { method: 'PUT', body });
     else await api('/contents', { method: 'POST', body });
@@ -395,6 +435,7 @@ export default function Backgrounds() {
                                 imageUrl: row.imageUrl || '',
                                 stage: row.stage,
                                 category: row.category,
+                                dims: row.dims || {},
                               });
                             }}
                           >
@@ -515,7 +556,7 @@ export default function Backgrounds() {
               </Space>
             </Space>
           </Form.Item>
-          <Space size={16}>
+          <Space size={16} wrap>
             <Form.Item name="stage" label="接待阶段">
               <Select
                 style={{ width: 140 }}
@@ -528,11 +569,58 @@ export default function Backgrounds() {
             <Form.Item name="category" label="模板分类">
               <Select style={{ width: 180 }} options={categories.map((c) => ({ value: c.name, label: c.name }))} />
             </Form.Item>
+            {/* 多维分类（客户 2026-10-10）：每个维度选一个值，可组合筛选；+ 号给该维度加新值 */}
+            {dimensions.map((dim) => (
+              <Space key={dim.id} size={4} align="end">
+                <Form.Item name={['dims', dim.name]} label={dim.name}>
+                  <Select
+                    style={{ width: 160 }}
+                    allowClear
+                    placeholder={`选择${dim.name}`}
+                    options={(dim.values || []).map((v: any) => ({ value: v.name, label: v.name }))}
+                  />
+                </Form.Item>
+                <Button
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={() => setDimValueModal({ open: true, dimId: dim.id, dimName: dim.name, value: '' })}
+                />
+              </Space>
+            ))}
+            <Form.Item label=" ">
+              <Button size="small" onClick={() => setDimValueModal({ open: true, dimId: 0, dimName: '', value: '' })}>
+                新建维度
+              </Button>
+            </Form.Item>
           </Space>
           <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
             系统会按分号自动拆分为提问序列；不足 6 轮时，接待中会从补充追问池自动补足并在明细中标注。
           </Typography.Paragraph>
         </Form>
+      </Modal>
+
+      {/* 新建维度 / 给维度加可选值（客户 2026-10-10 多维分类） */}
+      <Modal
+        open={dimValueModal.open}
+        title={dimValueModal.dimId === 0 ? '新建分类维度' : `给「${dimValueModal.dimName}」添加可选值`}
+        onCancel={() => setDimValueModal({ open: false, dimId: 0, dimName: '', value: '' })}
+        onOk={saveDimValue}
+        okText="添加"
+        cancelText="取消"
+        width={400}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          {dimValueModal.dimId === 0
+            ? '维度是分类的「列」，例如：问题类型、商品类目、买家人群。建好后可在编辑咨询内容时为每条内容选择每个维度的一个值。'
+            : '新增后，所有咨询内容都可以选择这个值；保存过的内容不受影响。'}
+        </Typography.Paragraph>
+        <Input
+          placeholder={dimValueModal.dimId === 0 ? '例如：买家人群' : '例如：物流破损'}
+          value={dimValueModal.value}
+          maxLength={dimValueModal.dimId === 0 ? 32 : 64}
+          onChange={(e) => setDimValueModal((prev) => ({ ...prev, value: e.target.value }))}
+        />
       </Modal>
     </div>
   );

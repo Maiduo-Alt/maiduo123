@@ -181,6 +181,8 @@ export interface ScoreMessage {
   responseSec?: number | null;
   isTimeout?: boolean;
   hitPoints?: string[];
+  /** 语义判定信号（reply-judge）：敷衍回复在话术维度单独扣分（客户 2026-10-11 口径）。 */
+  judgeSignal?: string | null;
 }
 
 export interface SessionScoreInput {

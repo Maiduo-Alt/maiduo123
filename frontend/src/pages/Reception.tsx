@@ -259,6 +259,33 @@ export default function Reception() {
   const activeSession = useMemo(() => sessions.find((s) => s.sessionId === activeId) || null, [sessions, activeId]);
   const activeMessages = useMemo(() => messages.filter((m) => m.sessionId === activeId), [messages, activeId]);
 
+  /**
+   * 消息自动跟随滚动（2026-10-11）：新消息到达时若用户停留在底部附近，自动滚到底；
+   * 用户主动上翻阅读历史时不打扰，回到底部附近后恢复跟随。切换会话时总是滚到底。
+   */
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const handleMessageListScroll = useCallback(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+  useEffect(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    // requestAnimationFrame：等本次渲染布局完成后再滚，否则 scrollHeight 还是旧值
+    const raf = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    stickToBottomRef.current = true;
+    return () => cancelAnimationFrame(raf);
+  }, [activeId]);
+  useEffect(() => {
+    const el = messageListRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [activeMessages]);
+
   /** 超时提醒音（方案 F1-10：接近超时与已超时用颜色与提示音区分）。用 Web Audio 合成，免音频资源。 */
   const beep = useCallback((urgent: boolean) => {
     try {
@@ -1166,7 +1193,7 @@ export default function Reception() {
           </div>
         </div>
 
-        <div className="message-list">
+        <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
           {!activeSession && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请选择左侧会话" />}
           {/* 参考图 1：买家从商品页发起咨询，对话区首条固定为「咨询宝贝」商品卡 */}
           {activeSession?.product && (

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { AccountsService } from './accounts.service';
 import { AuthUser, CurrentUser, Roles } from '../../common/decorators';
 
@@ -35,6 +35,13 @@ export class AccountsController {
   @Post('accounts/:id/reset-password')
   resetPassword(@Param('id') id: string, @Body() body: { password: string }) {
     return this.accounts.resetPassword(Number(id), body.password);
+  }
+
+  /** 删除账号（客户 2026-10-10）：软删除，仅管理员 */
+  @Roles('admin')
+  @Delete('accounts/:id')
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.accounts.remove(Number(id), user.id);
   }
 
   @Get('groups')

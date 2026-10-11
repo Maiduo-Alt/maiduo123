@@ -99,7 +99,7 @@ export class MaterialsService {
     const rows = await this.db.many(
       `SELECT q.id, q.template_name AS "templateName", q.question, q.question_list AS "questionList",
               q.image_url AS "imageUrl", q.accepted_answer AS "acceptedAnswer", q.key_points AS "keyPoints",
-              q.stage, q.category, q.created_by AS "createdById", a.display_name AS "createdByName",
+              q.stage, q.category, q.dims, q.created_by AS "createdById", a.display_name AS "createdByName",
               q.updated_at AS "updatedAt"
        FROM buyer_qa q LEFT JOIN accounts a ON a.id = q.created_by
        WHERE ${whereSql} ORDER BY q.id DESC OFFSET $${args.length + 1} LIMIT $${args.length + 2}`,
@@ -119,8 +119,8 @@ export class MaterialsService {
     const questionList = this.splitQuestions(body.question);
     const keyPoints = Array.isArray(body.keyPoints) && body.keyPoints.length ? body.keyPoints : questionList.map(() => ['有效回应']);
     const row = await this.db.one<{ id: number }>(
-      `INSERT INTO buyer_qa (template_name, question, question_list, image_url, accepted_answer, key_points, stage, category, created_by)
-       VALUES ($1,$2,$3::jsonb,$4,$5,$6::jsonb,$7,$8,$9) RETURNING id`,
+      `INSERT INTO buyer_qa (template_name, question, question_list, image_url, accepted_answer, key_points, stage, category, dims, created_by)
+       VALUES ($1,$2,$3::jsonb,$4,$5,$6::jsonb,$7,$8,$9::jsonb,$10) RETURNING id`,
       [
         body.templateName,
         body.question,
@@ -130,10 +130,25 @@ export class MaterialsService {
         JSON.stringify(keyPoints),
         body.stage === 'aftersale' ? 'aftersale' : 'presale',
         body.category || '通用',
+        JSON.stringify(this.sanitizeDims(body.dims)),
         accountId,
       ]
     );
     return { id: row.id, questionList };
+  }
+
+  /** 多维分类只保留「字符串键 + 字符串值」，最多 10 个维度，防止脏数据入库。 */
+  private sanitizeDims(dims: unknown): Record<string, string> {
+    if (!dims || typeof dims !== 'object') return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(dims as Record<string, unknown>).slice(0, 10)) {
+      const key = String(k).trim().slice(0, 32);
+      // 只接受字符串值，非字符串（对象/数组/数字）直接丢弃，防脏数据
+      if (typeof v !== 'string') continue;
+      const val = v.trim().slice(0, 64);
+      if (key && val) out[key] = val;
+    }
+    return out;
   }
 
   async updateContent(id: number, body: any) {
@@ -148,6 +163,7 @@ export class MaterialsService {
                            key_points = COALESCE($7::jsonb, key_points),
                            stage = COALESCE($8, stage),
                            category = COALESCE($9, category),
+                           dims = COALESCE($10::jsonb, dims),
                            updated_at = now()
        WHERE id = $1`,
       [
@@ -160,6 +176,7 @@ export class MaterialsService {
         body.keyPoints ? JSON.stringify(body.keyPoints) : null,
         body.stage ?? null,
         body.category ?? null,
+        body.dims !== undefined ? JSON.stringify(this.sanitizeDims(body.dims)) : null,
       ]
     );
     return { success: true };
@@ -184,6 +201,58 @@ export class MaterialsService {
   }
 
   /* ---------------- 分类 ---------------- */
+
+  /**
+   * 分类维度（客户 2026-10-10，多维分类 B 类）：categories 表 type='dim'，
+   * 顶层行是维度名（如「问题类型」「商品类目」），子行（parent_id 指向维度）是该维度的可选值。
+   * 首次调用播种默认维度：问题类型（售前/售后）+ 商品类目（取现有商品分类）。
+   */
+  async listDimensions() {
+    const any = await this.db.one<{ count: string }>(`SELECT count(*)::text AS count FROM categories WHERE type = 'dim'`);
+    if (Number(any.count) === 0) {
+      const dim = await this.db.one<{ id: number }>(`INSERT INTO categories (type, name, sort) VALUES ('dim', '问题类型', 0) RETURNING id`, []);
+      for (const [i, v] of ['售前', '售后'].entries()) {
+        await this.db.query(`INSERT INTO categories (type, name, parent_id, sort) VALUES ('dim', $1, $2, $3)`, [v, dim.id, i]);
+      }
+      const cats = await this.db.many<any>(
+        `SELECT DISTINCT category FROM products WHERE deleted_at IS NULL AND category IS NOT NULL AND category <> ''`
+      );
+      if (cats.length) {
+        const dim2 = await this.db.one<{ id: number }>(`INSERT INTO categories (type, name, sort) VALUES ('dim', '商品类目', 1) RETURNING id`, []);
+        for (const [i, c] of cats.entries()) {
+          await this.db.query(`INSERT INTO categories (type, name, parent_id, sort) VALUES ('dim', $1, $2, $3)`, [c.category, dim2.id, i]);
+        }
+      }
+    }
+    const rows = await this.db.many<any>(
+      `SELECT id, name, parent_id AS "parentId", sort FROM categories WHERE type = 'dim' ORDER BY sort, id`
+    );
+    return rows
+      .filter((r: any) => !r.parentId)
+      .map((d: any) => ({ id: d.id, name: d.name, values: rows.filter((r: any) => r.parentId === d.id).map((v: any) => ({ id: v.id, name: v.name })) }));
+  }
+
+  async createDimension(name: string) {
+    const value = String(name || '').trim();
+    if (!value) throw new BizError(ERR.PARAM, '维度名称不能为空');
+    if (value.length > 32) throw new BizError(ERR.PARAM, '维度名称不能超过 32 字');
+    const exists = await this.db.one(`SELECT id FROM categories WHERE type = 'dim' AND parent_id IS NULL AND name = $1`, [value]);
+    if (exists) throw new BizError(ERR.PARAM, '维度已存在');
+    const row = await this.db.one<{ id: number }>(`INSERT INTO categories (type, name, sort) VALUES ('dim', $1, 99) RETURNING id`, [value]);
+    return { id: row.id };
+  }
+
+  async createDimensionValue(id: number, name: string) {
+    const value = String(name || '').trim();
+    if (!value) throw new BizError(ERR.PARAM, '维度值不能为空');
+    if (value.length > 64) throw new BizError(ERR.PARAM, '维度值不能超过 64 字');
+    const dim = await this.db.one<{ id: number }>(`SELECT id FROM categories WHERE type = 'dim' AND parent_id IS NULL AND id = $1`, [id]);
+    if (!dim) throw new BizError(ERR.NOT_FOUND, '维度不存在');
+    const exists = await this.db.one(`SELECT id FROM categories WHERE type = 'dim' AND parent_id = $1 AND name = $2`, [id, value]);
+    if (exists) throw new BizError(ERR.PARAM, '该维度值已存在');
+    const row = await this.db.one<{ id: number }>(`INSERT INTO categories (type, name, parent_id, sort) VALUES ('dim', $1, $2, 99) RETURNING id`, [value, id]);
+    return { id: row.id };
+  }
 
   async listCategories(type: string) {
     // 场景标签没有独立的维护入口，实际就写在商品的 scenes 里。
