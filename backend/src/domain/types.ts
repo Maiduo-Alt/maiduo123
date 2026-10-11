@@ -212,6 +212,8 @@ export interface ScoreMessage {
   hitPoints?: string[];
   goalMatches?: { goalId: string; pointIds: string[] }[];
   riskItems?: { ruleId: string; label: string; penalty: number; goalId?: string }[];
+  /** 语义判定信号（reply-judge）：敷衍回复在话术维度单独扣分（客户 2026-10-11 口径）。 */
+  judgeSignal?: string | null;
 }
 
 export interface SessionScoreInput {

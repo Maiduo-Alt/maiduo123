@@ -14,6 +14,7 @@ import {
   Radio,
   Select,
   Space,
+  Steps,
   Table,
   Tag,
   Timeline,
@@ -22,6 +23,24 @@ import {
 } from 'antd';
 import { BarChartOutlined, DeleteOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, ShoppingOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
+
+/**
+ * 把背景 / 咨询内容按「分类」分组，供 Select 分组展示（客户 2026-10-10：
+ * 新建剧本时背景和内容要按分类筛选，不再是一眼望不到头的平铺列表）。
+ * 分组按组内条数降序；组名带数量，方便一眼看出哪类素材最多。
+ * groupKey 可换成分组字段（如咨询内容按 stageLabel = 售前/售后 的问题类型分组）。
+ */
+function groupByCategory(items: any[], labelKey: string, groupKey = 'category') {
+  const groups = new Map<string, { value: number; label: string }[]>();
+  for (const item of items || []) {
+    const cat = item[groupKey] || '通用';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push({ value: item.id, label: item[labelKey] });
+  }
+  return [...groups.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([cat, opts]) => ({ label: `${cat}（${opts.length}）`, options: opts }));
+}
 
 export default function Scripts() {
   const [list, setList] = useState<any[]>([]);
@@ -47,6 +66,8 @@ export default function Scripts() {
     cases: any[];
     /** 剧本分类：来自《数据字典》type=script，与筛选、新建表单的分类选项共用一份数据（客户 2026-10-09） */
     scriptCategories: any[];
+    /** 分类维度（客户 2026-10-10 多维分类 B 类）：咨询内容筛选用 */
+    dimensions: any[];
   }>({
     backgrounds: [],
     contents: [],
@@ -54,6 +75,7 @@ export default function Scripts() {
     styles: [],
     cases: [],
     scriptCategories: [],
+    dimensions: [],
   });
   const [form] = Form.useForm();
   /** 异步批量生成任务（超过阈值时后端返回任务 ID） */
@@ -67,6 +89,37 @@ export default function Scripts() {
   const ruleMode = Form.useWatch('ruleMode', form);
   const productIds = Form.useWatch('productIds', form) as number[] | undefined;
   const selectedProducts = (options.products || []).filter((p) => (productIds || []).includes(p.id));
+  /**
+   * 客户 2026-10-10：新建剧本改为**三段式向导**——基础设置 → 剧本信息 → 剧本内容，
+   * 每一步只填少量字段，点「下一步」时只校验本步字段，避免一屏十几个控件的眼花缭乱。
+   */
+  const [step, setStep] = useState(0);
+  /** 多维分类（B 类）筛选：新建剧本第 3 步按维度组合过滤咨询内容 */
+  const [qaDimFilters, setQaDimFilters] = useState<Record<string, string>>({});
+  /** 分段式选择（客户 2026-10-10）：先选模板分类缩小范围，再选具体内容，避免一次性平铺几百条 */
+  const [qaCatFilter, setQaCatFilter] = useState<string>();
+  /** 买家咨询背景同样分段式：先选背景分类再选背景 */
+  const [bgCatFilter, setBgCatFilter] = useState<string>();
+  const bgCategories = Array.from(new Set((options.backgrounds || []).map((b) => b.category || '通用')));
+  const filteredBackgrounds = (options.backgrounds || []).filter(
+    (b) => !bgCatFilter || (b.category || '通用') === bgCatFilter
+  );
+  const qaCategories = Array.from(new Set((options.contents || []).map((c) => c.category || '通用')));
+  const filteredContents = (options.contents || []).filter(
+    (c) =>
+      (!qaCatFilter || (c.category || '通用') === qaCatFilter) &&
+      Object.entries(qaDimFilters).every(([k, v]) => !v || (c.dims || {})[k] === v)
+  );
+  /** 每步参与校验的字段（联动字段按当前选项动态收窄） */
+  const stepFields: string[][] = [
+    createWay === 'case' ? ['createMode', 'createWay', 'caseId', 'category'] : ['createMode', 'createWay', 'category'],
+    createMode === 'single' ? ['stage', 'styleId', 'productIds'] : ['stage', 'productIds'],
+    ['bgIds', 'qaIds'],
+  ];
+  const nextStep = async () => {
+    await form.validateFields(stepFields[step]);
+    setStep(step + 1);
+  };
 
   const load = async (patch: any = {}) => {
     const next = { ...query, ...patch };
@@ -83,7 +136,7 @@ export default function Scripts() {
   };
 
   const loadOptions = async () => {
-    const [backgrounds, contents, products, styles, cases, scriptCategories] = await Promise.all([
+    const [backgrounds, contents, products, styles, cases, scriptCategories, dimensions] = await Promise.all([
       api<any>('/backgrounds', { query: { pageSize: 200 } }),
       api<any>('/contents', { query: { pageSize: 200 } }),
       // 方案 9.1：下架商品不应出现在新剧本的商品选择中
@@ -93,6 +146,8 @@ export default function Scripts() {
       api<any>('/cases', { query: { pageSize: 200 } }).catch(() => ({ list: [] })),
       // 剧本分类：与《数据字典》里的「剧本分类」词条同源
       api<any[]>('/categories', { query: { type: 'script' } }).catch(() => []),
+      // 分类维度（多维分类）：新建剧本时按维度组合筛选咨询内容
+      api<any[]>('/dimensions').catch(() => []),
     ]);
     setOptions({
       backgrounds: backgrounds.list || [],
@@ -101,6 +156,7 @@ export default function Scripts() {
       styles: Array.isArray(styles) ? styles : styles.list || [],
       cases: cases.list || [],
       scriptCategories: Array.isArray(scriptCategories) ? scriptCategories : [],
+      dimensions: Array.isArray(dimensions) ? dimensions : [],
     });
   };
 
@@ -408,6 +464,7 @@ export default function Scripts() {
             onClick={() => {
               setBatchOpen(true);
               form.resetFields();
+              setStep(0);
             }}
           >
             新建剧本
@@ -548,18 +605,38 @@ export default function Scripts() {
         open={batchOpen}
         title="新建聊天剧本"
         onCancel={() => setBatchOpen(false)}
-        onOk={generate}
         width={760}
-        okText="生成剧本"
-        cancelText="取消"
         destroyOnClose
+        footer={
+          <Space>
+            <Button onClick={() => setBatchOpen(false)}>取消</Button>
+            {step > 0 ? <Button onClick={() => setStep(step - 1)}>上一步</Button> : null}
+            {step < 2 ? (
+              <Button type="primary" onClick={nextStep}>
+                下一步
+              </Button>
+            ) : (
+              <Button type="primary" onClick={generate}>
+                生成剧本
+              </Button>
+            )}
+          </Space>
+        }
       >
         <Form
           form={form}
           layout="vertical"
           initialValues={{ category: '培训', stage: 'presale', createMode: 'batch', createWay: 'custom', ruleMode: 'keyword' }}
         >
-          <div className="script-section">
+          {/* 客户 2026-10-10：三段式向导——每一步只渲染本步字段，眼不见为净 */}
+          <Steps
+            size="small"
+            current={step}
+            style={{ marginBottom: 20 }}
+            items={[{ title: '基础设置' }, { title: '剧本信息' }, { title: '剧本内容' }]}
+          />
+
+          <div className="script-section" style={{ display: step === 0 ? 'block' : 'none' }}>
             <div className="script-section-title">基础设置</div>
             <Form.Item name="createMode" label="创建模式" rules={[{ required: true }]}>
               <Radio.Group>
@@ -631,7 +708,7 @@ export default function Scripts() {
             </Form.Item>
           </div>
 
-          <div className="script-section">
+          <div className="script-section" style={{ display: step === 1 ? 'block' : 'none' }}>
             <div className="script-section-title">剧本信息</div>
             <Form.Item name="stage" label="接待类型" rules={[{ required: true }]}>
               <Radio.Group>
@@ -669,40 +746,98 @@ export default function Scripts() {
             ) : null}
           </div>
 
-          <div className="script-section">
+          <div className="script-section" style={{ display: step === 2 ? 'block' : 'none' }}>
             <div className="script-section-title">剧本内容</div>
+            <Space wrap size={8} style={{ marginBottom: 8 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                按分类筛选：
+              </Typography.Text>
+              <Select
+                size="small"
+                allowClear
+                style={{ width: 150 }}
+                placeholder="背景分类"
+                value={bgCatFilter}
+                options={bgCategories.map((c) => ({ value: c, label: c }))}
+                onChange={(v) => {
+                  setBgCatFilter(v);
+                  // 切换分类时清掉已选背景，避免把不可见分类下的选择静默带进生成数量
+                  form.setFieldValue('bgIds', []);
+                }}
+              />
+            </Space>
             <Form.Item
               name="bgIds"
               label="买家咨询背景"
-              extra="选择多个买家咨询背景，将生成多个剧本"
+              extra="分段式选择：先在上面选一个背景分类，再在该分类下勾选背景；支持输入关键词搜索，选择多个买家咨询背景将生成多个剧本"
               rules={[{ required: true, message: '请选择背景' }]}
             >
               <Select
                 mode="multiple"
                 maxTagCount="responsive"
-                placeholder="请选择买家咨询背景"
-                options={options.backgrounds.map((b) => ({ value: b.id, label: b.name }))}
+                placeholder={bgCatFilter ? `请在「${bgCatFilter}」分类下选择背景` : '请先在上面选择一个背景分类'}
+                options={bgCatFilter ? groupByCategory(filteredBackgrounds, 'name') : []}
                 optionFilterProp="label"
               />
             </Form.Item>
+            <Space wrap size={8} style={{ marginBottom: 8 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                按分类筛选：
+              </Typography.Text>
+              <Select
+                size="small"
+                allowClear
+                style={{ width: 150 }}
+                placeholder="模板分类"
+                value={qaCatFilter}
+                options={qaCategories.map((c) => ({ value: c, label: c }))}
+                onChange={(v) => {
+                  setQaCatFilter(v);
+                  // 切换分类时清掉已选内容，避免把不可见分类下的选择静默带进生成数量
+                  form.setFieldValue('qaIds', []);
+                }}
+              />
+              {options.dimensions.length ? (
+                <>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    按维度筛选：
+                  </Typography.Text>
+                  {options.dimensions.map((dim) => (
+                    <Select
+                      key={dim.id}
+                      size="small"
+                      allowClear
+                      style={{ width: 150 }}
+                      placeholder={dim.name}
+                      value={qaDimFilters[dim.name]}
+                      options={(dim.values || []).map((v: any) => ({ value: v.name, label: v.name }))}
+                      onChange={(v) => {
+                        setQaDimFilters((p) => ({ ...p, [dim.name]: v }));
+                        form.setFieldValue('qaIds', []);
+                      }}
+                    />
+                  ))}
+                </>
+              ) : null}
+            </Space>
             <Form.Item
               name="qaIds"
               label="买家咨询内容"
-              extra="选择多个买家咨询内容，将生成多个剧本"
+              extra="分段式选择：先在上面选一个模板分类，再在该分类下勾选内容；支持输入关键词搜索，选择多个买家咨询内容将生成多个剧本"
               rules={[{ required: true, message: '请选择咨询内容' }]}
             >
               <Select
                 mode="multiple"
                 maxTagCount="responsive"
-                placeholder="请选择买家咨询内容"
-                options={options.contents.map((c) => ({ value: c.id, label: c.templateName }))}
+                placeholder={qaCatFilter ? `请在「${qaCatFilter}」分类下选择咨询内容` : '请先在上面选择一个模板分类'}
+                options={qaCatFilter ? groupByCategory(filteredContents, 'templateName') : []}
                 optionFilterProp="label"
               />
             </Form.Item>
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+              生成数量 = 背景数 × 内容数；买家沟通风格按《沟通风格》中的占比自动分配，提问序列不足 6 轮时由补充追问池自动补足。
+            </Typography.Paragraph>
           </div>
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-            生成数量 = 背景数 × 内容数；买家沟通风格按《沟通风格》中的占比自动分配，提问序列不足 6 轮时由补充追问池自动补足。
-          </Typography.Paragraph>
         </Form>
       </Modal>
 

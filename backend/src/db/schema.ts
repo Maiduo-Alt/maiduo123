@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 客户 2026-10-10：账号支持删除（软删除），历史接待数据不受影响
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS app_params (
   id            SERIAL PRIMARY KEY,
   value         JSONB NOT NULL,
@@ -92,6 +95,9 @@ CREATE TABLE IF NOT EXISTS buyer_qa (
   created_by    INTEGER,
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 客户 2026-10-10：咨询内容多维分类（B 类）——每个维度一个取值，如 {"问题类型":"售后","商品类目":"连衣裙"}
+ALTER TABLE buyer_qa ADD COLUMN IF NOT EXISTS dims JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS styles (
   id            SERIAL PRIMARY KEY,
@@ -174,8 +180,17 @@ CREATE TABLE IF NOT EXISTS sessions (
   unresolved_streak INTEGER NOT NULL DEFAULT 0,
   transferred_seqs JSONB NOT NULL DEFAULT '[]'::jsonb,
   skipped_seqs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- 2026-10-11 自适应推送：当前题已追问次数（推进下一题时归零）
+  follow_ups    INTEGER NOT NULL DEFAULT 0,
+  -- 2026-10-11 开场多元化：买家先只发问候/商品链接，客服回应后再抛出第一个问题
+  opener_pending BOOLEAN NOT NULL DEFAULT false,
   score         NUMERIC(5,1)
 );
+
+-- 老库补列（幂等）：自适应推送追问计数
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS follow_ups INTEGER NOT NULL DEFAULT 0;
+-- 老库补列（幂等）：开场白阶段标记
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS opener_pending BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS messages (
   id            SERIAL PRIMARY KEY,

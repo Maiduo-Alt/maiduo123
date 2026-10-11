@@ -201,6 +201,15 @@ function scoreWording(messages: ScoreMessage[], params: SystemParams): { score: 
   if (repeated) deductions.push({ dimension: 'wording', reason: '存在同一话术连续发送 3 次以上', points: 4 });
   else score += 4;
 
+  // 敷衍回复扣分（客户 2026-10-11 口径：敷衍只扣分、不追问，直接推进）。每条扣 2 分，扣到 0 为止。
+  const perfunctoryCount = agentMessages.filter((m) => m.judgeSignal === 'perfunctory').length;
+  if (perfunctoryCount > 0) {
+    const penalty = perfunctoryCount * 2;
+    const applied = Math.min(score, penalty);
+    deductions.push({ dimension: 'wording', reason: `敷衍回复 ${perfunctoryCount} 次（纯语气词/过短/复读），每次扣 2 分`, points: applied });
+    score -= applied;
+  }
+
   return { score, deductions };
 }
 

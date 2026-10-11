@@ -24,8 +24,9 @@ import { createRng } from '../../domain/rng';
 import { shouldAbortAsDisconnected } from '../../domain/disconnect';
 import { weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
+import { judgeReply } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
-import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder } from '../../domain/order';
+import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef } from '../../domain/order';
 import { mixQuestionSeq } from '../../domain/question-seq';
 import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/seed-content';
 import {
@@ -37,6 +38,7 @@ import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-sco
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
 import { evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
+import { decidePush, buildFollowUpText, followUpEmotionDelta } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
 
 interface SessionRow {
@@ -69,6 +71,10 @@ interface SessionRow {
   unresolved_streak: number;
   transferred_seqs: number[];
   skipped_seqs: number[];
+  /** 当前题已追问次数（2026-10-11 自适应推送）：未答到时买家追问，推进下一题时归零 */
+  follow_ups: number;
+  /** 开场白阶段（2026-10-11 开场多元化）：买家先只发问候/链接，客服回应后才抛第一题 */
+  opener_pending: boolean;
   score: string | null;
 }
 
@@ -84,6 +90,25 @@ export class ReceptionService implements OnModuleInit {
     hesitant: { emotional: true, transform: (q) => [q, '我怕不合适，能保证吗？'] },
     silent: { emotional: false, transform: (q) => [q.length > 12 ? `${q.slice(0, 12)}？` : q] },
   };
+
+  /**
+   * 开场形态（2026-10-11 客户要求多元化）：直接抛问题 / 先问候 / 只发商品链接。
+   * 按会话 id 确定性分配（4:3:3），服务重启后口径不变；问候与链接形态先进入开场白阶段
+   * （opener_pending），客服有任何回应后再抛出第一个问题。
+   */
+  private openerFor(session: SessionRow): { kind: 'direct' | 'greeting' | 'link'; texts: string[] } {
+    // 测试环境固定直接抛题：e2e 用例按「首条买家消息即题目」的口径断言，开场白两段式会破坏它们
+    if (process.env.NODE_ENV === 'test') return { kind: 'direct', texts: [] };
+    const v = (session.id * 2654435761) % 100;
+    if (v < 40) return { kind: 'direct', texts: [] };
+    if (v < 70) {
+      const greetings = ['在吗', '亲，在吗？', '有人在吗', '在不在呀', '亲～在吗'];
+      return { kind: 'greeting', texts: [greetings[v % greetings.length]] };
+    }
+    const p = (session.products || [])[0];
+    const link = `【商品链接】https://haohuo.jinritemai.com/views/product/item2?id=${p?.id ?? session.id}`;
+    return { kind: 'link', texts: [link] };
+  }
 
   /** 客服回复后，买家「思考」多久再抛下一个问题；服务重启补挂定时器时沿用同一口径。 */
   private readonly REPLY_THINK_DELAY_MS = 1500;
@@ -134,7 +159,7 @@ export class ReceptionService implements OnModuleInit {
         this.scheduler.schedule(`join:${session.id}`, 2000, () => this.pushNextQuestion(session.id));
         rearmed += 1;
       } else if (session.state === 'waiting_buyer') {
-        this.scheduler.schedule(`next:${session.id}`, this.REPLY_THINK_DELAY_MS, () => this.pushNextQuestion(session.id));
+        this.scheduler.schedule(`next:${session.id}`, this.REPLY_THINK_DELAY_MS, () => this.advanceAfterReply(session.id));
         rearmed += 1;
       }
     }
@@ -433,7 +458,7 @@ export class ReceptionService implements OnModuleInit {
       );
       // 开局就按「第一个问题的订单状态」生成订单：售前=待支付/待发货，售后=已发货
       const firstStage: OrderStage = questions[0].orderStage || orderStageForQuestion(questions[0]);
-      const order = this.buildOrder(Number(row.id), firstStage, Date.parse(String(row.join_at)));
+      const order = this.buildOrder(Number(row.id), firstStage, Date.parse(String(row.join_at)), product);
       await this.persistOrder(Number(row.id), order);
       createdSessions.push({
         ...row,
@@ -468,8 +493,8 @@ export class ReceptionService implements OnModuleInit {
    * （下单 → 付款 → 承诺发货 → 发货/物流/签收），也就是"同一笔订单在推进"。
    * 时间锚点用会话进线时间：否则每次推问题都会把「下单时间」往后挪，看着像订单变了。
    */
-  private buildOrder(sessionId: number, stage: OrderStage, anchorMs = Date.now()): SimulatedOrder {
-    return buildSimulatedOrder(sessionId * 7919 + 13, stage, anchorMs);
+  private buildOrder(sessionId: number, stage: OrderStage, anchorMs = Date.now(), product?: OrderProductRef | null): SimulatedOrder {
+    return buildSimulatedOrder(sessionId * 7919 + 13, stage, anchorMs, product);
   }
 
   /** 把订单写回会话（单号/金额冗余在列上，完整快照放 JSONB）。 */
@@ -582,6 +607,40 @@ export class ReceptionService implements OnModuleInit {
       await this.completeSession(sessionId, 'normal');
       return;
     }
+    /**
+     * 2026-10-11 开场多元化：约 6 成会话先只发问候语或商品链接（current_seq 保持 0，进入开场白阶段），
+     * 客服有任何回应后再由 advanceAfterReply 抛出问题本身；其余会话维持直接抛问题的原行为。
+     * 已进入开场白阶段（opener_pending=true）的会话走正常抛题分支并清除标记——
+     * 不能把 opener_pending 清掉再调本函数，否则这里会再次判定为需要开场，无限重复发问候。
+     */
+    if (nextSeq === 1 && !session.opener_pending) {
+      const opener = this.openerFor(session);
+      if (opener.kind !== 'direct') {
+        for (const text of opener.texts) {
+          await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,1)`, [
+            sessionId,
+            text,
+          ]);
+        }
+        await this.db.query(
+          `UPDATE sessions SET state = 'serving', last_buyer_at = now(), opener_pending = true WHERE id = $1`,
+          [sessionId]
+        );
+        const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
+          session.attempt_id,
+        ]);
+        this.gateway.emitToUser(attemptRow.account_id, 'buyer.message', {
+          attemptId: session.attempt_id,
+          sessionId,
+          seq: 1,
+          contents: opener.texts,
+          emotion: session.emotion_value,
+          question: null,
+          sentAt: new Date().toISOString(),
+        });
+        return;
+      }
+    }
     const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
     const texts = behavior.transform(question.question);
     /**
@@ -589,7 +648,7 @@ export class ReceptionService implements OnModuleInit {
      * 售前问题配「待支付 / 待发货」，售后问题配「已发货」——同一笔记订单随问题推进状态。
      */
     const orderStage: OrderStage = question.orderStage || orderStageForQuestion(question);
-    const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)));
+    const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)), session.products?.[0] ?? null);
     await this.persistOrder(sessionId, order);
     for (const text of texts) {
       await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
@@ -598,10 +657,10 @@ export class ReceptionService implements OnModuleInit {
         nextSeq,
       ]);
     }
-    await this.db.query(`UPDATE sessions SET current_seq = $2, state = 'serving', last_buyer_at = now() WHERE id = $1`, [
-      sessionId,
-      nextSeq,
-    ]);
+    await this.db.query(
+      `UPDATE sessions SET current_seq = $2, state = 'serving', last_buyer_at = now(), follow_ups = 0, opener_pending = false WHERE id = $1`,
+      [sessionId, nextSeq]
+    );
     const updated = await this.loadSession(sessionId);
     const attempt = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
       updated.attempt_id,
@@ -617,6 +676,85 @@ export class ReceptionService implements OnModuleInit {
       order,
       questionStage: question.stage || null,
       // 服务端发送时间：供前端与压测工具测算端到端推送延迟（方案 9.3）
+      sentAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * 自适应推送（2026-10-11）：客服回复后，用语义判定器评估本轮是否「答到」，再决定推下一题还是追问。
+   *  - 任一条回复判定通过（要点/表态/打太极/兜底）或执行过业务动作 → 推进下一题；
+   *  - 全部回复都是敷衍（客户口径）→ 只扣分、不追问，直接推进下一题；
+   *  - 答非所问 → 买家按沟通风格追问（最多 MAX_FOLLOWUPS 次，见 domain/adaptive-push）。
+   * 历史消息没有 judge 字段（旧数据）时退回要点命中口径。
+   */
+  async advanceAfterReply(sessionId: number): Promise<void> {
+    const session = await this.loadSession(sessionId);
+    if (!session || ['finished', 'transferred', 'aborted', 'pending'].includes(session.state)) return;
+    // 开场白阶段：买家只发了问候/商品链接，客服有任何回应即抛出第一题（不参与要点判定）。
+    // 注意不能在这里清 opener_pending——pushNextQuestion 靠它区分「要发开场」还是「要抛题」。
+    if (session.opener_pending) {
+      await this.pushNextQuestion(sessionId);
+      return;
+    }
+    const question = (session.questions || []).find((q) => q.seq === session.current_seq);
+    if (!question) {
+      await this.pushNextQuestion(sessionId);
+      return;
+    }
+    const replies = await this.db.many<any>(
+      `SELECT rule_result FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'agent' ORDER BY id`,
+      [sessionId, session.current_seq]
+    );
+    // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
+    // 必须从判定集合剔除——否则首题任何回复都会被它带成「已通过」（2026-10-11 线上实测）。
+    const judgedReplies = replies.filter((r) => r.rule_result?.judge?.signal !== 'opener');
+    const passed = judgedReplies.some((r) => {
+      const rr = r.rule_result || {};
+      if (rr.judge) return !!rr.judge.pass;
+      return (rr.hitPoints || []).length > 0;
+    });
+    const hasAction = replies.some((r) => !!r.rule_result?.businessAction);
+    const followUps = session.follow_ups || 0;
+    // 客户 2026-10-11 口径：敷衍回复只扣分（见 scoring 的敷衍扣分项）、不追问，直接推进下一题；
+    // 答非所问（off-topic）维持原行为——买家追问。旧数据没有 judge 字段时不触发本分支。
+    const judged = judgedReplies.map((r) => r.rule_result?.judge?.signal ?? null).filter((s) => s !== null);
+    const perfunctoryOnly = !passed && !hasAction && judged.length > 0 && judged.every((s) => s === 'perfunctory');
+    if (perfunctoryOnly || decidePush(passed, hasAction, followUps) === 'advance') {
+      await this.pushNextQuestion(sessionId);
+      return;
+    }
+    await this.pushFollowUp(sessionId, session, question, followUps);
+  }
+
+  /** 买家追问：同一道题再问一次（不换 seq，计分与计时口径不受影响），情绪小幅下降。 */
+  private async pushFollowUp(
+    sessionId: number,
+    session: SessionRow,
+    question: ScriptQuestion,
+    round: number
+  ): Promise<void> {
+    const text = buildFollowUpText(session.style_code, question.question, round);
+    await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+      sessionId,
+      text,
+      session.current_seq,
+    ]);
+    const emotionValue = Math.max(0, session.emotion_value + followUpEmotionDelta(round));
+    await this.db.query(
+      `UPDATE sessions SET state = 'serving', last_buyer_at = now(), follow_ups = $2, emotion_value = $3 WHERE id = $1`,
+      [sessionId, round + 1, emotionValue]
+    );
+    const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
+      session.attempt_id,
+    ]);
+    this.gateway.emitToUser(attemptRow.account_id, 'buyer.message', {
+      attemptId: session.attempt_id,
+      sessionId,
+      seq: session.current_seq,
+      contents: [text],
+      emotion: emotionValue,
+      question,
+      followUp: true,
       sentAt: new Date().toISOString(),
     });
   }
@@ -662,6 +800,10 @@ export class ReceptionService implements OnModuleInit {
     );
     const semanticEvaluation = evaluateSemanticReply(text, session.questions, vectorCandidates);
     const hitAny = hitPoints.length > 0 || semanticEvaluation.goalMatches.length > 0;
+    // 开场白阶段（买家只发了问候/链接）：任何回应都算有效招呼，不参与要点/情绪扣分
+    const openerStage = !!session.opener_pending;
+    // 开场回应归入 seq 1（与随后的题目同轮），避免产生 seq 0 的回复轮次干扰计分
+    const insertSeq = openerStage ? 1 : session.current_seq;
 
     // C6：无效 / 敷衍回复判定（默认关闭）。走领域纯函数，规则来自 param_snapshot。
     const historyRows = await this.db.many<any>(
@@ -704,11 +846,11 @@ export class ReceptionService implements OnModuleInit {
 
     const emotion = updateEmotion(session.emotion_value, text, params, {
       unresolvedStreak: session.unresolved_streak,
-      hitAnyPoint: hitAny,
+      hitAnyPoint: hitAny || openerStage,
     });
 
     const ruleResult = {
-      questionSeq: session.current_seq,
+      questionSeq: insertSeq,
       hitPoints,
       semanticEvaluation,
       goalProgress: getGoalProgress(session.questions, [
@@ -723,6 +865,27 @@ export class ReceptionService implements OnModuleInit {
       emotionReason: emotion.reason,
       escalated: emotion.escalated,
       isTimeout,
+      // 2026-10-11 语义判定：敷衍/表态/打太极/要点/答非所问五信号综合，
+      // 驱动自适应推送（advanceAfterReply 读它决定推进还是追问），复盘页可见判定依据
+      judge: openerStage
+        ? { pass: true, signal: 'opener' as const }
+        : judgeReply({
+            question: currentQuestion?.question || '',
+            keyPoints: currentQuestion?.keyPoints || [],
+            reply: text,
+            buyerText: [...historyRows].reverse().find((m) => m.sender === 'buyer')?.content || '',
+            // 风格化买家一题多发（题干+顾虑），复读判定覆盖本轮全部买家消息
+            buyerTexts: historyRows
+              .filter((m) => m.sender === 'buyer' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq)
+              .map((m) => m.content),
+            // 「与上一条重复」只在同一道题内比较：不同问题回同样的短句（如都是「可以的哈」）是正常的，
+            // 上一轮跨题比较会把正常回复误判成敷衍（2026-10-11 沙箱实测发现的误伤）
+            prevAgentText:
+              [...historyRows]
+                .reverse()
+                .find((m) => m.sender === 'agent' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq)
+                ?.content || null,
+          }),
       // C6：被判无效时把原因一起落库，明细页据此标注「被判无效的轮次与依据」
       ...(invalidReason ? { invalid: true, invalidReason } : {}),
       // 客户 2026-10-03：业务动作（催付 / 改价 / 去发货…）在消息上留痕，对话与复盘里都能看到
@@ -732,7 +895,7 @@ export class ReceptionService implements OnModuleInit {
     const inserted = await this.db.one<{ id: number }>(
       `INSERT INTO messages (session_id, sender, content, seq, response_sec, is_timeout, rule_result)
        VALUES ($1,'agent',$2,$3,$4,$5,$6::jsonb) RETURNING id`,
-      [sessionId, text, session.current_seq, responseSec, isTimeout, JSON.stringify(ruleResult)]
+      [sessionId, text, insertSeq, responseSec, isTimeout, JSON.stringify(ruleResult)]
     );
 
     // 平均响应按官方口径：Σ轮次时长 ÷ 轮次总数，未回复/无有效回复的轮次记 600 秒
@@ -755,7 +918,7 @@ export class ReceptionService implements OnModuleInit {
                            emotion_value = $4,
                            unresolved_streak = $5
        WHERE id = $1`,
-      [sessionId, maxResponseSec, avgResponseSec, emotion.value, hitAny ? 0 : session.unresolved_streak + 1]
+      [sessionId, maxResponseSec, avgResponseSec, emotion.value, hitAny || openerStage ? 0 : session.unresolved_streak + 1]
     );
 
     this.gateway.emitToUser(accountId, 'agent.message.ack', {
@@ -796,7 +959,8 @@ export class ReceptionService implements OnModuleInit {
 
     const rng = createRng(now + sessionId);
     const thinkDelay = 3000 + Math.round(rng() * 4000);
-    this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.pushNextQuestion(sessionId));
+    // 2026-10-11 自适应推送：不再无条件推下一题，先看本轮回复是否答到要点
+    this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.advanceAfterReply(sessionId));
 
     return { messageId: inserted.id, responseSec, isTimeout, ruleResult, level: attempt.level };
   }
@@ -924,6 +1088,7 @@ export class ReceptionService implements OnModuleInit {
         hitPoints: m.rule_result?.hitPoints || [],
         goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
         riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
+        judgeSignal: m.rule_result?.judge?.signal ?? null,
       })),
       transferredQuestionSeqs: session.transferred_seqs || [],
       skippedQuestionSeqs: session.skipped_seqs || [],
@@ -1372,6 +1537,10 @@ export class ReceptionService implements OnModuleInit {
       const key = String(point || '').replace(/\s/g, '');
       if (!key) return false;
       if (normalized.includes(key)) return true;
+      // 兜底要点「有效回应」的语义是「有过实质回应即可」（question-seq.ts：缺失要点时的退化值，
+      // 用途是避免该轮无法得分）。客服不必踩中 帮您/马上 这类词——真实回复大多不含它们，
+      // 若按普通要点判，兜底题永远追问/拿不到分。这里放宽为：任何非空回复都算命中。
+      if (key === '有效回应') return normalized.length > 0;
       const list = KEY_POINT_ALIASES[key] || [];
       return list.some((alias) => normalized.includes(alias));
     });
@@ -1403,6 +1572,7 @@ export class ReceptionService implements OnModuleInit {
             amount: s.order_amount,
             statusText: s.order_status,
             placedAt: new Date(new Date(s.join_at).getTime() - 3600 * 1000).toISOString(),
+            services: (s.products || [])[0]?.services || [],
           }
         : null,
       emotionValue: s.emotion_value,

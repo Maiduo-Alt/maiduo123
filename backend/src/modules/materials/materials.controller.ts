@@ -57,6 +57,24 @@ export class MaterialsController {
     return this.materials.listCategories(type || 'qa');
   }
 
+  /** 分类维度（多维分类）：维度树，顶层是维度名，children 是可选值 */
+  @Get('dimensions')
+  dimensions() {
+    return this.materials.listDimensions();
+  }
+
+  @Roles('admin', 'leader')
+  @Post('dimensions')
+  createDimension(@Body() body: { name?: string }) {
+    return this.materials.createDimension(body?.name || '');
+  }
+
+  @Roles('admin', 'leader')
+  @Post('dimensions/:id/values')
+  createDimensionValue(@Param('id') id: string, @Body() body: { name?: string }) {
+    return this.materials.createDimensionValue(Number(id), body?.name || '');
+  }
+
   @Roles('admin', 'leader')
   @Post('categories')
   createCategory(@Body() body: any) {

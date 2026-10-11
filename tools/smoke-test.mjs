@@ -142,9 +142,28 @@ async function main() {
 
   await sleep(1200);
   const snapshot = await call(`/api/receptions/${attemptId}/snapshot`, { token: adminToken });
-  const session = snapshot.data.sessions[0];
+  let session = snapshot.data.sessions[0];
   check('买家自动进线并推送问题', snapshot.data.messages.some((m) => m.sender === 'buyer'));
   check('L1 超时口径 270 秒（180×1.5）', session.timeoutLimitSec === 270, `实际 ${session.timeoutLimitSec}`);
+
+  // 2026-10-11 开场多元化：部分会话先发问候/商品链接，客服回应后才推第一道题。
+  // 这条招呼回应不参与要点评分；等题目真正到达后再验证命中。
+  const openerWasPending = session.seq === 0;
+  if (openerWasPending) {
+    const openerReply = await call(`/api/receptions/${attemptId}/sessions/${session.sessionId}/messages`, {
+      method: 'POST',
+      token: adminToken,
+      body: { content: '亲，您好。' },
+    });
+    check('开场问候可正常回应', openerReply.code === 0, openerReply.message || '');
+    check('开场首响由服务端记录', typeof openerReply.data?.responseSec === 'number', `${openerReply.data?.responseSec ?? '—'} 秒`);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await sleep(1000);
+      const refreshed = await call(`/api/receptions/${attemptId}/snapshot`, { token: adminToken });
+      session = refreshed.data.sessions.find((item) => item.sessionId === session.sessionId) || session;
+      if (session.seq > 0) break;
+    }
+  }
 
   const question = session.questions.find((q) => q.seq === session.seq) || session.questions[0];
   const reply = `亲，您好，${question.keyPoints.join('，')}，还有其他可以帮您的吗？`;
@@ -154,7 +173,11 @@ async function main() {
     body: { content: reply },
   });
   check('客服回复成功且命中要点', send.code === 0 && send.data.ruleResult.hitPoints.length > 0, `命中 ${send.data.ruleResult.hitPoints.join('、')}`);
-  check('响应耗时由服务端记录', typeof send.data.responseSec === 'number', `${send.data.responseSec} 秒`);
+  check(
+    '响应耗时由服务端记录',
+    openerWasPending ? send.data.responseSec === null : typeof send.data.responseSec === 'number',
+    openerWasPending ? '开场首响已计入本轮，后续回复不重复计时' : `${send.data.responseSec} 秒`
+  );
 
   const useless = await call(`/api/receptions/${attemptId}/sessions/${session.sessionId}/messages`, {
     method: 'POST',

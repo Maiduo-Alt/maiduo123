@@ -32,7 +32,7 @@ export class AuthService {
   ) {}
 
   async login(username: string, password: string) {
-    const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE username = $1`, [username]);
+    const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE username = $1 AND deleted_at IS NULL`, [username]);
     if (!account) throw new BizError(ERR.UNAUTHORIZED, '用户名或密码错误');
     if (account.status !== 1) throw new BizError(ERR.FORBIDDEN, '账号已停用，请联系管理员');
 
@@ -94,7 +94,7 @@ export class AuthService {
   }
 
   async profile(accountId: number) {
-    const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
+    const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [accountId]);
     if (!account) throw new BizError(ERR.NOT_FOUND, '账号不存在');
     return this.toProfile(account);
   }
@@ -104,7 +104,7 @@ export class AuthService {
    * 需要携带仍有效的令牌；账号被停用时拒绝续签，避免停用后旧令牌长期可用。
    */
   async refresh(accountId: number) {
-    const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
+    const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [accountId]);
     if (!account) throw new BizError(ERR.UNAUTHORIZED, '账号不存在');
     if (account.status !== 1) throw new BizError(ERR.FORBIDDEN, '账号已停用，请联系管理员');
     const token = await this.jwt.signAsync({
@@ -130,7 +130,7 @@ export class AuthService {
   }
 
   async changePassword(accountId: number, oldPassword: string, newPassword: string) {
-    const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
+    const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [accountId]);
     if (!account) throw new BizError(ERR.NOT_FOUND, '账号不存在');
     if (!bcrypt.compareSync(oldPassword, account.password_hash)) {
       throw new BizError(ERR.PARAM, '原密码不正确');

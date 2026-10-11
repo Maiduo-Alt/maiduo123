@@ -488,8 +488,11 @@ export default function Products() {
       originPrice: values.originPrice,
       stock: values.stock,
       category: values.category,
-      coverUrl: values.coverUrl || '',
-      detailImages: values.detailImages || [],
+      // 2026-10-10 修复：coverUrl/detailImages 是无 name 的未注册字段，antd v5
+      // validateFields() 结果只含注册字段，之前从 values 取值恒为 undefined，
+      // 导致京东采集的图片保存后消失——改从受控 state 取值（state 才是唯一事实来源）
+      coverUrl: coverUrl || '',
+      detailImages: detailImages || [],
       services: values.services || [],
       scenes: values.scenes || [],
       // 客户 2026-10-03：规格（SKU）交给管理员维护，接待页「规格/属性」读的就是这份数据

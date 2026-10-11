@@ -11,7 +11,7 @@ export class AccountsService {
 
   async list(query: PageQuery & { role?: string; groupId?: string; status?: string; keyword?: string }) {
     const { page, pageSize, offset, limit } = normalizePage(query);
-    const where: string[] = ['1=1'];
+    const where: string[] = ['1=1', 'a.deleted_at IS NULL'];
     const args: unknown[] = [];
     if (query.role) {
       args.push(query.role);
@@ -76,9 +76,33 @@ export class AccountsService {
                            mobile = COALESCE($6, mobile),
                            status = COALESCE($7, status),
                            updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1 AND deleted_at IS NULL`,
       [id, body.displayName ?? null, body.roleCode ?? null, body.groupId ?? null, body.employeeNo ?? null, body.mobile ?? null, body.status ?? null]
     );
+    return { success: true };
+  }
+
+  /**
+   * 删除账号（客户 2026-10-10）：软删除（deleted_at），登录与列表立即失效，
+   * 历史接待/动作日志等数据全部保留（它们只引用账号 id 快照）。
+   * 保护口径：不能删自己；不能把最后一个启用状态的管理员删掉。
+   */
+  async remove(id: number, operatorId: number) {
+    if (id === operatorId) throw new BizError(ERR.PARAM, '不能删除当前登录的账号');
+    const account = await this.db.one<{ role_code: string }>(
+      `SELECT role_code FROM accounts WHERE id = $1 AND deleted_at IS NULL`,
+      [id]
+    );
+    if (!account) throw new BizError(ERR.NOT_FOUND, '账号不存在或已删除');
+    if (account.role_code === 'admin') {
+      const rest = await this.db.one<{ count: string }>(
+        `SELECT count(*)::text AS count FROM accounts
+         WHERE role_code = 'admin' AND status = 1 AND deleted_at IS NULL AND id <> $1`,
+        [id]
+      );
+      if (Number(rest.count) === 0) throw new BizError(ERR.PARAM, '至少保留一个启用状态的管理员账号');
+    }
+    await this.db.query(`UPDATE accounts SET deleted_at = now(), status = 0, updated_at = now() WHERE id = $1`, [id]);
     return { success: true };
   }
 
@@ -88,7 +112,7 @@ export class AccountsService {
     await this.db.query(
       `UPDATE accounts SET password_hash = $2, password_changed_at = now(), must_change_password = true,
                            login_fail_count = 0, locked_until = NULL, updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1 AND deleted_at IS NULL`,
       [id, bcrypt.hashSync(password, 10)]
     );
     return { success: true };
@@ -127,7 +151,7 @@ export class AccountsService {
     levels: string[],
     operator: { roleCode: string; groupId?: number | null }
   ): Promise<{ success: boolean; levels: string[] }> {
-    const account = await this.db.one<{ group_id: number | null }>(`SELECT group_id FROM accounts WHERE id = $1`, [id]);
+    const account = await this.db.one<{ group_id: number | null }>(`SELECT group_id FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!account) throw new BizError(ERR.NOT_FOUND, '账号不存在');
     if (operator.roleCode === 'leader' && operator.groupId && account.group_id !== operator.groupId) {
       throw new BizError(ERR.FORBIDDEN, '只能为本组客服开放难度');
