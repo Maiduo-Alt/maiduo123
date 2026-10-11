@@ -89,11 +89,7 @@ export default function Scripts() {
   const createWay = Form.useWatch('createWay', form);
   const ruleMode = Form.useWatch('ruleMode', form);
   const productIds = Form.useWatch('productIds', form) as number[] | undefined;
-  const qaIds = Form.useWatch('qaIds', form) as number[] | undefined;
   const selectedProducts = (options.products || []).filter((p) => (productIds || []).includes(p.id));
-  const selectedContents = (options.contents || []).filter((content) => (qaIds || []).includes(content.id));
-  const referenceQuestions: string[] = selectedContents[0]?.questionList || [];
-  const roundLabels = Object.fromEntries(referenceQuestions.map((question, index) => [index + 1, question]));
   /**
    * 客户 2026-10-10：新建剧本改为**三段式向导**——基础设置 → 剧本信息 → 剧本内容，
    * 每一步只填少量字段，点「下一步」时只校验本步字段，避免一屏十几个控件的眼花缭乱。
@@ -205,15 +201,7 @@ export default function Scripts() {
   const generate = async () => {
     const values = await form.validateFields();
     try {
-      let semanticGoalsBySeq: Record<string, any[]> | undefined;
-      if (values.ruleMode === 'semantic' && values.createWay !== 'case') {
-        try {
-          semanticGoalsBySeq = semanticRowsToGoalsBySeq(values.semanticGoalRows || []);
-        } catch (error) {
-          message.error((error as Error).message);
-          return;
-        }
-      }
+      const autoSemanticGoals = values.ruleMode === 'semantic' && values.createWay !== 'case';
       // 按案例创建（方案 F3-07）：案例的买家消息先沉淀成咨询内容，再走标准建剧本流程
       if (values.createWay === 'case') {
         const res = await api<any>('/scripts/from-case', {
@@ -223,7 +211,7 @@ export default function Scripts() {
             productIds: values.productIds,
             styleId: values.styleId,
             name: values.name || undefined,
-            semanticGoalsBySeq,
+            autoSemanticGoals,
           },
         });
         message.success('已按案例生成剧本');
@@ -248,7 +236,7 @@ export default function Scripts() {
             stage: values.stage,
             category: values.category || '培训',
             name: values.name || undefined,
-            semanticGoalsBySeq,
+            autoSemanticGoals,
           },
         });
         message.success('已生成 1 个剧本');
@@ -264,7 +252,7 @@ export default function Scripts() {
           productIds: values.productIds,
           stage: values.stage,
           category: values.category || '培训',
-          semanticGoalsBySeq,
+          autoSemanticGoals,
         },
       });
       // 超过异步阈值时后端返回任务 ID，改为进度条展示（方案 3.3 / 5.7）
@@ -295,9 +283,16 @@ export default function Scripts() {
     setDetail(data);
   };
 
-  const openGoalConfig = () => {
-    goalForm.setFieldsValue({ semanticGoalRows: semanticQuestionsToRows(detail?.questionSeq || []) });
-    setGoalConfigOpen(true);
+  const openGoalConfig = async (scriptId?: number) => {
+    try {
+      const script = scriptId && scriptId !== detail?.id ? await api<any>(`/scripts/${scriptId}`) : detail;
+      if (!script) return;
+      setDetail(script);
+      goalForm.setFieldsValue({ semanticGoalRows: semanticQuestionsToRows(script.questionSeq || []) });
+      setGoalConfigOpen(true);
+    } catch (error) {
+      message.error((error as Error).message);
+    }
   };
 
   const saveGoalConfig = async () => {
@@ -498,11 +493,14 @@ export default function Scripts() {
           },
           {
             title: '操作',
-            width: 140,
+            width: 220,
             render: (_, row: any) => (
               <Space size={0}>
                 <Button type="link" onClick={() => openDetail(row.id)}>
                   预览
+                </Button>
+                <Button type="link" onClick={() => void openGoalConfig(row.id)}>
+                  配置目标
                 </Button>
                 <Popconfirm
                   title="确认删除该剧本？"
@@ -624,7 +622,7 @@ export default function Scripts() {
                 <Form.Item name="ruleMode" label="规则模式" rules={[{ required: true }]}>
                   <Radio.Group>
                     <Radio value="keyword">关键词规则（现有模式）</Radio>
-                    <Radio value="semantic">语义目标规则（新模式）</Radio>
+                    <Radio value="semantic">自动生成语义目标（推荐）</Radio>
                   </Radio.Group>
                 </Form.Item>
               </>
@@ -790,15 +788,13 @@ export default function Scripts() {
               />
             </Form.Item>
             {ruleMode === 'semantic' && (
-              <div style={{ marginTop: 20 }}>
-                <Typography.Title level={5}>配置客服回复目标</Typography.Title>
-                <Typography.Paragraph type="secondary">
-                  按下面的问题提示选择轮次并填写目标。批量选择多条咨询内容时，同一轮配置应用到各剧本对应轮次；其他轮次继续使用关键词规则。
-                </Typography.Paragraph>
-                <div style={{ maxHeight: 440, overflowY: 'auto', paddingRight: 8 }}>
-                  <SemanticGoalBuilder roundLabels={roundLabels} />
-                </div>
-              </div>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 16 }}
+                message="系统会自动整理语义目标"
+                description="创建时根据所选咨询内容的问题和考核要点，为每轮生成初始目标与认可说法，并结合买家背景标注场景。生成后可在剧本列表打开“预览”，点击“配置语义目标”进行调整。"
+              />
             )}
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
               生成数量 = 背景数 × 内容数；买家沟通风格按《沟通风格》中的占比自动分配，提问序列不足 6 轮时由补充追问池自动补足。
@@ -825,7 +821,7 @@ export default function Scripts() {
               <br />
               买家接受方案：{detail.acceptedAnswer || '未填写'}
             </Typography.Paragraph>
-            <Button style={{ marginBottom: 12 }} onClick={openGoalConfig}>配置语义目标</Button>
+            <Button style={{ marginBottom: 12 }} onClick={() => void openGoalConfig()}>配置语义目标</Button>
             <Timeline
               items={(detail.questionSeq || []).map((q: any) => ({
                 color: 'blue',

@@ -10,6 +10,7 @@ import { SettingsService } from '../settings/settings.service';
 import { ScriptQuestion } from '../../domain/types';
 import { BUILTIN_QA_BY_NAME } from '../../db/seed-content';
 import { isProductCompatibleWithQuestions, questionCategoryRule } from '../../domain/product-consistency';
+import { generateSemanticGoals } from '../../domain/semantic-goal-generator';
 
 /** 案例回流统一使用的背景名（方案 F3-07）。 */
 const CASE_BACKGROUND_NAME = '案例回流';
@@ -223,13 +224,19 @@ export class ScriptsService {
   async create(body: any, accountId: number) {
     if (!body.bgId || !body.qaId || !body.styleId) throw new BizError(ERR.PARAM, '买家咨询背景、内容与沟通风格为必填项');
     if (!Array.isArray(body.productIds) || !body.productIds.length) throw new BizError(ERR.PARAM, '请至少关联一个商品');
+    const qa = await this.db.one<{ template_name: string }>(`SELECT template_name FROM buyer_qa WHERE id = $1`, [body.qaId]);
+    const bg = await this.db.one<{ name: string; description?: string }>(
+      `SELECT name, description FROM buyer_bg WHERE id = $1`,
+      [body.bgId]
+    );
+    if (!qa || !bg) throw new BizError(ERR.PARAM, '买家咨询背景或内容不存在');
+    const generatedQuestionSeq = await this.buildQuestionSeq(body.qaId, body.questionSeq);
     const questionSeq = this.applySemanticGoals(
-      await this.buildQuestionSeq(body.qaId, body.questionSeq),
+      body.autoSemanticGoals
+        ? generateSemanticGoals(generatedQuestionSeq, [bg.name, bg.description].filter(Boolean).join(' '))
+        : generatedQuestionSeq,
       body.semanticGoalsBySeq
     );
-    const qa = await this.db.one<{ template_name: string }>(`SELECT template_name FROM buyer_qa WHERE id = $1`, [body.qaId]);
-    const bg = await this.db.one<{ name: string }>(`SELECT name FROM buyer_bg WHERE id = $1`, [body.bgId]);
-    if (!qa || !bg) throw new BizError(ERR.PARAM, '买家咨询背景或内容不存在');
     const stageName = body.stage === 'aftersale' ? '售后' : '售前';
     const name = body.name || `${stageName}-${bg.name.replace(/[：:].*$/, '')}-${qa.template_name}`;
     /**
@@ -386,7 +393,16 @@ export class ScriptsService {
   /** 批量生成：背景 × 内容 交叉组合，风格按占比分配。 */
   async batchGenerate(
     accountId: number,
-    body: { bgIds: number[]; qaIds: number[]; productIds: number[]; stage?: string; category?: string; seed?: number; semanticGoalsBySeq?: Record<string, any[]> }
+    body: {
+      bgIds: number[];
+      qaIds: number[];
+      productIds: number[];
+      stage?: string;
+      category?: string;
+      seed?: number;
+      autoSemanticGoals?: boolean;
+      semanticGoalsBySeq?: Record<string, any[]>;
+    }
   ) {
     if (!body.bgIds?.length) throw new BizError(ERR.PARAM, '请至少选择一个买家咨询背景');
     if (!body.qaIds?.length) throw new BizError(ERR.PARAM, '请至少选择一个买家咨询内容');
@@ -403,8 +419,8 @@ export class ScriptsService {
     const params = await this.settings.getParams();
 
     const bgPlaceholders = body.bgIds.map((_, i) => `$${i + 1}`).join(',');
-    const bgs = await this.db.many<{ id: number; name: string }>(
-      `SELECT id, name FROM buyer_bg WHERE id IN (${bgPlaceholders})`,
+    const bgs = await this.db.many<{ id: number; name: string; description?: string }>(
+      `SELECT id, name, description FROM buyer_bg WHERE id IN (${bgPlaceholders})`,
       body.bgIds
     );
     const qaPlaceholders = body.qaIds.map((_, i) => `$${i + 1}`).join(',');
@@ -546,18 +562,27 @@ export class ScriptsService {
    */
   private async insertScript(
     client: { query: (text: string, params?: any[]) => Promise<any> } | null,
-    pair: { bg: { id: number; name: string }; qa: any; productId?: number },
+    pair: { bg: { id: number; name: string; description?: string }; qa: any; productId?: number },
     styleMap: Map<string, any>,
     styleSeq: string[],
     scriptNos: string[],
     index: number,
-    body: { productIds: number[]; stage?: string; category?: string; semanticGoalsBySeq?: Record<string, any[]> },
+    body: {
+      productIds: number[];
+      stage?: string;
+      category?: string;
+      autoSemanticGoals?: boolean;
+      semanticGoalsBySeq?: Record<string, any[]>;
+    },
     rounds: [number, number]
   ): Promise<{ id: number; name: string; scriptNo: string; styleCode: string; rounds: number }> {
     const styleCode = styleSeq[index];
     const style = styleMap.get(styleCode);
+    const baseQuestionSeq = this.buildSeqFromQa(pair.qa, rounds);
     const questionSeq = this.applySemanticGoals(
-      this.buildSeqFromQa(pair.qa, rounds),
+      body.autoSemanticGoals
+        ? generateSemanticGoals(baseQuestionSeq, [pair.bg.name, pair.bg.description].filter(Boolean).join(' '))
+        : baseQuestionSeq,
       body.semanticGoalsBySeq
     );
     const stageName = (body.stage || pair.qa.stage) === 'aftersale' ? '售后' : '售前';

@@ -167,6 +167,7 @@ describe('在线模拟接待端到端链路', () => {
         qaIds: contents.body.data.list.map((c: any) => c.id),
         productIds: products.body.data.list.map((p: any) => p.id),
         seed: 20261001,
+        autoSemanticGoals: true,
         semanticGoalsBySeq: {
           '1': [{
             id: 'shipping-status',
@@ -191,6 +192,11 @@ describe('在线模拟接待端到端链路', () => {
     const created = await request(http).get(`/api/scripts/${res.body.data.preview[0].id}`).set(auth);
     expect(created.body.code).toBe(0);
     expect(created.body.data.questionSeq[0].semanticGoals[0].id).toBe('shipping-status');
+    expect(created.body.data.questionSeq.some((question: any) =>
+      question.seq > 1 &&
+      (question.keyPoints || []).some((point: string) => point !== '有效回应') &&
+      (question.semanticGoals || []).some((goal: any) => goal.id.startsWith('auto-goal-'))
+    )).toBe(true);
   }, 60000);
 
   it('沟通风格占比校验：总和超过 100% 被拦截', async () => {

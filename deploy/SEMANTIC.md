@@ -17,6 +17,8 @@ The first start downloads the model and can take several minutes. Allow outbound
 
 In a script's question JSON, set `semanticGoals`. A point can have exact `matchAny` expressions and optional `businessRules` (`mustIncludeAll`, `mustIncludeAny`, `mustExclude`). The vector service returns candidate point IDs above `SEMANTIC_MATCH_THRESHOLD` (default `0.78`); candidates only count as covered after the configured deterministic checks pass. Set phrases to match the scenario's actual facts. `riskRules` independently record and deduct business-risk phrases. Legacy questions without semantic goals continue using the existing key-point matcher.
 
+For ordinary operation, choose **自动生成语义目标** while creating a script. The system turns each question's existing coaching key points into editable goals and adds known equivalent expressions; the selected buyer background is included as scenario context. Content that only has the generic fallback point “有效回应” stays on the existing matcher. Generated goals can be reviewed or changed from **剧本管理 → 配置目标**.
+
 Example question extension:
 
 ```json
@@ -41,6 +43,6 @@ Example question extension:
 }
 ```
 
-Configure goals from the script preview's **配置语义目标** editor. `matchAny` supports deterministic exact expressions without the model; business rules are required before a vector-only candidate can count. Partial goals remain open for later questions. Fully covered goals on future configured questions are skipped, and a clear closing reply such as “暂时没有其他问题，谢谢您” ends the simulated conversation early. Skipped rounds are excluded from response-time scoring while remaining visible in the goal completion score.
+Review and configure goals from the script list's **配置目标** action (also available in the preview). Add a goal name, required answer points, and everyday example phrases using the visual form; there is no need to edit JSON. Strict business checks and risk penalties are optional. `matchAny` supports deterministic exact expressions without the model; business rules are required before a vector-only candidate can count. Partial goals remain open for later questions. Fully covered goals on future configured questions are skipped, and a clear closing reply such as “暂时没有其他问题，谢谢您” ends the simulated conversation early. Skipped rounds are excluded from response-time scoring while remaining visible in the goal completion score.
 
 To disable inference, omit `deploy/compose.semantic.yml` from the Compose command. The application also falls back to configured exact rules whenever the model service is unavailable.
