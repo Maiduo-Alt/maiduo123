@@ -394,7 +394,7 @@ export class RecordsService {
        FROM sessions s
        LEFT JOIN scores sc ON sc.session_id = s.id
        LEFT JOIN scripts sc2 ON sc2.id = s.script_id
-       LEFT JOIN styles st ON st.id = sc2.style_id
+       LEFT JOIN styles st ON st.code = s.style_code
        WHERE s.attempt_id = $1 ORDER BY s.id`,
       [attemptId]
     );

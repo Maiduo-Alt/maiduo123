@@ -284,7 +284,8 @@ export interface ScriptCandidate {
   scriptNo: string;
   name: string;
   qaId: number;
-  styleId: number;
+  /** Legacy field retained for old snapshots; new sessions use system communication styles. */
+  styleId?: number;
   stage: 'presale' | 'aftersale';
   questionSeq: ScriptQuestion[];
   practicedCount: number;

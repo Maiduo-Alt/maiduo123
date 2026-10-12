@@ -70,7 +70,7 @@ export class ScriptsService {
     private readonly settings: SettingsService
   ) {}
 
-  async list(query: PageQuery & { keyword?: string; category?: string; stage?: string; status?: string; productId?: string; styleId?: string }) {
+  async list(query: PageQuery & { keyword?: string; category?: string; stage?: string; status?: string; productId?: string }) {
     const { page, pageSize, offset, limit } = normalizePage(query);
     const where: string[] = ['1=1'];
     const args: unknown[] = [];
@@ -95,22 +95,16 @@ export class ScriptsService {
       args.push(JSON.stringify([Number(query.productId)]));
       where.push(`s.product_ids @> $${args.length}::jsonb`);
     }
-    if (query.styleId) {
-      // 买家风格筛选（2026-10-07 客户新增）
-      args.push(Number(query.styleId));
-      where.push(`s.style_id = $${args.length}`);
-    }
     const whereSql = where.join(' AND ');
     const total = await this.db.one<{ count: string }>(`SELECT count(*)::text AS count FROM scripts s WHERE ${whereSql}`, args);
     const rows = await this.db.many<any>(
       `SELECT s.id, s.script_no AS "scriptNo", s.name, s.category, s.stage, s.status,
               s.practiced_count AS "practicedCount", s.avg_score AS "avgScore",
               s.question_seq AS "questionSeq", s.product_ids AS "productIds",
-              b.name AS "bgName", q.template_name AS "qaTemplate", st.name AS "styleName", st.code AS "styleCode"
+              b.name AS "bgName", q.template_name AS "qaTemplate"
        FROM scripts s
        LEFT JOIN buyer_bg b ON b.id = s.bg_id
        LEFT JOIN buyer_qa q ON q.id = s.qa_id
-       LEFT JOIN styles st ON st.id = s.style_id
        WHERE ${whereSql}
        ORDER BY s.id DESC OFFSET $${args.length + 1} LIMIT $${args.length + 2}`,
       [...args, offset, limit]
@@ -181,15 +175,13 @@ export class ScriptsService {
 
   async detail(id: number) {
     const row = await this.db.one(
-      `SELECT s.id, s.script_no AS "scriptNo", s.name, s.category, s.stage, s.status, s.style_manual AS "styleManual",
+      `SELECT s.id, s.script_no AS "scriptNo", s.name, s.category, s.stage, s.status,
               s.question_seq AS "questionSeq", s.product_ids AS "productIds", s.practiced_count AS "practicedCount",
               s.avg_score AS "avgScore", b.name AS "bgName", b.description AS "bgDescription",
-              q.template_name AS "qaTemplate", q.question AS "qaQuestion", q.accepted_answer AS "acceptedAnswer",
-              st.name AS "styleName", st.code AS "styleCode", st.tone_sample AS "toneSample"
+              q.template_name AS "qaTemplate", q.question AS "qaQuestion", q.accepted_answer AS "acceptedAnswer"
        FROM scripts s
        LEFT JOIN buyer_bg b ON b.id = s.bg_id
        LEFT JOIN buyer_qa q ON q.id = s.qa_id
-       LEFT JOIN styles st ON st.id = s.style_id
        WHERE s.id = $1`,
       [id]
     );
@@ -203,7 +195,7 @@ export class ScriptsService {
    * 做法是把案例的买家消息先沉淀成一条「买家咨询内容」（同名复用），
    * 再走标准建剧本流程 —— 这样后续的批量生成、风格占比对它同样生效。
    */
-  async createFromCase(body: { caseId: number; productIds: number[]; styleId?: number; name?: string }, accountId: number) {
+  async createFromCase(body: { caseId: number; productIds: number[]; name?: string }, accountId: number) {
     const caseRow = await this.db.one<{ id: number; title: string; stage: string }>(
       `SELECT id, title, stage FROM cases WHERE id = $1`,
       [body.caseId]
@@ -247,16 +239,10 @@ export class ScriptsService {
       );
     }
 
-    const styleRow =
-      (body.styleId ? await this.db.one<{ id: number }>(`SELECT id FROM styles WHERE id = $1`, [body.styleId]) : null) ||
-      (await this.db.one<{ id: number }>(`SELECT id FROM styles ORDER BY sort, id LIMIT 1`));
-    if (!styleRow) throw new BizError(ERR.PARAM, '还没有可用的沟通风格');
-
     const created = await this.create(
       {
         bgId: background.id,
         qaId: content.id,
-        styleId: styleRow.id,
         productIds: body.productIds,
         stage: caseRow.stage,
         category: '案例回流',
@@ -268,8 +254,11 @@ export class ScriptsService {
   }
 
   async create(body: any, accountId: number) {
-    if (!body.bgId || !body.qaId || !body.styleId) throw new BizError(ERR.PARAM, '买家咨询背景、内容与沟通风格为必填项');
+    if (!body.bgId || !body.qaId) throw new BizError(ERR.PARAM, '买家咨询背景和内容为必填项');
     if (!Array.isArray(body.productIds) || !body.productIds.length) throw new BizError(ERR.PARAM, '请至少关联一个商品');
+    // scripts.style_id 是历史表结构中的必填兼容字段；实际会话风格由系统管理的沟通风格配置决定。
+    const defaultStyle = await this.db.one<{ id: number }>(`SELECT id FROM styles WHERE status = 1 ORDER BY sort, id LIMIT 1`);
+    if (!defaultStyle) throw new BizError(ERR.PARAM, '还没有可用的沟通风格，请先在系统管理中配置');
     const qa = await this.db.one<{ template_name: string }>(`SELECT template_name FROM buyer_qa WHERE id = $1`, [body.qaId]);
     const bg = await this.db.one<{ name: string; description?: string }>(
       `SELECT name, description FROM buyer_bg WHERE id = $1`,
@@ -316,7 +305,7 @@ export class ScriptsService {
         body.stage === 'aftersale' ? 'aftersale' : 'presale',
         body.bgId,
         body.qaId,
-        body.styleId,
+        defaultStyle.id,
         !!body.styleManual,
         JSON.stringify(body.productIds),
         JSON.stringify(questionSeq),
@@ -358,17 +347,14 @@ export class ScriptsService {
     }
     await this.db.query(
       `UPDATE scripts SET name = COALESCE($2, name), category = COALESCE($3, category), stage = COALESCE($4, stage),
-                          style_id = COALESCE($5, style_id), style_manual = COALESCE($6, style_manual),
-                          product_ids = COALESCE($7::jsonb, product_ids), question_seq = COALESCE($8::jsonb, question_seq),
-                          status = COALESCE($9, status), updated_at = now()
+                          product_ids = COALESCE($5::jsonb, product_ids), question_seq = COALESCE($6::jsonb, question_seq),
+                          status = COALESCE($7, status), updated_at = now()
        WHERE id = $1`,
       [
         id,
         body.name ?? null,
         body.category ?? null,
         body.stage ?? null,
-        body.styleId ?? null,
-        body.styleManual ?? null,
         body.productIds ? JSON.stringify(body.productIds) : null,
         questionSeq ? JSON.stringify(questionSeq) : null,
         body.status ?? null,

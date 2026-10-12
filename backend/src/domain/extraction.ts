@@ -4,7 +4,7 @@ import { LevelDef, ScriptCandidate, SystemParams } from './types';
 /**
  * 剧本抽取规则（方案 4.5）：
  * 1) 过滤可用剧本；2) 按被练次数升序、最近练习时间升序排序；
- * 3) 同一"买家咨询内容"只出现一次；4) 高难度对售后/情绪化剧本加权；5) 候选不足时允许重复。
+ * 3) 同一剧本场景只出现一次；4) 高难度对售后/情绪化剧本加权；5) 候选不足时允许重复。
  */
 export function pickScripts(
   candidates: ScriptCandidate[],
@@ -41,7 +41,8 @@ export function pickScripts(
     });
 
   const picked: ScriptCandidate[] = [];
-  const usedQa = new Set<number>();
+  // 场景拆分后，同一来源咨询内容可以对应多个独立剧本主题，必须按剧本自身去重。
+  const usedScripts = new Set<number>();
   const pool = ordered.map((o) => o.candidate);
   const matchesPreference = (c: ScriptCandidate) => {
     if (level.stagePreference === 'presale') return c.stage === 'presale';
@@ -51,7 +52,7 @@ export function pickScripts(
 
   // 第一轮：去重抽取，且优先满足档位的接待类型偏好
   while (picked.length < count && pool.length) {
-    const available = pool.filter((c) => !usedQa.has(c.qaId));
+    const available = pool.filter((c) => !usedScripts.has(c.id));
     if (!available.length) break;
     const preferred = available.filter(matchesPreference);
     const source = preferred.length ? preferred : available;
@@ -59,7 +60,7 @@ export function pickScripts(
       (c) => 1000 + (highLevel && c.emotionStyle ? (params.highLevelStyleBoost - 1) * 1000 : 0)
     );
     const chosen = source[pickIndex(rng, weights)];
-    usedQa.add(chosen.qaId);
+    usedScripts.add(chosen.id);
     picked.push(chosen);
     pool.splice(pool.indexOf(chosen), 1);
   }

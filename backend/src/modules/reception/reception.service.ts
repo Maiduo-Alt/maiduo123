@@ -21,6 +21,7 @@ import { KEY_POINT_ALIASES } from '../../domain/key-point-aliases';
 import { scoreAttempt, scoreSession } from '../../domain/scoring';
 import { updateEmotion } from '../../domain/emotion';
 import { createRng } from '../../domain/rng';
+import { allocateStyles, normalizeRatios } from '../../domain/style-ratio';
 import { shouldAbortAsDisconnected } from '../../domain/disconnect';
 import { weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
@@ -276,10 +277,10 @@ export class ReceptionService implements OnModuleInit {
     if (running) throw new BizError(ERR.RECEPTION_RUNNING, '请先结束当前接待，再进行新的接待');
 
     const candidateRows = await this.db.many<any>(
-      `SELECT s.id, s.script_no, s.name, s.qa_id, s.style_id, s.stage, s.question_seq,
+      `SELECT s.id, s.script_no, s.name, s.qa_id, s.stage, s.question_seq,
               s.practiced_count, s.last_practiced_at, s.category, s.product_ids AS "productIds",
-              COALESCE(st.is_emotional,false) AS is_emotional
-       FROM scripts s LEFT JOIN styles st ON st.id = s.style_id WHERE s.status = 1`
+              false AS is_emotional
+       FROM scripts s WHERE s.status = 1`
     );
     if (!candidateRows.length) throw new BizError(ERR.PARAM, '当前没有可用剧本，请先创建剧本');
 
@@ -352,7 +353,6 @@ export class ReceptionService implements OnModuleInit {
       scriptNo: r.script_no,
       name: r.name,
       qaId: r.qa_id,
-      styleId: r.style_id,
       stage: r.stage,
       questionSeq: r.question_seq || [],
       practicedCount: r.practiced_count,
@@ -373,6 +373,14 @@ export class ReceptionService implements OnModuleInit {
     if (!picked.length) throw new BizError(ERR.PARAM, '没有符合条件的剧本');
 
     const rng = createRng(Date.now());
+    const systemStyles = await this.db.many<{ code: string; ratio: string | number; emotion_base: number }>(
+      `SELECT code, ratio, emotion_base FROM styles WHERE status = 1 ORDER BY sort, id`
+    );
+    const configuredStyles = systemStyles.length
+      ? systemStyles.map((style) => ({ code: style.code, ratio: Number(style.ratio) }))
+      : Object.entries(effectiveParams.defaultStyleRatio || {}).map(([code, ratio]) => ({ code, ratio: Number(ratio) }));
+    const styleSeq = allocateStyles(normalizeRatios(configuredStyles), picked.length, rng);
+    const styleByCode = new Map(systemStyles.map((style) => [style.code, style]));
     const attemptNo = nextNo('AT');
     const attempt = await this.db.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, task_id, param_snapshot)
@@ -391,11 +399,9 @@ export class ReceptionService implements OnModuleInit {
     const createdSessions: SessionRow[] = [];
     for (let i = 0; i < picked.length; i += 1) {
       const script = picked[i];
-      const styleRow = await this.db.one<{ code: string; emotion_base: number }>(
-        `SELECT code, emotion_base FROM styles WHERE id = $1`,
-        [script.styleId]
-      );
-      const styleCode = styleRow?.code || 'friendly';
+      // 沟通风格只从《系统管理 → 沟通风格》的启用配置按比例分配，剧本自身不再决定风格。
+      const styleCode = styleSeq[i] || configuredStyles[0]?.code || 'friendly';
+      const styleRow = styleByCode.get(styleCode);
       const product = await this.pickProduct(script.id);
       const baseQuestions: ScriptQuestion[] = script.questionSeq.length
         ? script.questionSeq
@@ -1358,7 +1364,7 @@ export class ReceptionService implements OnModuleInit {
        FROM sessions s
        LEFT JOIN scores sc ON sc.session_id = s.id
        LEFT JOIN scripts sc2 ON sc2.id = s.script_id
-       LEFT JOIN styles st ON st.id = sc2.style_id
+       LEFT JOIN styles st ON st.code = s.style_code
        WHERE s.attempt_id = $1 ORDER BY s.id`,
       [attemptId]
     );

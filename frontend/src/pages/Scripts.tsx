@@ -62,7 +62,6 @@ export default function Scripts() {
     backgrounds: any[];
     contents: any[];
     products: any[];
-    styles: any[];
     cases: any[];
     /** 剧本分类：来自《数据字典》type=script，与筛选、新建表单的分类选项共用一份数据（客户 2026-10-09） */
     scriptCategories: any[];
@@ -72,7 +71,6 @@ export default function Scripts() {
     backgrounds: [],
     contents: [],
     products: [],
-    styles: [],
     cases: [],
     scriptCategories: [],
     dimensions: [],
@@ -114,7 +112,7 @@ export default function Scripts() {
   /** 每步参与校验的字段（联动字段按当前选项动态收窄） */
   const stepFields: string[][] = [
     createWay === 'case' ? ['createMode', 'createWay', 'caseId', 'category'] : ['createMode', 'createWay', 'category'],
-    createMode === 'single' ? ['stage', 'styleId', 'productIds'] : ['stage', 'productIds', 'scriptCount'],
+    createMode === 'single' ? ['stage', 'productIds'] : ['stage', 'productIds', 'scriptCount'],
     ['bgIds', 'qaIds'],
   ];
   const nextStep = async () => {
@@ -137,12 +135,11 @@ export default function Scripts() {
   };
 
   const loadOptions = async () => {
-    const [backgrounds, contents, products, styles, cases, scriptCategories, dimensions] = await Promise.all([
+    const [backgrounds, contents, products, cases, scriptCategories, dimensions] = await Promise.all([
       api<any>('/backgrounds', { query: { pageSize: 200 } }),
       api<any>('/contents', { query: { pageSize: 200 } }),
       // 方案 9.1：下架商品不应出现在新剧本的商品选择中
       api<any>('/products', { query: { pageSize: 200, status: 1 } }),
-      api<any>('/styles'),
       // 按案例创建用（方案 F3-07）
       api<any>('/cases', { query: { pageSize: 200 } }).catch(() => ({ list: [] })),
       // 剧本分类：与《数据字典》里的「剧本分类」词条同源
@@ -154,7 +151,6 @@ export default function Scripts() {
       backgrounds: backgrounds.list || [],
       contents: contents.list || [],
       products: products.list || [],
-      styles: Array.isArray(styles) ? styles : styles.list || [],
       cases: cases.list || [],
       scriptCategories: Array.isArray(scriptCategories) ? scriptCategories : [],
       dimensions: Array.isArray(dimensions) ? dimensions : [],
@@ -209,7 +205,6 @@ export default function Scripts() {
           body: {
             caseId: values.caseId,
             productIds: values.productIds,
-            styleId: values.styleId,
             name: values.name || undefined,
             autoSemanticGoals,
           },
@@ -231,7 +226,6 @@ export default function Scripts() {
           body: {
             bgId: values.bgIds[0],
             qaId: values.qaIds[0],
-            styleId: values.styleId,
             productIds: values.productIds,
             stage: values.stage,
             category: values.category || '培训',
@@ -395,15 +389,6 @@ export default function Scripts() {
             onChange={(v) => load({ category: v, page: 1 })}
             options={(options.scriptCategories || []).map((c: any) => ({ value: c.name, label: c.name }))}
           />
-          <Select
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            placeholder="买家风格"
-            style={{ width: 140 }}
-            onChange={(v) => load({ styleId: v, page: 1 })}
-            options={(options.styles || []).map((s: any) => ({ value: s.id, label: s.name }))}
-          />
           <Button
             disabled={!selectedIds.length}
             onClick={() => {
@@ -477,7 +462,6 @@ export default function Scripts() {
           { title: '剧本名称', dataIndex: 'name', ellipsis: true },
           { title: '剧本分类', dataIndex: 'category', width: 100, render: (v) => v || '-' },
           { title: '接待类型', dataIndex: 'stage', width: 100, render: (v) => (v === 'aftersale' ? '售后' : '售前') },
-          { title: '买家风格', dataIndex: 'styleName', width: 120 },
           {
             title: '轮数',
             dataIndex: 'rounds',
@@ -675,14 +659,7 @@ export default function Scripts() {
                 <Radio value="aftersale">售后</Radio>
               </Radio.Group>
             </Form.Item>
-            {createMode === 'single' ? (
-              <Form.Item name="styleId" label="买家沟通风格" rules={[{ required: true, message: '请选择沟通风格' }]}>
-                <Select
-                  style={{ width: 240 }}
-                  options={options.styles.map((s) => ({ value: s.id, label: s.name }))}
-                />
-              </Form.Item>
-            ) : (
+            {createMode === 'single' ? null : (
               <Form.Item
                 name="scriptCount"
                 label="每个背景生成数量"
@@ -827,7 +804,6 @@ export default function Scripts() {
               <Tag>{detail.scriptNo}</Tag>
               {detail.category ? <Tag color="geekblue">{detail.category}</Tag> : null}
               <Tag color="blue">{detail.stage === 'aftersale' ? '售后' : '售前'}</Tag>
-              <Tag color="purple">{detail.styleName}</Tag>
               <Tag>{detail.roundsWarning || '轮数符合要求'}</Tag>
             </Space>
             <Typography.Paragraph type="secondary">
