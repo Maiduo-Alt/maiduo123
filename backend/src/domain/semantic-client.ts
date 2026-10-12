@@ -9,7 +9,9 @@ export function buildSemanticCandidates(questions: ScriptQuestion[]): SemanticCa
   return questions.flatMap((question) => (question.semanticGoals || []).flatMap((goal: SemanticGoal) =>
     goal.requiredPoints.map((point) => ({
       id: `${goal.id}:${point.id}`,
-      text: [goal.name, point.label, ...point.matchAny].filter(Boolean).join('。'),
+      // 只用子要点自身的表达构造候选：goal.name 含统一的背景前缀，会把所有候选
+      //  embedding 拉到一起，无关回复也能拿到 0.7+（2026-10-12 实测），丧失区分度。
+      text: [point.label, ...point.matchAny].filter(Boolean).join('。'),
     }))
   ));
 }

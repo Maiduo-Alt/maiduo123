@@ -40,7 +40,7 @@ export function generateSemanticGoals(
       conversationPlan: buildConversationPlan(question.question, primary.point, isPrimaryRound),
       semanticGoals: [{
         id: `auto-goal-${question.seq}`,
-        name: [context ? `「${context}」场景` : '', isPrimaryRound ? `主目标：${primary.point}` : `次要目标：${primary.point}`].filter(Boolean).join(' '),
+        name: [context ? `「${context}」场景` : '', isPrimaryRound ? `主目标：${primary.point}` : `次要目标：${keyPoints[0]}`].filter(Boolean).join(' '),
         requiredPoints: orderedPoints.map((point, index) => ({
           id: `auto-point-${question.seq}-${index + 1}`,
           label: point,
