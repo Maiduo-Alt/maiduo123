@@ -114,7 +114,7 @@ export default function Scripts() {
   /** 每步参与校验的字段（联动字段按当前选项动态收窄） */
   const stepFields: string[][] = [
     createWay === 'case' ? ['createMode', 'createWay', 'caseId', 'category'] : ['createMode', 'createWay', 'category'],
-    createMode === 'single' ? ['stage', 'styleId', 'productIds'] : ['stage', 'productIds'],
+    createMode === 'single' ? ['stage', 'styleId', 'productIds'] : ['stage', 'productIds', 'scriptCount'],
     ['bgIds', 'qaIds'],
   ];
   const nextStep = async () => {
@@ -250,6 +250,7 @@ export default function Scripts() {
           bgIds: values.bgIds,
           qaIds: values.qaIds,
           productIds: values.productIds,
+          scriptCount: values.scriptCount,
           stage: values.stage,
           category: values.category || '培训',
           autoSemanticGoals,
@@ -681,7 +682,17 @@ export default function Scripts() {
                   options={options.styles.map((s) => ({ value: s.id, label: s.name }))}
                 />
               </Form.Item>
-            ) : null}
+            ) : (
+              <Form.Item
+                name="scriptCount"
+                label="每个背景生成数量"
+                initialValue={1}
+                rules={[{ required: true, message: '请输入剧本数量' }]}
+                extra="系统会先按相似问题聚合场景；数量不足以覆盖不同场景时会自动补足，避免不同主题被塞进同一通会话。"
+              >
+                <InputNumber min={1} max={200} precision={0} addonAfter="个" style={{ width: 180 }} />
+              </Form.Item>
+            )}
             <Form.Item name="productIds" label="关联商品" rules={[{ required: true, message: '请选择商品' }]}>
               <Select
                 mode="multiple"
@@ -781,7 +792,7 @@ export default function Scripts() {
             <Form.Item
               name="qaIds"
               label="买家咨询内容"
-              extra="分段式选择：先在上面选一个模板分类，再在该分类下勾选内容；支持输入关键词搜索，选择多个买家咨询内容将生成多个剧本"
+              extra="可选择多个咨询内容；系统会按问题主题自动聚合相似问题，并把不同主题分到不同剧本。批量数量在上一步设置。"
               rules={[{ required: true, message: '请选择咨询内容' }]}
             >
               <Select
@@ -802,7 +813,7 @@ export default function Scripts() {
               />
             )}
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-              生成数量 = 背景数 × 内容数；买家沟通风格按《沟通风格》中的占比自动分配，提问序列不足 6 轮时由补充追问池自动补足。
+              生成数量 = 背景数 × 每个背景生成数量；相似问题归入同一场景，不同主题尽量分布到不同剧本。买家沟通风格按《沟通风格》中的占比自动分配。
             </Typography.Paragraph>
           </div>
         </Form>

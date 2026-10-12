@@ -15,6 +15,52 @@ import { buildConversationPlan, generateSemanticGoals } from '../../domain/seman
 /** 案例回流统一使用的背景名（方案 F3-07）。 */
 const CASE_BACKGROUND_NAME = '案例回流';
 
+type ScenarioQa = {
+  id: number;
+  template_name: string;
+  stage: string;
+  question_list: string[];
+  key_points: string[][];
+};
+
+/** 把多条咨询内容切成可独立训练的场景，避免一次会话串入互不相关的问题。 */
+function scenarioTopic(text: string): string {
+  const value = String(text || '');
+  if (/材质|面料|透气|厚度|起球|掉色|缩水|洗涤/u.test(value)) return '材质与穿着感受';
+  if (/尺码|码数|尺寸|偏大|偏小|衣长|裙长|身高|体重/u.test(value)) return '尺码与版型';
+  if (/发货|物流|快递|配送|现货|预售|到货|时效/u.test(value)) return '发货与物流';
+  if (/退|换|退款|运费|售后|补发|赔偿|质量/u.test(value)) return '售后处理';
+  if (/价格|优惠|折扣|活动|便宜|券/u.test(value)) return '价格与优惠';
+  if (/支付|付款|下单|拍下|订单/u.test(value)) return '下单与支付';
+  // 未命中主题时按问题本身拆分，避免所有“其他”问题再次被合并到一个剧本。
+  return `其他咨询·${value.replace(/[\s\p{P}\p{S}]/gu, '').slice(0, 16) || '一般咨询'}`;
+}
+
+function groupScenarioQas(qas: ScenarioQa[]): ScenarioQa[] {
+  const groups = new Map<string, ScenarioQa>();
+  for (const qa of qas) {
+    const questions = Array.isArray(qa.question_list) ? qa.question_list : [];
+    const points = Array.isArray(qa.key_points) ? qa.key_points : [];
+    questions.forEach((question, index) => {
+      const topic = scenarioTopic(question);
+      const current = groups.get(topic);
+      if (current) {
+        current.question_list.push(question);
+        current.key_points.push(points[index]?.length ? points[index] : ['有效回应']);
+        return;
+      }
+      groups.set(topic, {
+        id: qa.id,
+        template_name: `${qa.template_name}·${topic}`,
+        stage: qa.stage,
+        question_list: [question],
+        key_points: [points[index]?.length ? points[index] : ['有效回应']],
+      });
+    });
+  }
+  return [...groups.values()];
+}
+
 @Injectable()
 export class ScriptsService {
   private readonly logger = new Logger(ScriptsService.name);
@@ -400,6 +446,8 @@ export class ScriptsService {
       stage?: string;
       category?: string;
       seed?: number;
+      /** 每个买家背景生成的剧本数量；不足以覆盖场景时自动补足到场景数。 */
+      scriptCount?: number;
       autoSemanticGoals?: boolean;
       semanticGoalsBySeq?: Record<string, any[]>;
     }
@@ -424,11 +472,17 @@ export class ScriptsService {
       body.bgIds
     );
     const qaPlaceholders = body.qaIds.map((_, i) => `$${i + 1}`).join(',');
-    const qas = await this.db.many<{ id: number; template_name: string; stage: string; question_list: string[]; key_points: string[][] }>(
+    const qas = await this.db.many<ScenarioQa>(
       `SELECT id, template_name, stage, question_list, key_points FROM buyer_qa WHERE id IN (${qaPlaceholders})`,
       body.qaIds
     );
     if (!bgs.length || !qas.length) throw new BizError(ERR.PARAM, '所选素材不存在');
+    const scenarioQas = groupScenarioQas(qas);
+    if (!scenarioQas.length) throw new BizError(ERR.PARAM, '所选咨询内容没有可用问题');
+    const requestedCount = body.scriptCount === undefined
+      ? scenarioQas.length
+      : Math.max(1, Math.min(200, Math.floor(Number(body.scriptCount))));
+    const actualCount = Math.max(requestedCount, scenarioQas.length);
 
     // 商品 id → 分类：用于「问题与商品必须匹配」的生成前校验（客户 2026-10-03）
     const productRows = await this.db.many<{ id: number; category: string }>(
@@ -458,7 +512,8 @@ export class ScriptsService {
     const skippedContents: { templateName: string; reason: string }[] = [];
     const pairs: { bg: { id: number; name: string }; qa: typeof qas[number]; productId: number }[] = [];
     for (const bg of bgs) {
-      for (const qa of qas) {
+      for (let scenarioIndex = 0; scenarioIndex < actualCount; scenarioIndex += 1) {
+        const qa = scenarioQas[scenarioIndex % scenarioQas.length];
         const questions = (qa.question_list as unknown as string[]) || [];
         const compatible = productIds.filter((productId) =>
           isProductCompatibleWithQuestions(productCategoryById.get(Number(productId)) || '', questions)
