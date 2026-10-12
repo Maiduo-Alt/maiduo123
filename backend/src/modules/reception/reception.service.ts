@@ -27,8 +27,6 @@ import { judgeValidReplies } from '../../domain/reply-validity';
 import { judgeReply } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
 import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef } from '../../domain/order';
-import { mixQuestionSeq } from '../../domain/question-seq';
-import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/seed-content';
 import {
   actionStageHint,
   findBusinessAction,
@@ -402,26 +400,9 @@ export class ReceptionService implements OnModuleInit {
       const baseQuestions: ScriptQuestion[] = script.questionSeq.length
         ? script.questionSeq
         : [{ seq: 1, question: '请问在吗？', keyPoints: ['回应'], needTransfer: false }];
-      /**
-       * 客户 2026-10-03：一次接待的问题要**按比例混合售前 / 售后**——
-       * 大部分是「还没有订单、只咨询商品信息」的售前问题，小部分是「买完商品后」的订单类问题
-       * （改地址 / 改快递 / 催发货 / 改单）。比例来自系统参数 aftersaleQuestionRatio（默认 20%）。
-       * 剧本是售前就混售后问题，剧本是售后就混售前问题——两种都保证「大部分还是剧本本身的话题」。
-       */
-      const scriptStage: 'presale' | 'aftersale' = script.stage === 'aftersale' ? 'aftersale' : 'presale';
-      const mixStage: 'presale' | 'aftersale' = scriptStage === 'aftersale' ? 'presale' : 'aftersale';
-      const mixRatio = Number(effectiveParams.aftersaleQuestionRatio ?? DEFAULT_PARAMS.aftersaleQuestionRatio);
-      const mixPool = mixStage === 'aftersale' ? ORDER_AFTERSALE_QUESTIONS : PRESALE_PRODUCT_QUESTIONS;
-      const questions =
-        mixRatio > 0
-          ? mixQuestionSeq(baseQuestions, {
-              ratioPct: mixRatio,
-              pool: mixPool,
-              stage: mixStage,
-              // 用会话在一局里的序号错开题库起点：同一局不同买家不会拿到同一句售后问题
-              offset: i,
-            })
-          : baseQuestions;
+      // The script owns its question plan. Do not inject questions from another
+      // stage at runtime: new employees must be trained against the selected scene.
+      const questions = baseQuestions;
       const joinDelaySec =
         i >= activeSlots
           ? 0
@@ -642,7 +623,8 @@ export class ReceptionService implements OnModuleInit {
       }
     }
     const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
-    const texts = behavior.transform(question.question);
+    const plannedPrompt = question.conversationPlan?.promptTemplates?.[0] || question.baseQuestion || question.question;
+    const texts = behavior.transform(plannedPrompt);
     /**
      * 客户 2026-10-03：**推送哪个问题，就带出与之关联的订单状态**。
      * 售前问题配「待支付 / 待发货」，售后问题配「已发货」——同一笔记订单随问题推进状态。
@@ -719,11 +701,47 @@ export class ReceptionService implements OnModuleInit {
     // 答非所问（off-topic）维持原行为——买家追问。旧数据没有 judge 字段时不触发本分支。
     const judged = judgedReplies.map((r) => r.rule_result?.judge?.signal ?? null).filter((s) => s !== null);
     const perfunctoryOnly = !passed && !hasAction && judged.length > 0 && judged.every((s) => s === 'perfunctory');
-    if (perfunctoryOnly || decidePush(passed, hasAction, followUps) === 'advance') {
+    const plannedPrompt = question.conversationPlan?.promptTemplates?.[followUps + 1];
+    if (passed && plannedPrompt) {
+      await this.pushPlannedPrompt(sessionId, session, question, plannedPrompt, followUps);
+      return;
+    }
+    const maxFollowUps = question.conversationPlan?.maxFollowUps;
+    if (perfunctoryOnly || decidePush(passed, hasAction, followUps, maxFollowUps) === 'advance') {
       await this.pushNextQuestion(sessionId);
       return;
     }
     await this.pushFollowUp(sessionId, session, question, followUps);
+  }
+
+  private async pushPlannedPrompt(
+    sessionId: number,
+    session: SessionRow,
+    question: ScriptQuestion,
+    prompt: string,
+    round: number,
+  ): Promise<void> {
+    const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
+    const text = behavior.transform(prompt)[0] || prompt;
+    await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+      sessionId, text, session.current_seq,
+    ]);
+    await this.db.query(
+      `UPDATE sessions SET state = 'serving', last_buyer_at = now(), follow_ups = $2 WHERE id = $1`,
+      [sessionId, round + 1],
+    );
+    const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [session.attempt_id]);
+    this.gateway.emitToUser(attemptRow.account_id, 'buyer.message', {
+      attemptId: session.attempt_id,
+      sessionId,
+      seq: session.current_seq,
+      contents: [text],
+      emotion: session.emotion_value,
+      question,
+      followUp: true,
+      plannedFollowUp: true,
+      sentAt: new Date().toISOString(),
+    });
   }
 
   /** 买家追问：同一道题再问一次（不换 seq，计分与计时口径不受影响），情绪小幅下降。 */
@@ -733,7 +751,10 @@ export class ReceptionService implements OnModuleInit {
     question: ScriptQuestion,
     round: number
   ): Promise<void> {
-    const text = buildFollowUpText(session.style_code, question.question, round);
+    const planned = question.conversationPlan?.followUpTemplates?.[round];
+    const text = planned
+      ? ((this.styleBehavior[session.style_code] || this.styleBehavior.friendly).transform(planned)[0] || planned)
+      : buildFollowUpText(session.style_code, question.question, round);
     await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
       sessionId,
       text,

@@ -21,9 +21,14 @@ export type PushDecision = 'advance' | 'followup';
  * @param hasBusinessAction 本轮是否执行过业务动作（视为有效处理）
  * @param followUps     当前题已追问次数
  */
-export function decidePush(hitAnyPoint: boolean, hasBusinessAction: boolean, followUps: number): PushDecision {
+export function decidePush(
+  hitAnyPoint: boolean,
+  hasBusinessAction: boolean,
+  followUps: number,
+  maxFollowUps = MAX_FOLLOWUPS,
+): PushDecision {
   if (hitAnyPoint || hasBusinessAction) return 'advance';
-  return followUps < MAX_FOLLOWUPS ? 'followup' : 'advance';
+  return followUps < maxFollowUps ? 'followup' : 'advance';
 }
 
 /** 追问话术模板：按沟通风格两档（第 1 次温和、第 2 次加重），q 为原问题原文。 */

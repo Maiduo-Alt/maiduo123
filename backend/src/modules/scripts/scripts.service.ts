@@ -10,7 +10,7 @@ import { SettingsService } from '../settings/settings.service';
 import { ScriptQuestion } from '../../domain/types';
 import { BUILTIN_QA_BY_NAME } from '../../db/seed-content';
 import { isProductCompatibleWithQuestions, questionCategoryRule } from '../../domain/product-consistency';
-import { derivePrimaryQuestion, generateSemanticGoals } from '../../domain/semantic-goal-generator';
+import { buildConversationPlan, generateSemanticGoals } from '../../domain/semantic-goal-generator';
 
 /** 案例回流统一使用的背景名（方案 F3-07）。 */
 const CASE_BACKGROUND_NAME = '案例回流';
@@ -772,7 +772,8 @@ export class ScriptsService {
         ...(configuredGoals ? { semanticGoals: configuredGoals } : {}),
         ...(primary ? {
           goalPriority: isPrimary ? 'primary' as const : 'secondary' as const,
-          ...(isPrimary ? { primaryGoal, baseQuestion: originalQuestion, question: derivePrimaryQuestion(originalQuestion, primaryGoal!) } : {}),
+          conversationPlan: buildConversationPlan(originalQuestion, primaryGoal || String(question.keyPoints[0] || '咨询内容'), isPrimary),
+          ...(isPrimary ? { primaryGoal, baseQuestion: originalQuestion } : {}),
           ...(!isPrimary && isOldPrimary ? { question: originalQuestion } : {}),
         } : {}),
       };

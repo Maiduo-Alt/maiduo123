@@ -164,6 +164,8 @@ export interface ScriptQuestion {
   primaryGoal?: string;
   /** Original buyer question before adding the generated primary-goal follow-up. */
   baseQuestion?: string;
+  /** Deterministic buyer-question plan. Templates are reviewed with the script. */
+  conversationPlan?: ConversationPlan;
   /** Optional semantic goals. Missing/empty keeps the legacy keyword scoring path. */
   semanticGoals?: SemanticGoal[];
   needTransfer?: boolean;
@@ -178,6 +180,15 @@ export interface ScriptQuestion {
    * 待支付 / 待发货 = 售前；已发货 = 售后。推送时按它生成或推进订单。
    */
   orderStage?: 'unpaid' | 'unshipped' | 'shipped';
+}
+
+export interface ConversationPlan {
+  topic: string;
+  priority: 'primary' | 'secondary';
+  depth: 'focused' | 'normal';
+  promptTemplates: string[];
+  followUpTemplates: string[];
+  maxFollowUps: number;
 }
 
 export interface SemanticGoalPoint {

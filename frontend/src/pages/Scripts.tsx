@@ -797,8 +797,8 @@ export default function Scripts() {
                 type="info"
                 showIcon
                 style={{ marginTop: 16 }}
-                message="系统会自动整理语义目标"
-                description="创建时根据所选咨询内容的问题和考核要点，为每轮生成初始目标与认可说法，并结合买家背景标注场景。生成后可在剧本列表打开“预览”，点击“配置语义目标”进行调整。"
+                message="系统会自动整理语义目标和提问计划"
+                description="创建时根据所选咨询内容的问题和考核要点，为每轮生成可审核的场景、主次目标和固定提问计划。系统只从计划模板中推进问题，不自由生成问题；生成后可在剧本列表打开“预览”，点击“配置语义目标”进行调整。"
               />
             )}
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
@@ -833,10 +833,16 @@ export default function Scripts() {
                 children: (
                   <div>
                     <Typography.Text strong>
-                      第 {q.seq} 轮：{q.question}
+                      第 {q.seq} 轮：{q.conversationPlan?.promptTemplates?.[0] || q.baseQuestion || q.question}
                     </Typography.Text>
                     {q.goalPriority === 'primary' && <Tag color="gold">主目标：{q.primaryGoal}</Tag>}
                     {q.goalPriority === 'secondary' && <Tag>次要目标</Tag>}
+                    {q.conversationPlan && (
+                      <div style={{ fontSize: 12, color: '#59708a', marginTop: 4 }}>
+                        提问计划：{q.conversationPlan.priority === 'primary' ? '主目标·细问' : '次要目标·简问'}；
+                        追问上限 {q.conversationPlan.maxFollowUps} 次
+                      </div>
+                    )}
                     <div style={{ fontSize: 12, color: '#8c8c8c' }}>
                       期望要点：{q.keyPoints.map((point: string, index: number) => {
                         const isPrimary = (q.semanticGoals || []).some((goal: any) =>
