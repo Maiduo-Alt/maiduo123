@@ -19,6 +19,8 @@ In a script's question JSON, set `semanticGoals`. A point can have exact `matchA
 
 For ordinary operation, choose **自动生成语义目标** while creating a script. The system randomly selects one primary point from the chosen consultation content, moves its question to the start, and adds a focused buyer follow-up for that point. Other questions remain lighter secondary targets. Existing coaching key points become editable goals with known equivalent expressions, and the selected buyer background is included as scenario context. This priority affects the buyer's question sequence and detail only; scoring keeps the existing equal point weights. Content that only has the generic fallback point “有效回应” stays on the existing matcher. Generated goals can be reviewed or changed from **剧本管理 → 配置目标**.
 
+Each semantic point supports a `matchMode`: `strict` only accepts configured expressions, `balanced` accepts those expressions and the full point label, and `flexible` (the default) also accepts meaningful fragments of the label. This keeps matching rule-driven while tolerating ordinary rephrasing. Vector candidates are accepted when no extra business rule is configured; `mustIncludeAll`, `mustIncludeAny`, and `mustExclude` remain available when a point needs tighter validation.
+
 Example question extension:
 
 ```json
@@ -43,6 +45,6 @@ Example question extension:
 }
 ```
 
-Review and configure goals from the script list's **配置目标** action (also available in the preview). Add a goal name, required answer points, and everyday example phrases using the visual form; there is no need to edit JSON. Strict business checks and risk penalties are optional. `matchAny` supports deterministic exact expressions without the model; business rules are required before a vector-only candidate can count. Partial goals remain open for later questions. Fully covered goals on future configured questions are skipped, and a clear closing reply such as “暂时没有其他问题，谢谢您” ends the simulated conversation early. Skipped rounds are excluded from response-time scoring while remaining visible in the goal completion score.
+Review and configure goals from the script list's **配置目标** action (also available in the preview). Add a goal name and required answer points using the visual form; the point label automatically becomes a base accepted expression, so `matchAny` only needs extra wording when useful. Choose a matching mode per point, and add strict business checks or risk penalties only when needed. Partial goals remain open for later questions. Fully covered goals on future configured questions are skipped, and a clear closing reply such as “暂时没有其他问题，谢谢您” ends the simulated conversation early. Skipped rounds are excluded from response-time scoring while remaining visible in the goal completion score.
 
 To disable inference, omit `deploy/compose.semantic.yml` from the Compose command. The application also falls back to configured exact rules whenever the model service is unavailable.

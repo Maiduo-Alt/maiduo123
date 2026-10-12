@@ -198,6 +198,8 @@ export interface SemanticGoalPoint {
   isPrimary?: boolean;
   /** Explicit concepts or natural expressions that cover this point. */
   matchAny: string[];
+  /** Match strictness for rule-driven semantic evaluation. Defaults to flexible. */
+  matchMode?: 'strict' | 'balanced' | 'flexible';
   /** A vector match is only a candidate. These deterministic checks must also pass. */
   businessRules?: {
     mustIncludeAll?: string[];

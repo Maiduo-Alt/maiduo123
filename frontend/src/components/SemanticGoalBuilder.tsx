@@ -7,6 +7,11 @@ const expressionsInput = {
   placeholder: '输入一种说法后按回车，例如：标准尺码',
 };
 
+const defaultExpressions = (label: string) => {
+  const value = String(label || '').trim();
+  return value ? [value] : [];
+};
+
 /** 将运行时的轮次目标转换成运营人员可直接编辑的表单字段。 */
 export function semanticQuestionsToRows(questionSeq: any[] = []) {
   return questionSeq.flatMap((question) =>
@@ -17,6 +22,7 @@ export function semanticQuestionsToRows(questionSeq: any[] = []) {
         label: point.label,
         isPrimary: Boolean(point.isPrimary),
         matchAny: point.matchAny || [],
+        matchMode: point.matchMode || 'flexible',
         mustIncludeAll: point.businessRules?.mustIncludeAll || [],
         mustIncludeAny: point.businessRules?.mustIncludeAny || [],
         mustExclude: point.businessRules?.mustExclude || [],
@@ -44,8 +50,9 @@ export function semanticRowsToGoalsBySeq(rows: any[] = []): Record<string, any[]
     if (!Array.isArray(row.points) || !row.points.length) throw new Error(`“${row.name}”至少添加一个必答要点`);
     const goalId = `goal-${seq}-${goalIndex + 1}`;
     const requiredPoints = row.points.map((point: any, pointIndex: number) => {
-      const matchAny = (point.matchAny || []).map((item: string) => String(item).trim()).filter(Boolean);
       if (!String(point.label || '').trim()) throw new Error(`“${row.name}”有要点名称未填写`);
+      const matchAny = (point.matchAny || []).map((item: string) => String(item).trim()).filter(Boolean);
+      if (!matchAny.length) matchAny.push(...defaultExpressions(point.label));
       if (!matchAny.length) throw new Error(`“${point.label}”至少添加一种认可说法`);
       const businessRules: Record<string, string[]> = {};
       for (const key of ['mustIncludeAll', 'mustIncludeAny', 'mustExclude']) {
@@ -57,6 +64,7 @@ export function semanticRowsToGoalsBySeq(rows: any[] = []): Record<string, any[]
         label: String(point.label).trim(),
         ...(point.isPrimary ? { isPrimary: true } : {}),
         matchAny,
+        matchMode: point.matchMode || 'flexible',
         ...(Object.keys(businessRules).length ? { businessRules } : {}),
       };
     });
@@ -95,7 +103,7 @@ export default function SemanticGoalBuilder({
         showIcon
         style={{ marginBottom: 16 }}
         message="用日常说法配置客服需要覆盖的内容"
-        description="填写目标名称、必答要点和几种认可说法即可，不需要写代码。未配置的轮次继续使用关键词规则；可选添加严格核验条件与风险扣分项。"
+        description="只需填写目标和要点名称，系统会自动把要点名称作为基础认可表达。默认使用灵活匹配，能覆盖常见自然说法；确需严格控制时再切换模式或补充表达。"
       />
       <Form.List name={name}>
         {(goals, goalOps) => (
@@ -153,10 +161,16 @@ export default function SemanticGoalBuilder({
                             <Form.Item
                               name={[point.name, 'matchAny']}
                               label="认可的说法（回车添加）"
-                              rules={[{ required: true, message: '至少添加一种说法' }]}
                               style={{ flex: 1 }}
                             >
                               <Select {...expressionsInput} />
+                            </Form.Item>
+                            <Form.Item name={[point.name, 'matchMode']} label="匹配方式" initialValue="flexible">
+                              <Select style={{ width: 125 }} options={[
+                                { value: 'flexible', label: '灵活' },
+                                { value: 'balanced', label: '平衡' },
+                                { value: 'strict', label: '严格' },
+                              ]} />
                             </Form.Item>
                             <Button
                               type="text"
@@ -192,7 +206,7 @@ export default function SemanticGoalBuilder({
                       <Button
                         type="dashed"
                         icon={<PlusOutlined />}
-                        onClick={() => pointOps.add({ matchAny: [] })}
+                        onClick={() => pointOps.add({ matchAny: [], matchMode: 'flexible' })}
                         block
                       >
                         添加必答要点

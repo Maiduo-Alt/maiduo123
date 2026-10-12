@@ -44,6 +44,7 @@ export function generateSemanticGoals(
         requiredPoints: orderedPoints.map((point, index) => ({
           id: `auto-point-${question.seq}-${index + 1}`,
           label: point,
+          matchMode: 'flexible' as const,
           ...(isPrimaryRound && index === 0 ? { isPrimary: true } : {}),
           matchAny: [...new Set([point, ...(KEY_POINT_ALIASES[point] || [])])],
         })),

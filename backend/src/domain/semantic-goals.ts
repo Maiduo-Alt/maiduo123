@@ -1,4 +1,4 @@
-import { ScriptQuestion, SemanticGoal, SemanticRiskRule } from './types';
+import { ScriptQuestion, SemanticGoal, SemanticGoalPoint, SemanticRiskRule } from './types';
 
 export interface GoalPointMatch {
   goalId: string;
@@ -35,6 +35,20 @@ function matchesAny(text: string, phrases: string[]): boolean {
   });
 }
 
+function matchesFlexible(text: string, point: SemanticGoalPoint): boolean {
+  const phrases = (point.matchAny || []).filter(Boolean);
+  if (matchesAny(text, phrases)) return true;
+  if (point.matchMode === 'strict') return false;
+  const label = normalize(point.label);
+  if (!label) return false;
+  if (text.includes(label)) return true;
+  if (point.matchMode === 'balanced') return false;
+  // Flexible mode accepts meaningful chunks from a configured label. This stays
+  // deterministic while handling natural wording such as “穿着不闷” vs “透气舒适”.
+  const chunks = label.match(/[\u4e00-\u9fff]{2,}|[a-z0-9]{3,}/giu) || [];
+  return chunks.some((chunk) => text.includes(chunk));
+}
+
 /**
  * Deterministic first-stage evaluator. It only recognizes explicitly configured concepts;
  * a vector model may later provide candidates, while business rules remain authoritative.
@@ -52,13 +66,11 @@ export function evaluateSemanticReply(
     for (const goal of question.semanticGoals || []) {
       const pointIds = (goal.requiredPoints || [])
         .filter((point) => {
-          const exactMatch = matchesAny(normalizedText, point.matchAny || []);
+          const exactMatch = matchesFlexible(normalizedText, point);
           const vectorMatch = vectorCandidates.has(`${goal.id}:${point.id}`);
           if (!exactMatch && !vectorMatch) return false;
           const rules = point.businessRules;
-          if (!rules) return exactMatch;
-          if (!exactMatch && !vectorMatch) return false;
-          if (!exactMatch && !rules.mustIncludeAll?.length && !rules.mustIncludeAny?.length && !rules.mustExclude?.length) return false;
+          if (!rules) return true;
           return (rules.mustIncludeAll || []).every((term) => matchesAny(normalizedText, [term])) &&
             (!(rules.mustIncludeAny || []).length || matchesAny(normalizedText, rules.mustIncludeAny || [])) &&
             !matchesAny(normalizedText, rules.mustExclude || []);
