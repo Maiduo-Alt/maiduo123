@@ -169,6 +169,33 @@ describe('semantic goal evaluation', () => {
     })).toEqual({ nextSeq: 2, skippedSeqs: [] });
   });
 
+  it('honors declarative order/action triggers for optional questions', () => {
+    const flow: ScriptQuestion[] = [
+      { seq: 1, question: '售后我已经帮您登记', keyPoints: ['售后'], sourceType: 'core',
+        conversationPlan: { topic: '售后', priority: 'primary', depth: 'focused', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+      { seq: 2, question: '那大概多久能处理好呢？', keyPoints: ['时间'], sourceType: 'optional', requiresContext: true,
+        triggerConditions: {
+          stages: ['clarification', 'decision'],
+          afterBusinessAction: ['after_sale_proxy'],
+          requiresOrder: true,
+        } },
+    ];
+
+    expect(selectNextQuestion(flow, 1, new Set(), [], {
+      conversationStage: 'clarification',
+      resolutionScore: 50,
+      businessActionCodes: [],
+      hasOrder: true,
+    })).toEqual({ nextSeq: null, skippedSeqs: [2] });
+
+    expect(selectNextQuestion(flow, 1, new Set(), [], {
+      conversationStage: 'clarification',
+      resolutionScore: 50,
+      businessActionCodes: ['after_sale_proxy'],
+      hasOrder: true,
+    })).toEqual({ nextSeq: 2, skippedSeqs: [] });
+  });
+
   it('recognizes a clear customer closing without treating an open follow-up as a close', () => {
     expect(isNaturalClosingReply('好的，暂时没有其他问题，谢谢您。')).toBe(true);
     expect(isNaturalClosingReply('谢谢，另外还想问一下发货时间')).toBe(false);
