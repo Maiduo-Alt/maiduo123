@@ -23,45 +23,40 @@ type ScenarioQa = {
   key_points: string[][];
 };
 
-/** 把多条咨询内容切成可独立训练的场景，避免一次会话串入互不相关的问题。 */
-function scenarioTopic(text: string): string {
-  const value = String(text || '');
-  if (/材质|面料|透气|厚度|起球|掉色|缩水|洗涤/u.test(value)) return '材质与穿着感受';
-  if (/尺码|码数|尺寸|偏大|偏小|衣长|裙长|身高|体重/u.test(value)) return '尺码与版型';
-  if (/发货|物流|快递|配送|现货|预售|到货|时效/u.test(value)) return '发货与物流';
-  if (/退|换|退款|运费|售后|补发|赔偿|质量/u.test(value)) return '售后处理';
-  if (/价格|优惠|折扣|活动|便宜|券/u.test(value)) return '价格与优惠';
-  if (/支付|付款|下单|拍下|订单/u.test(value)) return '下单与支付';
-  // 未命中主题时按问题本身拆分，避免所有“其他”问题再次被合并到一个剧本。
-  return `其他咨询·${value.replace(/[\s\p{P}\p{S}]/gu, '').slice(0, 16) || '一般咨询'}`;
-}
-
+/**
+ * 一条 buyer_qa 就是一条完整的客户咨询主题。
+ *
+ * 旧逻辑会把同一条咨询内容再次按关键词拆组，导致“工艺细节”里的
+ * “包边/锁边、走线、内衬”被拆成多个一轮场景；反过来又可能把不同 QA
+ * 中同属“售后处理”的问题合并到一起。两种情况都会破坏真实对话逻辑。
+ *
+ * 现在严格保留 QA 边界：批量选择多条咨询内容时，每条 QA 独立形成场景，
+ * QA 内部的问题顺序和上下文关系原样保留。
+ */
 function groupScenarioQas(qas: ScenarioQa[]): ScenarioQa[] {
-  const groups = new Map<string, ScenarioQa>();
-  for (const qa of qas) {
-    const questions = Array.isArray(qa.question_list) ? qa.question_list : [];
-    const points = Array.isArray(qa.key_points) ? qa.key_points : [];
-    questions.forEach((question, index) => {
-      const topic = scenarioTopic(question);
-      // 主题相同不代表客户动机相同：退货规则、质量问题、错发商品都可能落在“售后处理”。
-      // 保留原始 QA 边界，避免批量生成时把多个独立咨询内容拼成一个不连贯的会话。
-      const groupKey = `${qa.id}:${topic}`;
-      const current = groups.get(groupKey);
-      if (current) {
-        current.question_list.push(question);
-        current.key_points.push(points[index]?.length ? points[index] : ['有效回应']);
-        return;
-      }
-      groups.set(groupKey, {
-        id: qa.id,
-        template_name: `${qa.template_name}·${topic}`,
-        stage: qa.stage,
-        question_list: [question],
-        key_points: [points[index]?.length ? points[index] : ['有效回应']],
+  return qas
+    .map((qa) => {
+      const questions = Array.isArray(qa.question_list) ? qa.question_list : [];
+      const points = Array.isArray(qa.key_points) ? qa.key_points : [];
+      const questionList: string[] = [];
+      const keyPoints: string[][] = [];
+
+      questions.forEach((question, index) => {
+        const text = String(question || '').trim();
+        if (!text) return;
+        questionList.push(text);
+        keyPoints.push(points[index]?.length ? points[index] : ['有效回应']);
       });
-    });
-  }
-  return [...groups.values()];
+
+      return {
+        id: qa.id,
+        template_name: qa.template_name,
+        stage: qa.stage,
+        question_list: questionList,
+        key_points: keyPoints,
+      };
+    })
+    .filter((qa) => qa.question_list.length > 0);
 }
 
 @Injectable()
