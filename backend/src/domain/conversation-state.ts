@@ -16,6 +16,7 @@ export function inferCustomerGoal(questions: ScriptQuestion[]): string {
   const primary = core.find((question) => question.goalPriority === 'primary') || core[0];
   if (!primary) return '完成当前咨询';
 
+  if (primary.customerGoal) return primary.customerGoal;
   if (primary.primaryGoal) return `确认${primary.primaryGoal}`;
   const goalName = stripGeneratedGoalName(primary.semanticGoals?.[0]?.name || '');
   if (goalName) return goalName;
