@@ -31,6 +31,7 @@ import { cloneParams } from '../../domain/params';
 import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef } from '../../domain/order';
 import {
   actionStageHint,
+  businessActionResolvesQuestion,
   findBusinessAction,
   renderActionPhrase,
 } from '../../domain/business-actions';
@@ -834,7 +835,12 @@ export class ReceptionService implements OnModuleInit {
     // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
     // 必须从判定集合剔除——否则首题任何回复都会被它带成「已通过」（2026-10-11 线上实测）。
     const judgedReplies = replies.filter((r) => r.rule_result?.judge?.signal !== 'opener');
-    const hasAction = replies.some((r) => !!r.rule_result?.businessAction);
+    const actionCodes = replies
+      .map((r) => r.rule_result?.businessAction?.code)
+      .filter((code): code is string => !!code);
+    const actionResolved = actionCodes.some((code) =>
+      businessActionResolvesQuestion(code, question.question, question.keyPoints || [])
+    );
     const followUps = session.follow_ups || 0;
     const maxFollowUps = question.conversationPlan?.maxFollowUps;
 
@@ -860,7 +866,7 @@ export class ReceptionService implements OnModuleInit {
     const stanceResolved = judgedReplies.some((r) => r.rule_result?.judge?.signal === 'stance');
 
     // 有语义目标时，完整完成才视为解决；是非题的明确表态仍保留为兼容兜底。
-    const resolved = hasAction || semanticCompleted || (!hasSemanticGoals && judgePassed) || (hasSemanticGoals && stanceResolved);
+    const resolved = actionResolved || semanticCompleted || (!hasSemanticGoals && judgePassed) || (hasSemanticGoals && stanceResolved);
 
     // 部分完成时，优先追“缺了什么”，而不是把原问题原样再问一遍。
     if (!resolved && partialProgress.length && followUps < (maxFollowUps ?? 2)) {
@@ -876,8 +882,8 @@ export class ReceptionService implements OnModuleInit {
 
     // 敷衍回复维持“扣分后推进”的既有训练口径；答非所问/打太极则继续追问。
     const judged = judgedReplies.map((r) => r.rule_result?.judge?.signal ?? null).filter((s) => s !== null);
-    const perfunctoryOnly = !resolved && !hasAction && judged.length > 0 && judged.every((s) => s === 'perfunctory');
-    if (perfunctoryOnly || decidePush(resolved, hasAction, followUps, maxFollowUps) === 'advance') {
+    const perfunctoryOnly = !resolved && !actionResolved && judged.length > 0 && judged.every((s) => s === 'perfunctory');
+    if (perfunctoryOnly || decidePush(resolved, actionResolved, followUps, maxFollowUps) === 'advance') {
       await this.pushNextQuestion(sessionId);
       return;
     }
