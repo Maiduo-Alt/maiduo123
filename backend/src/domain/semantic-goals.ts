@@ -255,6 +255,17 @@ export function selectNextQuestion(
     return { nextSeq: null, skippedSeqs: [...skipped].sort((a, b) => a - b) };
   }
 
+  // 开场必须尊重原始咨询顺序。主目标是训练重点，不等于客户第一句话必须从主目标开始。
+  if (currentSeq <= 0) {
+    const openingPool = eligible.filter((question) => (question.sourceType || 'core') !== 'optional');
+    const opening = (openingPool.length ? openingPool : eligible)
+      .sort((a, b) => a.seq - b.seq)[0];
+    return {
+      nextSeq: opening?.seq ?? null,
+      skippedSeqs: [...skipped].sort((a, b) => a - b),
+    };
+  }
+
   // 只要还有核心/衍生问题，就不允许 optional 抢占主线。
   const substantive = eligible.filter((question) => (question.sourceType || 'core') !== 'optional');
   const pool = substantive.length ? substantive : eligible;
