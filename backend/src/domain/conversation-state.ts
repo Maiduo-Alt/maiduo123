@@ -66,9 +66,22 @@ export function deriveConversationState(
 
   const hasTrackedGoals = activeProgress.length > 0;
   const allResolved = hasTrackedGoals && partialGoalIds.length === 0 && unresolvedGoalIds.length === 0;
+  const primaryGoalIds = new Set(
+    questions
+      .filter((question) => (question.sourceType || 'core') === 'core' && question.goalPriority === 'primary')
+      .flatMap((question) => (question.semanticGoals || []).map((goal) => goal.id))
+  );
+  const primaryResolved =
+    primaryGoalIds.size > 0 &&
+    [...primaryGoalIds].every((goalId) => resolvedGoalIds.includes(goalId));
+
+  // 客户不是“把所有题问完”才会结束：核心目标已经解决，且整体信息覆盖到一定程度，
+  // 就可以进入自然收尾；全部目标解决当然也满足。
+  const shouldClose = satisfaction >= 60 && (allResolved || (primaryResolved && resolutionScore >= 70));
+
   let stage: ConversationState['conversationStage'] = 'discovery';
   if (currentSeq <= 0) stage = 'opening';
-  else if (allResolved) stage = 'closing';
+  else if (shouldClose) stage = 'closing';
   else if (partialGoalIds.length > 0) stage = 'clarification';
   else if (resolutionScore >= 70) stage = 'decision';
 
@@ -81,6 +94,6 @@ export function deriveConversationState(
     satisfaction,
     resolutionScore,
     conversationStage: stage,
-    shouldClose: allResolved && satisfaction >= 60,
+    shouldClose,
   };
 }
