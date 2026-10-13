@@ -159,6 +159,15 @@ export interface ScriptQuestion {
   seq: number;
   question: string;
   keyPoints: string[];
+  /**
+   * 问题来源：
+   * - core：原始咨询内容，决定本场训练的核心目标；
+   * - derived：围绕核心主题自然衍生的追问；
+   * - optional：优惠/竞品/物流等仅在上下文合适时才可触发的可选问题。
+   */
+  sourceType?: 'core' | 'derived' | 'optional';
+  /** 强依赖前文的问题不能作为开场，例如“那大概多久能处理好呢？”。 */
+  requiresContext?: boolean;
   /** Generated from selected consultation content to control how detailed the buyer asks. */
   goalPriority?: 'primary' | 'secondary';
   primaryGoal?: string;
