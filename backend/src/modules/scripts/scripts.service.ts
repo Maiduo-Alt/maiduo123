@@ -269,6 +269,15 @@ export class ScriptsService {
     // scripts.style_id 是历史表结构中的必填兼容字段；实际会话风格由系统管理的沟通风格配置决定。
     const defaultStyle = await this.db.one<{ id: number }>(`SELECT id FROM styles WHERE status = 1 ORDER BY sort, id LIMIT 1`);
     if (!defaultStyle) throw new BizError(ERR.PARAM, '还没有可用的沟通风格，请先在系统管理中配置');
+    // 客户 2026-10-14：新建剧本可指定买家沟通风格（如友善随和型），接待时该剧本的会话统一用此风格
+    let styleId = defaultStyle.id;
+    let styleManual = !!body.styleManual;
+    if (body.styleCode) {
+      const pickedStyle = await this.db.one<{ id: number }>(`SELECT id FROM styles WHERE code = $1 AND status = 1`, [body.styleCode]);
+      if (!pickedStyle) throw new BizError(ERR.PARAM, `沟通风格不存在或已停用：${body.styleCode}`);
+      styleId = pickedStyle.id;
+      styleManual = true;
+    }
     const qa = await this.db.one<{ template_name: string; accepted_answer?: string | null }>(
       `SELECT template_name, accepted_answer FROM buyer_qa WHERE id = $1`,
       [body.qaId],
@@ -323,8 +332,8 @@ export class ScriptsService {
         body.stage === 'aftersale' ? 'aftersale' : 'presale',
         body.bgId,
         body.qaId,
-        defaultStyle.id,
-        !!body.styleManual,
+        styleId,
+        styleManual,
         JSON.stringify(body.productIds),
         JSON.stringify(questionSeq),
         accountId,
@@ -461,6 +470,8 @@ export class ScriptsService {
       scriptCount?: number;
       autoSemanticGoals?: boolean;
       semanticGoalsBySeq?: Record<string, any[]>;
+      /** 客户 2026-10-14：指定买家沟通风格（如 friendly 友善随和型），全部生成剧本统一用该风格 */
+      styleCode?: string;
     }
   ) {
     body = { ...body, stage: body.stage || 'presale', category: body.category || '培训', autoSemanticGoals: body.autoSemanticGoals ?? true };
@@ -510,6 +521,10 @@ export class ScriptsService {
     );
     const ratios = normalizeRatios(styles.map((s) => ({ code: s.code, ratio: Number(s.ratio) })));
     const styleMap = new Map(styles.map((s) => [s.code, s]));
+    // 客户 2026-10-14：指定沟通风格时先校验合法性，避免生成到一半才发现风格不存在
+    if (body.styleCode && !styleMap.has(String(body.styleCode))) {
+      throw new BizError(ERR.PARAM, `沟通风格不存在或已停用：${body.styleCode}`);
+    }
 
     /**
      * 组合口径保持「买家咨询背景 × 买家咨询内容」，商品按序轮转分配给每条剧本
@@ -552,7 +567,10 @@ export class ScriptsService {
       );
     }
 
-    const styleSeq = allocateStyles(ratios, pairs.length, createRng(body.seed || Date.now() % 2147483647));
+    const styleSeq = body.styleCode
+      ? // 客户 2026-10-14：指定沟通风格时（如友善随和型），全部剧本统一用该风格，不再按占比随机
+        pairs.map(() => String(body.styleCode))
+      : allocateStyles(ratios, pairs.length, createRng(body.seed || Date.now() % 2147483647));
     const created: { id: number; name: string; scriptNo: string; styleCode: string; rounds: number }[] = [];
     const scriptNos = await this.nextScriptNos(pairs.length);
 
@@ -643,6 +661,8 @@ export class ScriptsService {
       autoSemanticGoals?: boolean;
       semanticGoalsBySeq?: Record<string, any[]>;
       seed?: number;
+      /** 客户 2026-10-14：指定沟通风格时标记 style_manual */
+      styleCode?: string;
     },
     rounds: [number, number]
   ): Promise<{ id: number; name: string; scriptNo: string; styleCode: string; rounds: number }> {
@@ -669,8 +689,9 @@ export class ScriptsService {
      * 没带 productId 的调用（例如按「背景 × 内容」的旧路径）才回退到轮转分配。
      */
     const productId = pair.productId ?? body.productIds[index % body.productIds.length];
-    const sql = `INSERT INTO scripts (script_no, name, category, stage, bg_id, qa_id, style_id, product_ids, question_seq, status, created_by)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,1,1) RETURNING id`;
+    // 客户 2026-10-14：批量生成同样记录 style_manual，接待时优先用剧本指定风格
+    const sql = `INSERT INTO scripts (script_no, name, category, stage, bg_id, qa_id, style_id, style_manual, product_ids, question_seq, status, created_by)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,1,1) RETURNING id`;
     const args = [
       scriptNo,
       name,
@@ -679,6 +700,7 @@ export class ScriptsService {
       pair.bg.id,
       pair.qa.id,
       style?.id ?? null,
+      !!body.styleCode,
       JSON.stringify([productId]),
       JSON.stringify(questionSeq),
     ];

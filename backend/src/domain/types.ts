@@ -340,6 +340,8 @@ export interface ScriptCandidate {
   qaId: number;
   /** Legacy field retained for old snapshots; new sessions use system communication styles. */
   styleId?: number;
+  /** 客户 2026-10-14：带教新建剧本时手动指定的沟通风格，接待该剧本的会话统一用此风格 */
+  styleManual?: boolean;
   stage: 'presale' | 'aftersale';
   questionSeq: ScriptQuestion[];
   practicedCount: number;

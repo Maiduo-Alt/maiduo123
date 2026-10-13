@@ -332,6 +332,7 @@ export class ReceptionService implements OnModuleInit {
     const candidateRows = await this.db.many<any>(
       `SELECT s.id, s.script_no, s.name, s.qa_id, s.stage, s.question_seq,
               s.practiced_count, s.last_practiced_at, s.category, s.product_ids AS "productIds",
+              s.style_id AS "styleId", s.style_manual AS "styleManual",
               false AS is_emotional
        FROM scripts s WHERE s.status = 1`
     );
@@ -411,6 +412,8 @@ export class ReceptionService implements OnModuleInit {
       practicedCount: r.practiced_count,
       lastPracticedAt: r.last_practiced_at,
       emotionStyle: r.is_emotional,
+      styleId: r.styleId,
+      styleManual: r.styleManual,
     }));
 
     // 接入人数：客户新增需求允许管理账号按档位配置，默认仍是 1/2/3/4
@@ -426,14 +429,16 @@ export class ReceptionService implements OnModuleInit {
     if (!picked.length) throw new BizError(ERR.PARAM, '没有符合条件的剧本');
 
     const rng = createRng(Date.now());
-    const systemStyles = await this.db.many<{ code: string; ratio: string | number; emotion_base: number }>(
-      `SELECT code, ratio, emotion_base FROM styles WHERE status = 1 ORDER BY sort, id`
+    const systemStyles = await this.db.many<{ id: number; code: string; ratio: string | number; emotion_base: number }>(
+      `SELECT id, code, ratio, emotion_base FROM styles WHERE status = 1 ORDER BY sort, id`
     );
     const configuredStyles = systemStyles.length
       ? systemStyles.map((style) => ({ code: style.code, ratio: Number(style.ratio) }))
       : Object.entries(effectiveParams.defaultStyleRatio || {}).map(([code, ratio]) => ({ code, ratio: Number(ratio) }));
     const styleSeq = allocateStyles(normalizeRatios(configuredStyles), picked.length, rng);
     const styleByCode = new Map(systemStyles.map((style) => [style.code, style]));
+    // 客户 2026-10-14：带教在新建剧本时手动指定了买家沟通风格（style_manual），接待该剧本的会话统一用此风格
+    const styleCodeById = new Map(systemStyles.map((style) => [Number(style.id), style.code]));
     const attemptNo = nextNo('AT');
     const attempt = await this.db.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, task_id, param_snapshot)
@@ -452,8 +457,12 @@ export class ReceptionService implements OnModuleInit {
     const createdSessions: SessionRow[] = [];
     for (let i = 0; i < picked.length; i += 1) {
       const script = picked[i];
-      // 沟通风格只从《系统管理 → 沟通风格》的启用配置按比例分配，剧本自身不再决定风格。
-      const styleCode = styleSeq[i] || configuredStyles[0]?.code || 'friendly';
+      // 沟通风格默认从《系统管理 → 沟通风格》的启用配置按比例分配；
+      // 带教手动指定了风格的剧本（2026-10-14）则固定用该风格。
+      let styleCode = styleSeq[i] || configuredStyles[0]?.code || 'friendly';
+      if (script.styleManual && script.styleId) {
+        styleCode = styleCodeById.get(Number(script.styleId)) || styleCode;
+      }
       const styleRow = styleByCode.get(styleCode);
       const baseQuestions: ScriptQuestion[] = script.questionSeq.length
         ? normalizeLegacyQuestionSeq(script.questionSeq)

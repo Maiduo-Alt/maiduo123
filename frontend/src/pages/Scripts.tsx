@@ -67,6 +67,8 @@ export default function Scripts() {
     scriptCategories: any[];
     /** 分类维度（客户 2026-10-10 多维分类 B 类）：咨询内容筛选用 */
     dimensions: any[];
+    /** 买家沟通风格（客户 2026-10-14）：新建剧本可指定，默认友善随和型 */
+    styles: any[];
   }>({
     backgrounds: [],
     contents: [],
@@ -74,6 +76,7 @@ export default function Scripts() {
     cases: [],
     scriptCategories: [],
     dimensions: [],
+    styles: [],
   });
   const [form] = Form.useForm();
   const [goalForm] = Form.useForm();
@@ -145,7 +148,7 @@ export default function Scripts() {
   };
 
   const loadOptions = async () => {
-    const [backgrounds, contents, products, cases, scriptCategories, dimensions] = await Promise.all([
+    const [backgrounds, contents, products, cases, scriptCategories, dimensions, styles] = await Promise.all([
       api<any>('/backgrounds', { query: { pageSize: 200 } }),
       api<any>('/contents', { query: { pageSize: 200 } }),
       // 方案 9.1：下架商品不应出现在新剧本的商品选择中
@@ -156,6 +159,8 @@ export default function Scripts() {
       api<any[]>('/categories', { query: { type: 'script' } }).catch(() => []),
       // 分类维度（多维分类）：新建剧本时按维度组合筛选咨询内容
       api<any[]>('/dimensions').catch(() => []),
+      // 买家沟通风格选项（客户 2026-10-14）：新建剧本可指定风格，默认友善随和型
+      api<any[]>('/styles').catch(() => []),
     ]);
     setOptions({
       backgrounds: backgrounds.list || [],
@@ -164,6 +169,7 @@ export default function Scripts() {
       cases: cases.list || [],
       scriptCategories: Array.isArray(scriptCategories) ? scriptCategories : [],
       dimensions: Array.isArray(dimensions) ? dimensions : [],
+      styles: (Array.isArray(styles) ? styles : []).filter((s: any) => s.status === 1),
     });
   };
 
@@ -241,6 +247,7 @@ export default function Scripts() {
             category: values.category || '培训',
             name: values.name || undefined,
             autoSemanticGoals,
+            styleCode: values.styleCode && values.styleCode !== 'auto' ? values.styleCode : undefined,
           },
         });
         message.success('已生成 1 个剧本');
@@ -258,6 +265,7 @@ export default function Scripts() {
           stage: values.stage,
           category: values.category || '培训',
           autoSemanticGoals,
+          styleCode: values.styleCode && values.styleCode !== 'auto' ? values.styleCode : undefined,
         },
       });
       // 超过异步阈值时后端返回任务 ID，改为进度条展示（方案 3.3 / 5.7）
@@ -600,7 +608,7 @@ export default function Scripts() {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ category: '培训', stage: 'presale', createMode: 'batch', createWay: 'custom', ruleMode: 'semantic', scriptCount: 1 }}
+          initialValues={{ category: '培训', stage: 'presale', createMode: 'batch', createWay: 'custom', ruleMode: 'semantic', scriptCount: 1, styleCode: 'friendly' }}
         >
           {/* 客户 2026-10-10：三段式向导——每一步只渲染本步字段，眼不见为净 */}
           <Steps
@@ -615,6 +623,20 @@ export default function Scripts() {
             <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
               快速创建默认按背景和咨询内容批量生成剧本；单个创建、接待类型和语义规则可在高级设置中调整。
             </Typography.Paragraph>
+            {/* 客户 2026-10-14：新建剧本可指定买家沟通风格，默认友善随和型；选自动时按《沟通风格》占比分配 */}
+            <Form.Item
+              name="styleCode"
+              label="买家沟通风格"
+              tooltip="指定后，生成剧本接待时买家统一使用该风格；选「自动分配」则按《沟通风格》配置的比例随机分配"
+            >
+              <Select
+                style={{ width: 220 }}
+                options={[
+                  { value: 'auto', label: '自动按占比分配' },
+                  ...(options.styles || []).map((s: any) => ({ value: s.code, label: s.name })),
+                ]}
+              />
+            </Form.Item>
             {createWay === 'case' && (
               <Form.Item name="caseId" label="选择案例" rules={[{ required: true, message: '请选择案例' }]}>
                 <Select
@@ -810,7 +832,7 @@ export default function Scripts() {
               />
             )}
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-              生成数量 = 背景数 × 每个背景生成数量；每条咨询内容保持独立场景，内部问题顺序和上下文关系不打散。买家沟通风格按《沟通风格》中的占比自动分配。
+              生成数量 = 背景数 × 每个背景生成数量；每条咨询内容保持独立场景，内部问题顺序和上下文关系不打散。买家沟通风格默认取基础设置里的选择（默认友善随和型）；选「自动分配」时按《沟通风格》中的占比分配。
             </Typography.Paragraph>
           </div>
         </Form>
