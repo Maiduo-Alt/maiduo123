@@ -178,6 +178,35 @@ describe('semantic goal evaluation', () => {
     })).toEqual({ nextSeq: 2, skippedSeqs: [] });
   });
 
+  it('requires sufficient purchase intent before surfacing commercial optional questions', () => {
+    const flow: ScriptQuestion[] = [
+      { seq: 1, question: '尺码已经确认了', keyPoints: ['尺码'], sourceType: 'core' },
+      {
+        seq: 2,
+        question: '现在有什么优惠？',
+        keyPoints: ['优惠'],
+        sourceType: 'optional',
+        triggerConditions: {
+          stages: ['decision'],
+          minResolutionScore: 70,
+          minPurchaseIntent: 45,
+        },
+      },
+    ];
+
+    expect(selectNextQuestion(flow, 1, new Set(), [], {
+      conversationStage: 'decision',
+      resolutionScore: 90,
+      purchaseIntent: 30,
+    })).toEqual({ nextSeq: null, skippedSeqs: [2] });
+
+    expect(selectNextQuestion(flow, 1, new Set(), [], {
+      conversationStage: 'decision',
+      resolutionScore: 90,
+      purchaseIntent: 70,
+    })).toEqual({ nextSeq: 2, skippedSeqs: [] });
+  });
+
   it('honors declarative order/action triggers for optional questions', () => {
     const flow: ScriptQuestion[] = [
       { seq: 1, question: '售后我已经帮您登记', keyPoints: ['售后'], sourceType: 'core',
