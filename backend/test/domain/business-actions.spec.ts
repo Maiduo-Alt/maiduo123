@@ -1,6 +1,7 @@
 import {
   actionsForStage,
   BUSINESS_ACTIONS,
+  businessActionResolvesQuestion,
   findBusinessAction,
   renderActionPhrase,
 } from '../../src/domain/business-actions';
@@ -33,6 +34,16 @@ describe('业务动作（订单卡片上的平台侧操作）', () => {
     expect(shipped).toContain('after_sale_proxy');
     expect(shipped).not.toContain('urge_pay');
     expect(shipped).not.toContain('after_sale_card');
+  });
+
+  it('业务动作只有和当前问题相关时才算解决', () => {
+    expect(businessActionResolvesQuestion('ship_goods', '现在下单多久可以发货？', ['发货时间'])).toBe(true);
+    expect(businessActionResolvesQuestion('change_price', '现在还有什么优惠？', ['优惠'])).toBe(true);
+    expect(businessActionResolvesQuestion('after_sale_proxy', '收到有破损怎么处理？', ['售后'])).toBe(true);
+
+    // 误点订单按钮不能把商品工艺问题直接判成已解决。
+    expect(businessActionResolvesQuestion('urge_pay', '这款走线整齐吗？', ['走线'])).toBe(false);
+    expect(businessActionResolvesQuestion('logistics_card', '是包边还是锁边？', ['工艺'])).toBe(false);
   });
 
   it('话术变量会被替换掉，不会把 {xxx} 发给买家', () => {
