@@ -7,11 +7,6 @@ const expressionsInput = {
   placeholder: '输入一种说法后按回车，例如：标准尺码',
 };
 
-const defaultExpressions = (label: string) => {
-  const value = String(label || '').trim();
-  return value ? [value] : [];
-};
-
 /** 将运行时的轮次目标转换成运营人员可直接编辑的表单字段。 */
 export function semanticQuestionsToRows(questionSeq: any[] = []) {
   return questionSeq.flatMap((question) =>
@@ -52,7 +47,6 @@ export function semanticRowsToGoalsBySeq(rows: any[] = []): Record<string, any[]
     const requiredPoints = row.points.map((point: any, pointIndex: number) => {
       if (!String(point.label || '').trim()) throw new Error(`“${row.name}”有要点名称未填写`);
       const matchAny = (point.matchAny || []).map((item: string) => String(item).trim()).filter(Boolean);
-      if (!matchAny.length) matchAny.push(...defaultExpressions(point.label));
       if (!matchAny.length) throw new Error(`“${point.label}”至少添加一种认可说法`);
       const businessRules: Record<string, string[]> = {};
       for (const key of ['mustIncludeAll', 'mustIncludeAny', 'mustExclude']) {
@@ -103,7 +97,7 @@ export default function SemanticGoalBuilder({
         showIcon
         style={{ marginBottom: 16 }}
         message="用日常说法配置客服需要覆盖的内容"
-        description="只需填写目标和要点名称，系统会自动把要点名称作为基础认可表达。默认使用灵活匹配，能覆盖常见自然说法；确需严格控制时再切换模式或补充表达。"
+        description="每个要点至少配置一种客服认可说法。默认使用灵活匹配，可补充多种自然表达；确需严格控制时再切换匹配模式。"
       />
       <Form.List name={name}>
         {(goals, goalOps) => (
