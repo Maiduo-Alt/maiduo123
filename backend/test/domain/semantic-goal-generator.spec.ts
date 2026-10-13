@@ -54,3 +54,17 @@ describe('generateSemanticGoals', () => {
     expect(generated.semanticGoals).toBeUndefined();
   });
 });
+
+
+describe('conversation plan topic consistency', () => {
+  it('secondary questions use their own topic instead of inheriting the primary topic', () => {
+    const generated = generateSemanticGoals([
+      { seq: 1, question: '是包边还是锁边？', keyPoints: ['工艺', '走线'], sourceType: 'core' },
+      { seq: 2, question: '有内衬吗？', keyPoints: ['内衬'], sourceType: 'core' },
+    ], '关注耐穿与打理成本');
+    expect(generated[0].conversationPlan?.topic).toBe('工艺');
+    expect(generated[1].conversationPlan?.topic).toBe('内衬');
+    expect(generated[0].conversationPlan?.followUpTemplates[0]).toContain('做工');
+    expect(generated[1].conversationPlan?.followUpTemplates[0]).toContain('做工');
+  });
+});
