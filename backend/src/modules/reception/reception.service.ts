@@ -36,6 +36,7 @@ import {
 import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-scope';
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
 import { evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
+import { normalizeLegacyQuestionSeq } from '../../domain/question-seq';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, followUpEmotionDelta } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
@@ -404,8 +405,8 @@ export class ReceptionService implements OnModuleInit {
       const styleRow = styleByCode.get(styleCode);
       const product = await this.pickProduct(script.id);
       const baseQuestions: ScriptQuestion[] = script.questionSeq.length
-        ? script.questionSeq
-        : [{ seq: 1, question: '请问在吗？', keyPoints: ['回应'], needTransfer: false }];
+        ? normalizeLegacyQuestionSeq(script.questionSeq)
+        : [{ seq: 1, question: '请问在吗？', keyPoints: ['回应'], sourceType: 'core', needTransfer: false }];
       // The script owns its question plan. Do not inject questions from another
       // stage at runtime: new employees must be trained against the selected scene.
       const questions = baseQuestions;
