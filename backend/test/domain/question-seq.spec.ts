@@ -9,24 +9,25 @@ const qa = (stage: 'presale' | 'aftersale', questions: string[]) => ({
 });
 
 describe('问题序列：问题级接待阶段（客户 2026-10-03）', () => {
-  it('每个问题都带上售前/售后，追问也随内容阶段', () => {
+  it('保留原始自然问题数，不再为了最低轮数注入跨主题追问', () => {
     const presale = buildQuestionSeq(qa('presale', ['怎么下单？']), [6, 10]);
     const aftersale = buildQuestionSeq(qa('aftersale', ['怎么退货？']), [6, 10]);
 
-    expect(presale.length).toBeGreaterThanOrEqual(6);
-    expect(aftersale.length).toBeGreaterThanOrEqual(6);
-    expect(presale.every((q) => q.stage === 'presale')).toBe(true);
-    expect(aftersale.every((q) => q.stage === 'aftersale')).toBe(true);
+    expect(presale).toHaveLength(1);
+    expect(aftersale).toHaveLength(1);
+    expect(presale[0]).toEqual(expect.objectContaining({ question: '怎么下单？', stage: 'presale', sourceType: 'core' }));
+    expect(aftersale[0]).toEqual(expect.objectContaining({ question: '怎么退货？', stage: 'aftersale', sourceType: 'core' }));
   });
 
-  it('补追问时按阶段选池子：售前不出现售后追问，反之亦然', () => {
-    const presale = buildQuestionSeq(qa('presale', ['怎么下单？']), [6, 10]).map((q) => q.question);
-    const aftersale = buildQuestionSeq(qa('aftersale', ['怎么退货？']), [6, 10]).map((q) => q.question);
+  it('工艺类短场景不会被补入发货、竞品或优惠问题', () => {
+    const seq = buildQuestionSeq({
+      question_list: ['是包边还是锁边？', '走线整齐吗？', '有内衬吗？'],
+      key_points: [['工艺', '走线'], ['包边', '锁边'], ['内衬']],
+      stage: 'presale',
+    }, [6, 10]);
 
-    expect(presale).toContain('我再看一下别家，你们有什么优势吗？'); // 售前追问池
-    expect(presale).not.toContain('我要投诉你们！'); // 售后追问池
-    expect(aftersale).toContain('我要投诉你们！');
-    expect(aftersale).not.toContain('我再看一下别家，你们有什么优势吗？');
+    expect(seq.map((q) => q.question)).toEqual(['是包边还是锁边？', '走线整齐吗？', '有内衬吗？']);
+    expect(seq.every((q) => q.sourceType === 'core')).toBe(true);
   });
 
   it('问题数超过上限时按上限截断，且序号连续', () => {
@@ -51,6 +52,9 @@ describe('问题混合保留主目标', () => {
     });
     expect(mixed.find((question) => question.goalPriority === 'primary')?.question).toBe('主目标原问题');
     expect(mixed.some((question) => question.question === '售后补充问题')).toBe(true);
+    expect(mixed.find((question) => question.question === '售后补充问题')).toEqual(
+      expect.objectContaining({ sourceType: 'optional', requiresContext: true })
+    );
   });
 });
 
