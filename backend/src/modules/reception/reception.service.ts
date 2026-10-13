@@ -141,6 +141,18 @@ export class ReceptionService implements OnModuleInit {
     return { kind: 'link', texts: [link] };
   }
 
+  private buyerClosingText(styleCode: string, satisfaction = 70): string {
+    if (satisfaction < 60) return '行，我先再考虑一下。';
+    const texts: Record<string, string> = {
+      friendly: '好的，明白啦，谢谢，我先看看～',
+      impatient: '行，知道了，先这样吧。',
+      direct: '明白了，就这些，谢谢。',
+      hesitant: '好，我大概清楚了，我再考虑一下。',
+      silent: '好，知道了。',
+    };
+    return texts[styleCode] || texts.friendly;
+  }
+
   /** 客服回复后，买家「思考」多久再抛下一个问题；服务重启补挂定时器时沿用同一口径。 */
   private readonly REPLY_THINK_DELAY_MS = 1500;
 
