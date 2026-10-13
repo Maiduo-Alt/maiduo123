@@ -49,6 +49,9 @@ function triggerConditionsForOptionalQuestion(question: string): ScriptQuestion[
   if (/优惠|活动|优势|别家|考虑一下/u.test(text)) {
     return { stages: ['decision'], minResolutionScore: 70, minPurchaseIntent: 45 };
   }
+  if (/地址|快递|催.*发货|订单|收货人|电话|备注/u.test(text)) {
+    return { stages: ['decision'], minResolutionScore: 70, requiresOrder: true };
+  }
   if (/多久能处理好|什么时候能给我结果|等了好几天/u.test(text)) {
     return {
       stages: ['clarification', 'decision'],
