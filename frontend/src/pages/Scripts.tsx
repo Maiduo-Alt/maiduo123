@@ -308,9 +308,10 @@ export default function Scripts() {
     setSavingGoals(true);
     try {
       await api(`/scripts/${detail.id}`, { method: 'PUT', body: { questionSeq } });
-      setDetail({ ...detail, questionSeq });
+      const refreshed = await api<any>(`/scripts/${detail.id}`);
+      setDetail(refreshed);
       setGoalConfigOpen(false);
-      message.success('语义目标已保存；新接待会使用此配置，进行中的会话保留开局快照');
+      message.success('语义目标已保存；客户核心目标与主次目标已同步，新接待会使用此配置');
     } catch (error) {
       message.error((error as Error).message);
     } finally {
