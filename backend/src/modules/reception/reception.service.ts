@@ -890,10 +890,19 @@ export class ReceptionService implements OnModuleInit {
       if (rr.judge) return !!rr.judge.pass;
       return (rr.hitPoints || []).length > 0;
     });
-    const stanceResolved = judgedReplies.some((r) => r.rule_result?.judge?.signal === 'stance');
+    const semanticPointCount = (question.semanticGoals || [])
+      .reduce((sum, goal) => sum + (goal.requiredPoints || []).length, 0);
+    const stanceResolved =
+      semanticPointCount <= 1 &&
+      judgedReplies.some((r) => r.rule_result?.judge?.signal === 'stance');
 
-    // 有语义目标时，完整完成才视为解决；是非题的明确表态仍保留为兼容兜底。
-    const resolved = actionResolved || semanticCompleted || (!hasSemanticGoals && judgePassed) || (hasSemanticGoals && stanceResolved);
+    // 有语义目标时优先要求完整覆盖；只有“单一语义点”的简单是非题允许明确表态直接解决。
+    // 多要点问题不能因为一句“可以的”就跳到下一题。
+    const resolved =
+      actionResolved ||
+      semanticCompleted ||
+      (!hasSemanticGoals && judgePassed) ||
+      (hasSemanticGoals && stanceResolved);
 
     // 部分完成时，优先追“缺了什么”，而不是把原问题原样再问一遍。
     if (!resolved && partialProgress.length && followUps < (maxFollowUps ?? 2)) {
