@@ -200,6 +200,23 @@ export interface ConversationPlan {
   maxFollowUps: number;
 }
 
+export interface ConversationState {
+  /** 本场客户真正想解决的核心问题。 */
+  customerGoal: string;
+  /** 当前正在讨论的主题。 */
+  currentTopic: string | null;
+  resolvedGoalIds: string[];
+  partialGoalIds: string[];
+  unresolvedGoalIds: string[];
+  /** 0～100，依据核心目标覆盖度与当前情绪计算。 */
+  satisfaction: number;
+  /** 0～100，当前核心语义点的完成比例。 */
+  resolutionScore: number;
+  conversationStage: 'opening' | 'discovery' | 'clarification' | 'decision' | 'closing';
+  /** 核心目标已解决且满意度足够时，可自然收尾。 */
+  shouldClose: boolean;
+}
+
 export interface SemanticGoalPoint {
   id: string;
   label: string;
