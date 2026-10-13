@@ -38,7 +38,8 @@ import {
 import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-scope';
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
 import { conversationTopic, evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
-import { normalizeLegacyQuestionSeq } from '../../domain/question-seq';
+import { mixQuestionSeq, normalizeLegacyQuestionSeq } from '../../domain/question-seq';
+import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/seed-content';
 import { buildKeywordQuestionProgress, deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta } from '../../domain/adaptive-push';
@@ -445,13 +446,19 @@ export class ReceptionService implements OnModuleInit {
       // 沟通风格只从《系统管理 → 沟通风格》的启用配置按比例分配，剧本自身不再决定风格。
       const styleCode = styleSeq[i] || configuredStyles[0]?.code || 'friendly';
       const styleRow = styleByCode.get(styleCode);
-      const product = await this.pickProduct(script.id);
       const baseQuestions: ScriptQuestion[] = script.questionSeq.length
         ? normalizeLegacyQuestionSeq(script.questionSeq)
         : [{ seq: 1, question: '请问在吗？', keyPoints: ['回应'], sourceType: 'core', needTransfer: false }];
-      // The script owns its question plan. Do not inject questions from another
-      // stage at runtime: new employees must be trained against the selected scene.
-      const questions = baseQuestions;
+
+      // C14：会话快照按配置混入少量另一阶段问题，但这些问题统一标记为 optional +
+      // triggerConditions；它们只在上下文满足时才真正问出，不再破坏自然对话主线。
+      const questions = mixQuestionSeq(baseQuestions, {
+        ratioPct: Number(effectiveParams.aftersaleQuestionRatio || 0),
+        pool: script.stage === 'aftersale' ? PRESALE_PRODUCT_QUESTIONS : ORDER_AFTERSALE_QUESTIONS,
+        stage: script.stage === 'aftersale' ? 'presale' : 'aftersale',
+        offset: i,
+      });
+      const product = await this.pickProduct(script.id, questions);
       const joinDelaySec =
         i >= activeSlots
           ? 0
@@ -1784,8 +1791,9 @@ export class ReceptionService implements OnModuleInit {
     return this.db.one<SessionRow>(`SELECT * FROM sessions WHERE id = $1`, [sessionId]);
   }
 
-  private async pickProduct(scriptId: number): Promise<any | null> {
-    // 方案 4.5：同一剧本关联多个商品时随机取其一，保证同批次训练的商品多样性。
+  private async pickProduct(scriptId: number, questions: ScriptQuestion[] = []): Promise<any | null> {
+    // 同一剧本关联多个商品时，只能从与当前问题序列兼容的商品中选择。
+    // 候选阶段的“一条剧本至少有一个兼容商品”不等于每个 product_id 都兼容。
     const script = await this.db.one<{ product_ids: any }>(`SELECT product_ids FROM scripts WHERE id = $1`, [scriptId]);
     const ids = Array.isArray(script?.product_ids)
       ? script!.product_ids.map((item: any) => Number(item)).filter((item: number) => Number.isFinite(item))
@@ -1804,7 +1812,15 @@ export class ReceptionService implements OnModuleInit {
       ids
     );
     if (!rows.length) return null;
-    return rows[Math.floor(Math.random() * rows.length)];
+    const questionTexts = (questions || []).map((question) => String(question.question || ''));
+    const compatibleRows = questionTexts.length
+      ? rows.filter((row) => isProductCompatibleWithQuestions(row.category, questionTexts))
+      : rows;
+    if (!compatibleRows.length) {
+      this.logger.warn(`剧本 ${scriptId} 的关联商品均与当前问题不兼容，已阻止错误商品进入会话`);
+      return null;
+    }
+    return compatibleRows[Math.floor(Math.random() * compatibleRows.length)];
   }
 
   /**
