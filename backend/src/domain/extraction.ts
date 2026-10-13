@@ -78,7 +78,7 @@ export function pickScripts(
 /** 剧本轮数校验：返回提示信息（无提示返回 null）。 */
 export function checkRounds(rounds: number, params: SystemParams): string | null {
   const [min, max] = params.levelRounds;
-  if (rounds < min) return `轮数不足，建议补充追问（当前 ${rounds} 轮，建议 ${min}～${max} 轮）`;
+  if (rounds < min) return `当前 ${rounds} 轮，少于建议的 ${min}～${max} 轮；真实对话优先，不强制补题，仅建议补充同主题的自然追问`;
   if (rounds > max) return `轮数超出建议区间，接待时将按前 ${max} 轮执行`;
   return null;
 }
