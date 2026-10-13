@@ -673,9 +673,13 @@ export class ReceptionService implements OnModuleInit {
       [sessionId]
     );
     if (recentAgent && isNaturalClosingReply(recentAgent.content)) {
-      const conversationState = await this.persistConversationState(session);
-      await this.closeWithBuyerMessage(session, conversationState, 'early');
-      return;
+      const closingState = await this.persistConversationState(session);
+      // 客服说“谢谢/先这样”只能作为收尾信号，不能覆盖仍未解决的客户核心目标。
+      // 核心问题尚未解决时，买家继续围绕未解决目标推进，而不是被客服单方面结束会话。
+      if (closingState.shouldClose) {
+        await this.closeWithBuyerMessage(session, closingState, 'early');
+        return;
+      }
     }
 
     const priorMessages = await this.db.many<any>(
