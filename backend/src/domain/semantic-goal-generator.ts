@@ -9,6 +9,7 @@ export function generateSemanticGoals(
   questions: ScriptQuestion[],
   buyerContext = '',
   _random: () => number = Math.random,
+  goalContext: { templateName?: string; acceptedAnswer?: string } = {},
 ): ScriptQuestion[] {
   const context = String(buyerContext || '').replace(/\s+/g, ' ').trim().slice(0, 40);
   // 主目标必须来自原始咨询（core），不能由补位/可选问题反客为主。
@@ -25,6 +26,13 @@ export function generateSemanticGoals(
   // 这保证剧本主题稳定、可解释，也避免“发货/优惠”之类偶然成为工艺场景的主目标。
   const primary = candidates
     .sort((a, b) => a.questionIndex - b.questionIndex || a.pointIndex - b.pointIndex)[0];
+  const customerGoal = inferGeneratedCustomerGoal(
+    questions,
+    primary.point,
+    buyerContext,
+    goalContext.templateName || '',
+    goalContext.acceptedAnswer || '',
+  );
 
   const generated = questions.map((question) => {
     if (question.semanticGoals?.length) return { ...question, goalPriority: question.goalPriority || 'secondary' as const };
@@ -42,7 +50,7 @@ export function generateSemanticGoals(
       // approved templates, so generated text never replaces the consultation content.
       question: question.question,
       goalPriority: isPrimaryRound ? 'primary' as const : 'secondary' as const,
-      ...(isPrimaryRound ? { primaryGoal: primary.point, baseQuestion: question.question } : {}),
+      ...(isPrimaryRound ? { primaryGoal: primary.point, customerGoal, baseQuestion: question.question } : {}),
       conversationPlan: buildConversationPlan(question.question, isPrimaryRound ? primary.point : keyPoints[0], isPrimaryRound),
       semanticGoals: [{
         id: `auto-goal-${question.seq}`,
@@ -59,6 +67,43 @@ export function generateSemanticGoals(
   });
   // 保留原始咨询顺序。主目标只影响权重/评分，不再通过排序强行移动到第一轮。
   return generated.map((question, index) => ({ ...question, seq: index + 1 }));
+}
+
+export function inferGeneratedCustomerGoal(
+  questions: ScriptQuestion[],
+  primaryPoint: string,
+  buyerContext = '',
+  templateName = '',
+  acceptedAnswer = '',
+): string {
+  const text = [
+    templateName,
+    acceptedAnswer,
+    buyerContext,
+    primaryPoint,
+    ...questions.map((question) => question.question),
+    ...questions.flatMap((question) => question.keyPoints || []),
+  ].join(' ');
+
+  if (/工艺|做工|走线|缝线|包边|锁边|内衬|耐穿|开线|脱线/u.test(text)) {
+    return '确认商品工艺质量和耐穿程度';
+  }
+  if (/材质|面料|透气|厚度|起球|掉色|缩水|洗涤|打理/u.test(text)) {
+    return '确认商品材质、穿着感受和打理成本';
+  }
+  if (/尺码|码数|尺寸|偏大|偏小|版型|衣长|裙长/u.test(text)) {
+    return '确认尺码与版型是否适合自己';
+  }
+  if (/发货|物流|快递|配送|现货|预售|到货|时效/u.test(text)) {
+    return '确认发货安排与预计到货时效';
+  }
+  if (/退|换|退款|售后|补发|赔偿|破损/u.test(text)) {
+    return '确认售后处理条件、方案和时效';
+  }
+  if (/价格|优惠|折扣|活动|便宜|券|满减/u.test(text)) {
+    return '确认当前价格优惠与实际下单成本';
+  }
+  return `确认${String(primaryPoint || '当前咨询').trim()}相关信息`;
 }
 
 const TOPIC_TEMPLATES: Array<{
