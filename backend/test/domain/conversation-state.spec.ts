@@ -72,6 +72,17 @@ describe('conversation state', () => {
     expect(state.shouldClose).toBe(false);
   });
 
+  it('does not close just because the primary goal is solved when another core question remains', () => {
+    const state = deriveConversationState(questions, [{
+      goalMatches: [{ goalId: 'g1', pointIds: ['p1', 'p2'] }],
+      riskItems: [],
+    }], { currentSeq: 1, emotionValue: 20 });
+
+    expect(state.resolvedGoalIds).toContain('g1');
+    expect(state.unresolvedGoalIds).toContain('g2');
+    expect(state.shouldClose).toBe(false);
+  });
+
   it('can naturally close once the primary goal is solved and core coverage is high enough', () => {
     const state = deriveConversationState(questions, [{
       goalMatches: [
