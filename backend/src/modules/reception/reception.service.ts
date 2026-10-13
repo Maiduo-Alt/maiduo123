@@ -39,7 +39,7 @@ import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-sco
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
 import { conversationTopic, evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
 import { normalizeLegacyQuestionSeq } from '../../domain/question-seq';
-import { deriveConversationState } from '../../domain/conversation-state';
+import { buildKeywordQuestionProgress, deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
@@ -553,10 +553,20 @@ export class ReceptionService implements OnModuleInit {
     evaluations?: any[],
     overrides: { currentSeq?: number; skippedSeqs?: number[]; emotionValue?: number } = {},
   ): Promise<ConversationState> {
-    const semanticEvaluations = evaluations || (await this.db.many<any>(
-      `SELECT rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
+    const agentRows = await this.db.many<any>(
+      `SELECT seq, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
       [session.id],
-    )).map((row) => row.rule_result?.semanticEvaluation).filter(Boolean);
+    );
+    const semanticEvaluations = evaluations || agentRows
+      .map((row) => row.rule_result?.semanticEvaluation)
+      .filter(Boolean);
+    const keywordProgress = buildKeywordQuestionProgress(
+      session.questions || [],
+      agentRows.map((row) => ({
+        questionSeq: row.rule_result?.questionSeq ?? row.seq,
+        hitPoints: row.rule_result?.hitPoints || [],
+      })),
+    );
 
     const state = deriveConversationState(session.questions || [], semanticEvaluations, {
       currentSeq: overrides.currentSeq ?? session.current_seq,
@@ -565,6 +575,7 @@ export class ReceptionService implements OnModuleInit {
       timeoutCount: session.timeout_count,
       unresolvedStreak: session.unresolved_streak,
       followUps: session.follow_ups,
+      keywordProgress,
     });
     await this.db.query(`UPDATE sessions SET conversation_state = $2::jsonb WHERE id = $1`, [
       session.id,
@@ -1068,6 +1079,18 @@ export class ReceptionService implements OnModuleInit {
         .map((m) => m.rule_result.semanticEvaluation),
       semanticEvaluation,
     ];
+    const keywordProgress = buildKeywordQuestionProgress(
+      session.questions,
+      [
+        ...historyRows
+          .filter((m) => m.sender === 'agent')
+          .map((m) => ({
+            questionSeq: m.rule_result?.questionSeq ?? m.seq,
+            hitPoints: m.rule_result?.hitPoints || [],
+          })),
+        { questionSeq: insertSeq, hitPoints },
+      ],
+    );
     const conversationState = deriveConversationState(session.questions, allSemanticEvaluations, {
       currentSeq: session.current_seq,
       skippedSeqs: session.skipped_seqs || [],
@@ -1075,6 +1098,7 @@ export class ReceptionService implements OnModuleInit {
       timeoutCount: session.timeout_count + (isTimeout ? 1 : 0),
       unresolvedStreak: hitAny || openerStage ? 0 : session.unresolved_streak + 1,
       followUps: session.follow_ups,
+      keywordProgress,
     });
 
     const ruleResult = {
