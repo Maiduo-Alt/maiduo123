@@ -193,11 +193,25 @@ export function deriveConversationState(
   else if (partialGoalIds.length > 0) stage = 'clarification';
   else if (resolutionScore >= 70) stage = 'decision';
 
-  const firstPartial = activeProgress.find((item) => item.status === 'partial');
-  const firstUnresolved = activeProgress.find((item) => item.status === 'untriggered');
+  const currentGoalIds = new Set(
+    (current?.semanticGoals || []).map((goal) => goal.id),
+  );
+  const currentPartial = activeProgress.find(
+    (item) => currentGoalIds.has(item.goal.id) && item.status === 'partial',
+  );
+  const currentUnresolved = activeProgress.find(
+    (item) => currentGoalIds.has(item.goal.id) && item.status === 'untriggered',
+  );
+  const firstPartial = currentPartial || activeProgress.find((item) => item.status === 'partial');
+  const firstUnresolved = currentUnresolved || activeProgress.find((item) => item.status === 'untriggered');
+  const currentKeywordConcern = activeKeywordProgress
+    .filter((item) => item.seq === currentSeq && item.covered < item.total)
+    .map((item) => keywordQuestionBySeq.get(item.seq)?.question)
+    .find(Boolean);
   const pendingConcern =
     firstPartial?.goal.requiredPoints.find((point) => firstPartial.missingPointIds.includes(point.id))?.label ||
     firstUnresolved?.goal.name ||
+    currentKeywordConcern ||
     (
       activeKeywordProgress
         .filter((item) => item.covered < item.total)
