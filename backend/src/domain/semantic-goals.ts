@@ -348,6 +348,20 @@ export function selectNextQuestion(
 
   // 只要还有核心/衍生问题，就不允许 optional 抢占主线。
   const substantive = eligible.filter((question) => (question.sourceType || 'core') !== 'optional');
+
+  // 明确配置了语义目标的 core 问题属于作者定义的训练目标：只要它尚未完成，
+  // 就必须尊重原始顺序，不能仅因为后面的主题“更接近当前话题”而跳过。
+  // 没有语义目标的旧/脏数据仍允许用主题连续性做兜底重排。
+  const earliestSemanticCore = substantive
+    .filter((question) => (question.sourceType || 'core') === 'core' && (question.semanticGoals || []).length > 0)
+    .sort((a, b) => a.seq - b.seq)[0];
+  if (earliestSemanticCore) {
+    return {
+      nextSeq: earliestSemanticCore.seq,
+      skippedSeqs: [...skipped].sort((a, b) => a - b),
+    };
+  }
+
   const pool = substantive.length ? substantive : eligible;
 
   const ranked = pool
