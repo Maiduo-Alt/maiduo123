@@ -137,6 +137,18 @@ describe('旧剧本兼容：通用补题降级', () => {
     expect(normalized[1].semanticGoals?.[0].requiredPoints[0].isPrimary).toBe(true);
   });
 
+  it('没有 auto-goal 的旧关键词剧本也能识别多条通用补题', () => {
+    const normalized = normalizeLegacyQuestionSeq([
+      { seq: 1, question: '是包边还是锁边？', keyPoints: ['工艺'] },
+      { seq: 2, question: '走线整齐吗？', keyPoints: ['走线'] },
+      { seq: 3, question: '我再看一下别家，你们有什么优势吗？', keyPoints: ['优势'] },
+      { seq: 4, question: '现在下单还有什么额外优惠吗？', keyPoints: ['优惠'] },
+    ]);
+    expect(normalized[0].sourceType).toBe('core');
+    expect(normalized[2].sourceType).toBe('optional');
+    expect(normalized[3].sourceType).toBe('optional');
+  });
+
   it('人工/新结构问题不做旧版误判', () => {
     const current = [{ seq: 1, question: '现在下单还有什么额外优惠吗？', keyPoints: ['优惠'], sourceType: 'core' as const }];
     expect(normalizeLegacyQuestionSeq(current)).toEqual(current);
