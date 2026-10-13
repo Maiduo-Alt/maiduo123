@@ -155,7 +155,7 @@ export function getGoalProgress(questions: ScriptQuestion[], evaluations: Semant
   });
 }
 
-type ConversationTopic =
+export type ConversationTopic =
   | 'craft'
   | 'material'
   | 'size'
@@ -165,7 +165,7 @@ type ConversationTopic =
   | 'order'
   | 'general';
 
-function conversationTopic(question?: ScriptQuestion | null): ConversationTopic {
+export function conversationTopic(question?: ScriptQuestion | null): ConversationTopic {
   const text = [question?.conversationPlan?.topic, question?.question, ...(question?.keyPoints || [])].filter(Boolean).join(' ');
   if (/工艺|做工|走线|缝线|包边|锁边|内衬|耐穿|开线|脱线/u.test(text)) return 'craft';
   if (/材质|面料|透气|厚度|起球|掉色|缩水|洗涤/u.test(text)) return 'material';
@@ -196,7 +196,8 @@ export function selectNextQuestion(
   questions: ScriptQuestion[],
   currentSeq: number,
   completedGoalIds: Set<string>,
-  alreadySkipped: number[] = []
+  alreadySkipped: number[] = [],
+  context: { conversationStage?: string; resolutionScore?: number } = {},
 ): { nextSeq: number | null; skippedSeqs: number[] } {
   const skipped = new Set(alreadySkipped);
   const current = questions.find((item) => item.seq === currentSeq) || null;
@@ -222,9 +223,21 @@ export function selectNextQuestion(
   const eligible = unresolved.filter((question) => {
     const sourceType = question.sourceType || 'core';
     if (sourceType !== 'optional') return true;
-    if (!question.requiresContext) return true;
 
     const candidateTopic = conversationTopic(question);
+    // 可选话题不能在主目标尚未推进时突然抢话题。跨主题 optional 只有进入决策阶段后才允许出现。
+    if (
+      currentSeq > 0 &&
+      currentTopic !== 'general' &&
+      candidateTopic !== 'general' &&
+      candidateTopic !== currentTopic &&
+      (context.conversationStage !== 'decision' || Number(context.resolutionScore || 0) < 70)
+    ) {
+      skipped.add(question.seq);
+      return false;
+    }
+    if (!question.requiresContext) return true;
+
     // 强依赖上下文的问题永远不能作为开场。
     if (currentSeq <= 0) {
       skipped.add(question.seq);
