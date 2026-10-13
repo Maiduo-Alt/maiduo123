@@ -101,6 +101,14 @@ describe('semantic goal evaluation', () => {
     expect(selectNextQuestion(questions, 1, new Set())).toEqual({ nextSeq: 2, skippedSeqs: [] });
   });
 
+  it('keeps the first core question as the opener even when a later question is the semantic primary', () => {
+    const flow: ScriptQuestion[] = [
+      { seq: 1, question: '先问面料手感', keyPoints: ['面料'], sourceType: 'core', goalPriority: 'secondary' },
+      { seq: 2, question: '再问缩水', keyPoints: ['缩水'], sourceType: 'core', goalPriority: 'primary', primaryGoal: '缩水' },
+    ];
+    expect(selectNextQuestion(flow, 0, new Set())).toEqual({ nextSeq: 1, skippedSeqs: [] });
+  });
+
   it('prefers a related core question over an unrelated optional question', () => {
     const flow: ScriptQuestion[] = [
       { seq: 1, question: '是包边还是锁边？', keyPoints: ['工艺'], sourceType: 'core',
