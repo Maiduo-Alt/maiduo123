@@ -1,4 +1,4 @@
-import { judgeReply, isYesNoQuestion, hasStance, isPerfunctory, isHedge } from '../../src/domain/reply-judge';
+import { judgeReply, isYesNoQuestion, hasStance, hasCompatibleStance, isPerfunctory, isHedge } from '../../src/domain/reply-judge';
 
 /**
  * 语义判定器（2026-10-11 客户口径）：
@@ -58,6 +58,18 @@ describe('打太极放行', () => {
     expect(isHedge('这个要看仓库安排哦')).toBe(true);
     expect(isHedge('价格以页面为准呢')).toBe(true);
     expect(isHedge('我们尽快帮您核实')).toBe(true);
+  });
+});
+
+describe('表态与问题类型兼容', () => {
+  it('“会不会”问题不能用泛化“可以的”糊弄过去', () => {
+    expect(hasCompatibleStance('这款会缩水吗？', '可以的哈')).toBe(false);
+    expect(hasCompatibleStance('这款会缩水吗？', '一般不会的')).toBe(true);
+    expect(judgeReply({ question: '这款会缩水吗？', keyPoints: ['缩水'], buyerText: '这款会缩水吗？', reply: '可以的哈' }).pass).toBe(false);
+  });
+
+  it('能力类问题仍允许自然短答', () => {
+    expect(hasCompatibleStance('胯宽能穿吗？', '可以的哈')).toBe(true);
   });
 });
 
