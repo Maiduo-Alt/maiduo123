@@ -97,18 +97,21 @@ function scoreResponse(
 }
 
 /** 维度二：问题解决率（默认 35 分）。 */
-function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: number; deductions: Deduction[] } {
+function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: number; questionCount: number; deductions: Deduction[] } {
   const { questions, messages, params } = input;
   const deductions: Deduction[] = [];
-  const total = questions.length;
-  if (!total) return { score: 0, solvedCount: 0, deductions };
+  const skipped = new Set(input.skippedQuestionSeqs || []);
+  // 没有自然触发、被运行时主动跳过的问题不参与解决率分母。
+  const activeQuestions = questions.filter((question) => !skipped.has(question.seq));
+  const total = activeQuestions.length;
+  if (!total) return { score: params.weights.solving, solvedCount: 0, questionCount: 0, deductions };
 
   const perQuestion = params.weights.solving / total;
   const transferred = new Set(input.transferredQuestionSeqs || []);
   let score = 0;
   let solvedCount = 0;
 
-  for (const q of questions) {
+  for (const q of activeQuestions) {
     if (q.needTransfer && transferred.has(q.seq)) {
       score += perQuestion;
       solvedCount += 1;
@@ -164,7 +167,7 @@ function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: n
       });
     }
   }
-  return { score: round1(score), solvedCount, deductions };
+  return { score: round1(score), solvedCount, questionCount: total, deductions };
 }
 
 /** 维度三：话术规范（默认 15 分）。 */
@@ -267,7 +270,7 @@ export function scoreSession(input: SessionScoreInput): SessionScore {
     metrics: {
       ...response.metrics,
       solvedCount: solving.solvedCount,
-      questionCount: input.questions.length,
+      questionCount: solving.questionCount,
     },
   };
 }
