@@ -573,7 +573,16 @@ export class ReceptionService implements OnModuleInit {
     conversationState: ConversationState,
     reason: 'normal' | 'early' = 'normal',
   ): Promise<void> {
-    const text = this.buyerClosingText(session.style_code, conversationState.satisfaction);
+    const finalState: ConversationState = {
+      ...conversationState,
+      conversationStage: 'closing',
+      shouldClose: true,
+    };
+    await this.db.query(`UPDATE sessions SET conversation_state = $2::jsonb WHERE id = $1`, [
+      session.id,
+      JSON.stringify(finalState),
+    ]);
+    const text = this.buyerClosingText(session.style_code, finalState.satisfaction);
     const lastBuyer = await this.db.one<{ content: string }>(
       `SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`,
       [session.id],
@@ -594,7 +603,7 @@ export class ReceptionService implements OnModuleInit {
         contents: [text],
         emotion: session.emotion_value,
         naturalEnding: true,
-        conversationState,
+        conversationState: finalState,
         sentAt: new Date().toISOString(),
       });
     }
