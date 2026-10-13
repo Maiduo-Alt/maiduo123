@@ -82,13 +82,41 @@ interface SessionRow {
 export class ReceptionService implements OnModuleInit {
   private readonly logger = new Logger(ReceptionService.name);
 
-  /** 沟通风格对买家消息的影响（情绪化风格会触发升级追问）。 */
+  /**
+   * 沟通风格只改变“怎么说”，不再额外注入新的业务意图。
+   * 旧逻辑会给所有急躁型问题追加“你们到底能不能处理”，给所有纠结型问题追加
+   * “我怕不合适，能保证吗”，导致工艺/材质/优惠等话题被人为串台。
+   */
   private readonly styleBehavior: Record<string, { emotional: boolean; transform: (q: string) => string[] }> = {
-    friendly: { emotional: false, transform: (q) => [q] },
-    impatient: { emotional: true, transform: (q) => [q.replace(/？$/, '！'), '你们到底能不能处理？'] },
-    direct: { emotional: false, transform: (q) => [q] },
-    hesitant: { emotional: true, transform: (q) => [q, '我怕不合适，能保证吗？'] },
-    silent: { emotional: false, transform: (q) => [q.length > 12 ? `${q.slice(0, 12)}？` : q] },
+    friendly: {
+      emotional: false,
+      transform: (q) => [String(q || '').trim()],
+    },
+    impatient: {
+      emotional: true,
+      transform: (q) => {
+        const text = String(q || '').trim().replace(/[？?]$/u, '');
+        return [text ? `${text}？麻烦直接说一下。` : '麻烦直接说一下。'];
+      },
+    },
+    direct: {
+      emotional: false,
+      transform: (q) => [String(q || '').trim()],
+    },
+    hesitant: {
+      emotional: true,
+      transform: (q) => {
+        const text = String(q || '').trim();
+        return [text ? `我想确认一下，${text}` : '我想再确认一下。'];
+      },
+    },
+    silent: {
+      emotional: false,
+      transform: (q) => {
+        const text = String(q || '').trim();
+        return [text.length > 18 ? `${text.slice(0, 18).replace(/[，。！？?！]+$/u, '')}？` : text];
+      },
+    },
   };
 
   /**
