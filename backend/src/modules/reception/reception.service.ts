@@ -11,6 +11,7 @@ import {
   DEFAULT_PARAMS,
   DEFAULT_LEVEL_TOTAL,
   LEVELS,
+  ConversationState,
   ScoreMessage,
   ScriptCandidate,
   ScriptQuestion,
@@ -37,6 +38,7 @@ import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-sco
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
 import { evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
 import { normalizeLegacyQuestionSeq } from '../../domain/question-seq';
+import { deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, followUpEmotionDelta } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
@@ -75,6 +77,7 @@ interface SessionRow {
   follow_ups: number;
   /** 开场白阶段（2026-10-11 开场多元化）：买家先只发问候/链接，客服回应后才抛第一题 */
   opener_pending: boolean;
+  conversation_state: ConversationState | Record<string, never>;
   score: string | null;
 }
 
@@ -1664,6 +1667,7 @@ export class ReceptionService implements OnModuleInit {
         : null,
       emotionValue: s.emotion_value,
       timeoutCount: s.timeout_count,
+      conversationState: s.conversation_state || {},
       score: s.score === null ? null : Number(s.score),
       joinAt: s.join_at,
     };
