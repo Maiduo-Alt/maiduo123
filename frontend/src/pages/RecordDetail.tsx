@@ -274,6 +274,12 @@ export default function RecordDetail() {
                           <Descriptions.Item label="最终阶段">
                             {s.conversationState?.conversationStage || '-'}
                           </Descriptions.Item>
+                          <Descriptions.Item label="客户意图">
+                            {s.conversationState?.customerIntent || '-'}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="当前关注点">
+                            {s.conversationState?.currentSubtopic || '-'}
+                          </Descriptions.Item>
                           <Descriptions.Item label="解决度">
                             {s.conversationState?.resolutionScore !== undefined
                               ? `${s.conversationState.resolutionScore}%`
@@ -283,6 +289,14 @@ export default function RecordDetail() {
                             {s.conversationState?.satisfaction !== undefined
                               ? `${s.conversationState.satisfaction}/100`
                               : '-'}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="购买意愿">
+                            {s.conversationState?.purchaseIntent !== undefined
+                              ? `${s.conversationState.purchaseIntent}/100`
+                              : '-'}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="待解决顾虑" span={3}>
+                            {s.conversationState?.pendingConcern || '无'}
                           </Descriptions.Item>
                           <Descriptions.Item label="目标状态" span={3}>
                             <Space size={4} wrap>
