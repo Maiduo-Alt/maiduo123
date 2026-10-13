@@ -75,9 +75,18 @@ export function deriveConversationState(
     primaryGoalIds.size > 0 &&
     [...primaryGoalIds].every((goalId) => resolvedGoalIds.includes(goalId));
 
-  // 客户不是“把所有题问完”才会结束：核心目标已经解决，且整体信息覆盖到一定程度，
-  // 就可以进入自然收尾；全部目标解决当然也满足。
-  const shouldClose = satisfaction >= 60 && (allResolved || (primaryResolved && resolutionScore >= 70));
+  const coreGoalIds = new Set(
+    questions
+      .filter((question) => (question.sourceType || 'core') === 'core')
+      .flatMap((question) => (question.semanticGoals || []).map((goal) => goal.id))
+  );
+  const allCoreResolved =
+    coreGoalIds.size > 0 &&
+    [...coreGoalIds].every((goalId) => resolvedGoalIds.includes(goalId));
+
+  // 可以不把“衍生问题”全部问完，但原始 core 问题不能因为满意度稍高就被提前跳过。
+  // 因此自然收尾要求：全部目标完成，或所有 core 目标已完成且整体覆盖度足够。
+  const shouldClose = satisfaction >= 60 && (allResolved || (primaryResolved && allCoreResolved && resolutionScore >= 70));
 
   let stage: ConversationState['conversationStage'] = 'discovery';
   if (currentSeq <= 0) stage = 'opening';
