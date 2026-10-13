@@ -1,4 +1,4 @@
-import { decidePush, buildFollowUpText, followUpEmotionDelta, MAX_FOLLOWUPS } from '../../src/domain/adaptive-push';
+import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, followUpEmotionDelta, MAX_FOLLOWUPS } from '../../src/domain/adaptive-push';
 
 describe('decidePush：自适应推送决策', () => {
   it('命中任意要点 → 推进下一题', () => {
@@ -53,5 +53,21 @@ describe('followUpEmotionDelta：追问带来的情绪变化', () => {
   it('第 1 次 -4，第 2 次 -7', () => {
     expect(followUpEmotionDelta(0)).toBe(-4);
     expect(followUpEmotionDelta(1)).toBe(-7);
+  });
+});
+
+
+describe('buildMissingPointFollowUpText：部分完成只追缺失语义点', () => {
+  it('不复读整道原题，而是围绕缺失点追问', () => {
+    const text = buildMissingPointFollowUpText('friendly', ['是否影响二次销售'], 0);
+    expect(text).toContain('是否影响二次销售');
+    expect(text).not.toContain('我是想问');
+  });
+
+  it('多个缺失点最多合并前两个，保持买家问题简洁', () => {
+    const text = buildMissingPointFollowUpText('direct', ['走线牢固度', '内衬材质', '洗涤方式'], 0);
+    expect(text).toContain('走线牢固度');
+    expect(text).toContain('内衬材质');
+    expect(text).not.toContain('洗涤方式');
   });
 });
