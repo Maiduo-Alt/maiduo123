@@ -536,6 +536,61 @@ export class ReceptionService implements OnModuleInit {
     );
   }
 
+  private async persistConversationState(
+    session: SessionRow,
+    evaluations?: any[],
+    overrides: { currentSeq?: number; skippedSeqs?: number[]; emotionValue?: number } = {},
+  ): Promise<ConversationState> {
+    const semanticEvaluations = evaluations || (await this.db.many<any>(
+      `SELECT rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
+      [session.id],
+    )).map((row) => row.rule_result?.semanticEvaluation).filter(Boolean);
+
+    const state = deriveConversationState(session.questions || [], semanticEvaluations, {
+      currentSeq: overrides.currentSeq ?? session.current_seq,
+      skippedSeqs: overrides.skippedSeqs ?? session.skipped_seqs ?? [],
+      emotionValue: overrides.emotionValue ?? session.emotion_value,
+    });
+    await this.db.query(`UPDATE sessions SET conversation_state = $2::jsonb WHERE id = $1`, [
+      session.id,
+      JSON.stringify(state),
+    ]);
+    return state;
+  }
+
+  private async closeWithBuyerMessage(
+    session: SessionRow,
+    conversationState: ConversationState,
+    reason: 'normal' | 'early' = 'normal',
+  ): Promise<void> {
+    const text = this.buyerClosingText(session.style_code, conversationState.satisfaction);
+    const lastBuyer = await this.db.one<{ content: string }>(
+      `SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`,
+      [session.id],
+    );
+    if (!lastBuyer || lastBuyer.content !== text) {
+      await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+        session.id,
+        text,
+        session.current_seq,
+      ]);
+      const attempt = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
+        session.attempt_id,
+      ]);
+      this.gateway.emitToUser(attempt.account_id, 'buyer.message', {
+        attemptId: session.attempt_id,
+        sessionId: session.id,
+        seq: session.current_seq,
+        contents: [text],
+        emotion: session.emotion_value,
+        naturalEnding: true,
+        conversationState,
+        sentAt: new Date().toISOString(),
+      });
+    }
+    await this.completeSession(session.id, reason);
+  }
+
   /**
    * C5：本次模拟的总接待人数可能大于同时在线人数，多出来的会话以 `pending`（待接入）建好。
    *
