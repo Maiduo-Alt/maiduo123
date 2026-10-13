@@ -1,4 +1,4 @@
-import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, followUpEmotionDelta, MAX_FOLLOWUPS } from '../../src/domain/adaptive-push';
+import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, MAX_FOLLOWUPS } from '../../src/domain/adaptive-push';
 
 describe('decidePush：自适应推送决策', () => {
   it('命中任意要点 → 推进下一题', () => {
@@ -69,5 +69,21 @@ describe('buildMissingPointFollowUpText：部分完成只追缺失语义点', ()
     expect(text).toContain('走线牢固度');
     expect(text).toContain('内衬材质');
     expect(text).not.toContain('洗涤方式');
+  });
+});
+
+
+describe('buildTopicTransitionText：跨主题转场', () => {
+  it('切换话题时增加自然转场，但不改变原问题语义', () => {
+    const text = buildTopicTransitionText('friendly', '现在有什么优惠吗？');
+    expect(text).toContain('对了');
+    expect(text).toContain('现在有什么优惠吗？');
+  });
+
+  it('不同沟通风格只改变表达方式，不注入新的业务问题', () => {
+    const question = '多久可以发货？';
+    for (const style of ['friendly', 'hesitant', 'direct', 'impatient', 'silent']) {
+      expect(buildTopicTransitionText(style, question)).toContain(question);
+    }
   });
 });
