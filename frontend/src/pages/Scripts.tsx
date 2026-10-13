@@ -836,6 +836,9 @@ export default function Scripts() {
                         {q.triggerConditions.minResolutionScore !== undefined
                           ? `；解决度 ≥ ${q.triggerConditions.minResolutionScore}%`
                           : ''}
+                        {q.triggerConditions.minPurchaseIntent !== undefined
+                          ? `；购买意愿 ≥ ${q.triggerConditions.minPurchaseIntent}`
+                          : ''}
                         {q.triggerConditions.afterBusinessAction?.length
                           ? `；业务动作 ${q.triggerConditions.afterBusinessAction.join(' / ')}`
                           : ''}
