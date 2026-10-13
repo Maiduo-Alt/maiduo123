@@ -94,6 +94,27 @@ export function findBusinessAction(code: string): BusinessActionDef | undefined 
   return BUSINESS_ACTIONS.find((item) => item.code === code);
 }
 
+/**
+ * 业务动作只有和当前买家问题语义相关时，才算“解决了这道题”。
+ * 例如客户问面料时误点“催付”，动作本身可以记录，但不能把面料问题判为已解决。
+ */
+export function businessActionResolvesQuestion(code: string, question: string, keyPoints: string[] = []): boolean {
+  const text = [String(question || ''), ...(keyPoints || [])].join(' ');
+  const rules: Record<string, RegExp> = {
+    verify_address: /地址|收货信息|收件|联系人|电话/u,
+    change_address: /地址|收货信息|收件|联系人|电话/u,
+    urge_pay: /支付|付款|未付款|下单|催付/u,
+    change_price: /价格|优惠|折扣|活动|改价|便宜|券|满减/u,
+    ship_goods: /发货|出库|物流|快递|配送|到货|时效|现货/u,
+    ship_negotiate: /发货|延迟|到货|物流|快递|时效|指定时间/u,
+    after_sale_proxy: /退|换|退款|售后|补发|赔偿|质量|破损/u,
+    after_sale_card: /退|换|退款|售后|保障|质量|破损/u,
+    logistics_card: /物流|快递|单号|配送|到哪|运输|签收/u,
+  };
+  const pattern = rules[String(code || '')];
+  return !!pattern && pattern.test(text);
+}
+
 /** 某个订单状态下卡片上会出现的按钮（顺序与参考图一致） */
 export function actionsForStage(stage: OrderStage): BusinessActionDef[] {
   return BUSINESS_ACTIONS.filter((item) => item.stages.includes(stage));
