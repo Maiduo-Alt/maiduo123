@@ -8,17 +8,23 @@ import { ConversationPlan, ScriptQuestion } from './types';
 export function generateSemanticGoals(
   questions: ScriptQuestion[],
   buyerContext = '',
-  random: () => number = Math.random,
+  _random: () => number = Math.random,
 ): ScriptQuestion[] {
   const context = String(buyerContext || '').replace(/\s+/g, ' ').trim().slice(0, 40);
-  const candidates = questions.flatMap((question, questionIndex) =>
-    [...new Set((question.keyPoints || []).map((point) => String(point || '').trim()))]
+  // 主目标必须来自原始咨询（core），不能由补位/可选问题反客为主。
+  // 旧快照没有 sourceType 时按 core 兼容。
+  const candidates = questions.flatMap((question, questionIndex) => {
+    if ((question.sourceType || 'core') !== 'core') return [];
+    return [...new Set((question.keyPoints || []).map((point) => String(point || '').trim()))]
       .filter((point) => point && point !== '有效回应')
-      .map((point) => ({ questionIndex, point }))
-  );
+      .map((point, pointIndex) => ({ questionIndex, pointIndex, point }));
+  });
   if (!candidates.length) return questions;
-  const primaryIndex = Math.min(candidates.length - 1, Math.floor(Math.max(0, random()) * candidates.length));
-  const primary = candidates[primaryIndex];
+
+  // 不再随机挑“主目标”。优先选择最早的核心问题，并把该问题第一个业务要点作为主目标。
+  // 这保证剧本主题稳定、可解释，也避免“发货/优惠”之类偶然成为工艺场景的主目标。
+  const primary = candidates
+    .sort((a, b) => a.questionIndex - b.questionIndex || a.pointIndex - b.pointIndex)[0];
 
   const generated = questions.map((question) => {
     if (question.semanticGoals?.length) return { ...question, goalPriority: question.goalPriority || 'secondary' as const };
@@ -51,10 +57,8 @@ export function generateSemanticGoals(
       }],
     };
   });
-  // Put the main target first so the session pushes the detailed question before the lighter topics.
-  return generated
-    .sort((a, b) => Number(b.goalPriority === 'primary') - Number(a.goalPriority === 'primary') || a.seq - b.seq)
-    .map((question, index) => ({ ...question, seq: index + 1 }));
+  // 保留原始咨询顺序。主目标只影响权重/评分，不再通过排序强行移动到第一轮。
+  return generated.map((question, index) => ({ ...question, seq: index + 1 }));
 }
 
 const TOPIC_TEMPLATES: Array<{
