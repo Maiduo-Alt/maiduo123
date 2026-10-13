@@ -2,10 +2,10 @@
  * 自适应推送（客户 2026-10-11）：买家不再死板地按剧本顺序提问，
  * 而是根据客服对当前问题的回复质量决定「推进下一题」还是「追问」。
  *
- * 判定口径（与评分共用 matchKeyPoints 的命中结果，保持确定性、不接模型）：
- *  - 本轮客服回复命中任意要点，或执行过业务动作（催付/改价/去发货…）→ 推进下一题；
- *  - 命中 0 要点 → 买家按自己的沟通风格追问一次，最多追问 MAX_FOLLOWUPS 次，
- *    之后无论是否答到都推进（避免训练流程卡死）。
+ * 判定口径保持确定性、不接大模型：
+ *  - 已完整解决当前目标，或执行过业务动作 → 推进；
+ *  - 只完成部分语义目标 → 优先追问缺失信息，而不是复述原题；
+ *  - 完全未答到 → 最多追问 MAX_FOLLOWUPS 次，之后推进，避免死循环。
  *
  * 纯函数实现，与框架解耦、可独立单测。
  */
@@ -44,6 +44,16 @@ const FOLLOWUP_TEMPLATES: Record<string, Template> = {
 
 const DEFAULT_TEMPLATE: Template = FOLLOWUP_TEMPLATES.friendly;
 
+const MISSING_POINT_TEMPLATES: Record<string, Template> = {
+  friendly: ['明白了～那我还想确认一下{point}，可以再具体说说吗？', '还有一点我没弄清楚：{point}，麻烦再说明一下哦～'],
+  hesitant: ['嗯…那{point}这块我还是有点拿不准，可以再说具体一点吗？', '我主要还担心{point}，能再帮我确认一下吗？'],
+  direct: ['那再确认一下{point}。', '{point}这点还没说清楚，麻烦直接说明一下。'],
+  impatient: ['那{point}呢？这个还没说清楚。', '我还在问{point}，麻烦给个明确说法。'],
+  silent: ['那{point}呢？', '{point}？'],
+};
+
+const DEFAULT_MISSING_POINT_TEMPLATE: Template = MISSING_POINT_TEMPLATES.friendly;
+
 /**
  * 生成追问话术（1 条）。
  * @param styleCode 沟通风格编码
@@ -54,6 +64,20 @@ export function buildFollowUpText(styleCode: string, question: string, round: nu
   const tpl = FOLLOWUP_TEMPLATES[styleCode] || DEFAULT_TEMPLATE;
   const text = tpl[Math.min(Math.max(round, 0), tpl.length - 1)];
   return text.replace('{q}', String(question || '').trim());
+}
+
+/**
+ * 针对“部分完成”的自然追问：只问尚未解释清楚的语义点，不复读整道题。
+ */
+export function buildMissingPointFollowUpText(
+  styleCode: string,
+  missingLabels: string[],
+  round: number,
+): string {
+  const labels = [...new Set((missingLabels || []).map((label) => String(label || '').trim()).filter(Boolean))];
+  const point = labels.slice(0, 2).join('、') || '这个细节';
+  const tpl = MISSING_POINT_TEMPLATES[styleCode] || DEFAULT_MISSING_POINT_TEMPLATE;
+  return tpl[Math.min(Math.max(round, 0), tpl.length - 1)].replace('{point}', point);
 }
 
 /** 追问时的情绪值变化（第 1 次 -4，第 2 次 -7，最低 0）。 */
