@@ -1,4 +1,4 @@
-import { ScriptQuestion, SemanticGoal, SemanticGoalPoint, SemanticRiskRule } from './types';
+import { ConversationState, ScriptQuestion, SemanticGoal, SemanticGoalPoint, SemanticRiskRule } from './types';
 
 export interface GoalPointMatch {
   goalId: string;
@@ -237,7 +237,7 @@ export function selectNextQuestion(
   completedGoalIds: Set<string>,
   alreadySkipped: number[] = [],
   context: {
-    conversationStage?: string;
+    conversationStage?: ConversationState['conversationStage'];
     resolutionScore?: number;
     businessActionCodes?: string[];
     hasOrder?: boolean;
@@ -268,7 +268,7 @@ export function selectNextQuestion(
     const sourceType = question.sourceType || 'core';
     const trigger = question.triggerConditions;
     if (trigger) {
-      if (trigger.stages?.length && !trigger.stages.includes(context.conversationStage as any)) {
+      if (trigger.stages?.length && (!context.conversationStage || !trigger.stages.includes(context.conversationStage))) {
         skipped.add(question.seq);
         return false;
       }
