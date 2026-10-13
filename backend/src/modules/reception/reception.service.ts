@@ -1389,11 +1389,14 @@ export class ReceptionService implements OnModuleInit {
     if (attempt.status !== 'running') return this.attemptResult(attemptId);
 
     const sessions = await this.db.many<any>(
-      `SELECT s.id, s.total_questions, COALESCE(sc.total_score, 0) AS score
+      `SELECT s.id, s.total_questions, s.skipped_seqs, COALESCE(sc.total_score, 0) AS score
        FROM sessions s LEFT JOIN scores sc ON sc.session_id = s.id WHERE s.attempt_id = $1`,
       [attemptId]
     );
-    const aggregated = scoreAttempt(sessions.map((s) => ({ score: Number(s.score), questionCount: s.total_questions })));
+    const aggregated = scoreAttempt(sessions.map((s) => ({
+      score: Number(s.score),
+      questionCount: Math.max(0, Number(s.total_questions || 0) - (Array.isArray(s.skipped_seqs) ? s.skipped_seqs.length : 0)),
+    })));
     const params = attempt.param_snapshot as SystemParams;
     const conclusion = aggregated.total >= params.passLine ? 'pass' : 'fail';
     await this.db.query(
