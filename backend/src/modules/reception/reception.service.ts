@@ -709,6 +709,7 @@ export class ReceptionService implements OnModuleInit {
       {
         conversationStage: conversationState.conversationStage,
         resolutionScore: conversationState.resolutionScore,
+        purchaseIntent: conversationState.purchaseIntent,
         businessActionCodes,
         hasOrder: !!session.order_no,
       },
