@@ -51,7 +51,7 @@ describe('剧本抽取（方案 4.5）', () => {
   });
 
   it('轮数不足与超出上限时给出提示', () => {
-    expect(checkRounds(4, DEFAULT_PARAMS)).toMatch(/轮数不足/);
+    expect(checkRounds(4, DEFAULT_PARAMS)).toMatch(/少于建议/);
     expect(checkRounds(12, DEFAULT_PARAMS)).toMatch(/超出建议区间/);
     expect(checkRounds(8, DEFAULT_PARAMS)).toBeNull();
   });
