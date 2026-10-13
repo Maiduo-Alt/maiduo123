@@ -45,6 +45,19 @@ describe('generateSemanticGoals', () => {
     expect(generated[1].goalPriority).toBe('secondary');
   });
 
+  it('derives a readable customer goal from topic, background and accepted answer', () => {
+    const generated = generateSemanticGoals([
+      { seq: 1, question: '是包边还是锁边？', keyPoints: ['工艺', '走线'], sourceType: 'core' },
+      { seq: 2, question: '有内衬吗？', keyPoints: ['内衬'], sourceType: 'core' },
+    ], '关注耐穿与打理成本', () => 0, {
+      templateName: '咨询工艺细节',
+      acceptedAnswer: '说明工艺做法与走线水平，可提供细节实拍',
+    });
+
+    expect(generated[0].customerGoal).toBe('确认商品工艺质量和耐穿程度');
+    expect(generated[1].customerGoal).toBeUndefined();
+  });
+
   it('leaves generic fallback points on the existing keyword path', () => {
     const [generated] = generateSemanticGoals([{
       seq: 1,
