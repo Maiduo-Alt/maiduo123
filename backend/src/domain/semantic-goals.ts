@@ -239,6 +239,7 @@ export function selectNextQuestion(
   context: {
     conversationStage?: ConversationState['conversationStage'];
     resolutionScore?: number;
+    purchaseIntent?: number;
     businessActionCodes?: string[];
     hasOrder?: boolean;
   } = {},
@@ -273,6 +274,10 @@ export function selectNextQuestion(
         return false;
       }
       if (trigger.minResolutionScore !== undefined && Number(context.resolutionScore || 0) < trigger.minResolutionScore) {
+        skipped.add(question.seq);
+        return false;
+      }
+      if (trigger.minPurchaseIntent !== undefined && Number(context.purchaseIntent || 0) < trigger.minPurchaseIntent) {
         skipped.add(question.seq);
         return false;
       }
