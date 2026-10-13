@@ -131,6 +131,28 @@ describe('评分引擎（方案 4.3）', () => {
     expect(result.deductions.some((item) => item.dimension === 'risk')).toBe(true);
   });
 
+  it('运行时未自然触发并跳过的问题不参与解决率分母', () => {
+    const q: ScriptQuestion[] = [
+      { seq: 1, question: '走线整齐吗？', keyPoints: ['走线'] },
+      { seq: 2, question: '现在有什么优惠？', keyPoints: ['优惠'], sourceType: 'optional' },
+    ];
+    const result = scoreSession({
+      questions: q,
+      messages: [
+        { sender: 'buyer', content: '走线整齐吗？', questionSeq: 1 },
+        { sender: 'agent', content: '亲您好，走线很整齐，感谢您的咨询，祝您生活愉快', questionSeq: 1, responseSec: 8, hitPoints: ['走线'] },
+      ],
+      skippedQuestionSeqs: [2],
+      emotionFinal: 10,
+      hasEmotionScenario: false,
+      params,
+    });
+    expect(result.solvingScore).toBe(35);
+    expect(result.metrics.questionCount).toBe(1);
+    expect(result.metrics.solvedCount).toBe(1);
+    expect(result.deductions.some((item) => item.questionSeq === 2)).toBe(false);
+  });
+
   it('出现禁用词应扣话术规范分', () => {
     const messages = buildMessages();
     messages[1].content = '不知道啊';
