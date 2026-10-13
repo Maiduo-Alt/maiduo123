@@ -124,6 +124,9 @@ describe('旧剧本兼容：通用补题降级', () => {
     }));
     expect(normalized[0].primaryGoal).toBeUndefined();
     expect(normalized[1].sourceType).toBe('core');
+    expect(normalized[1].goalPriority).toBe('primary');
+    expect(normalized[1].primaryGoal).toBe('工艺');
+    expect(normalized[1].semanticGoals?.[0].requiredPoints[0].isPrimary).toBe(true);
   });
 
   it('人工/新结构问题不做旧版误判', () => {
