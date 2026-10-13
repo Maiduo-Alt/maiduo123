@@ -38,6 +38,7 @@ import {
   FolderOpenOutlined,
   FormOutlined,
   MoreOutlined,
+  EyeOutlined,
   PictureOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -1746,6 +1747,22 @@ export default function Reception() {
                       style={{ cursor: 'pointer' }}
                       onClick={() => usePhrase(item)}
                       actions={[
+                        /* 快捷短语区的商品引用入口（2026-10-13）：话术变量按当前咨询商品取值，点眼睛图标直接看商品详情 */
+                        <Tooltip
+                          key="p"
+                          title={activeSession?.product ? `查看商品详情：${activeSession.product.title}` : '当前会话没有咨询商品'}
+                        >
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<EyeOutlined />}
+                            disabled={!activeSession?.product}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openPreview();
+                            }}
+                          />
+                        </Tooltip>,
                         <Tag key="c">{item.category}</Tag>,
                         <span key="u" style={{ fontSize: 12, color: '#bfbfbf' }}>
                           用过 {item.usedCount ?? 0} 次
