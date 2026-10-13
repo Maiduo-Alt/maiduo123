@@ -50,6 +50,44 @@ export async function runMigrations(db: DbService): Promise<void> {
     ],
   );
 
+  // 手册首选回归场景必须在已有测试库中也可复现：
+  // 若“耐穿与打理成本 × 咨询工艺细节”组合缺失，则把该咨询内容的一条现有种子剧本调整到该背景。
+  const durabilityBg = await db.one<{ id: number }>(
+    `SELECT id FROM buyer_bg WHERE name = $1 LIMIT 1`,
+    ['关注点：耐穿与打理成本'],
+  );
+  const craftQa = await db.one<{ id: number }>(
+    `SELECT id FROM buyer_qa WHERE template_name = $1 LIMIT 1`,
+    ['咨询工艺细节'],
+  );
+  if (durabilityBg && craftQa) {
+    const exact = await db.one<{ id: number }>(
+      `SELECT id FROM scripts WHERE bg_id = $1 AND qa_id = $2 LIMIT 1`,
+      [durabilityBg.id, craftQa.id],
+    );
+    if (!exact) {
+      const fallback = await db.one<{ id: number; stage: string }>(
+        `SELECT id, stage FROM scripts WHERE qa_id = $1 ORDER BY id LIMIT 1`,
+        [craftQa.id],
+      );
+      if (fallback) {
+        const stageName = fallback.stage === 'aftersale' ? '售后' : '售前';
+        await db.query(
+          `UPDATE scripts
+           SET bg_id = $2,
+               name = $3,
+               updated_at = now()
+           WHERE id = $1`,
+          [
+            fallback.id,
+            durabilityBg.id,
+            `${stageName}-耐穿与打理成本-咨询工艺细节`,
+          ],
+        );
+      }
+    }
+  }
+
   // 数据迁移（幂等）：把旧版“为凑轮数注入的通用补题”直接降级成 optional，
   // 避免测试库里已经生成的旧剧本仍展示错误主目标。运行时还有同一层兼容兜底。
   const scripts = await db.many<{ id: number; question_seq: ScriptQuestion[] }>(
