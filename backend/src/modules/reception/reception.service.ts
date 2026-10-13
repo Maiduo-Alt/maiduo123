@@ -648,23 +648,8 @@ export class ReceptionService implements OnModuleInit {
       [sessionId]
     );
     if (recentAgent && isNaturalClosingReply(recentAgent.content)) {
-      const goodbye = '好的，明白了，谢谢您，我先不打扰啦。';
-      await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
-        sessionId,
-        goodbye,
-        session.current_seq,
-      ]);
-      const attempt = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [session.attempt_id]);
-      this.gateway.emitToUser(attempt.account_id, 'buyer.message', {
-        attemptId: session.attempt_id,
-        sessionId,
-        seq: session.current_seq,
-        contents: [goodbye],
-        emotion: session.emotion_value,
-        naturalEnding: true,
-        sentAt: new Date().toISOString(),
-      });
-      await this.completeSession(sessionId, 'early');
+      const conversationState = await this.persistConversationState(session);
+      await this.closeWithBuyerMessage(session, conversationState, 'early');
       return;
     }
 
