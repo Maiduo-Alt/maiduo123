@@ -5,7 +5,7 @@ import { normalizePage, pageResult, PageQuery } from '../../common/pagination';
 import { allocateStyles, normalizeRatios } from '../../domain/style-ratio';
 import { createRng } from '../../domain/rng';
 import { checkRounds } from '../../domain/extraction';
-import { buildQuestionSeq as buildSeq } from '../../domain/question-seq';
+import { buildQuestionSeq as buildSeq, normalizeLegacyQuestionSeq } from '../../domain/question-seq';
 import { SettingsService } from '../settings/settings.service';
 import { ScriptQuestion } from '../../domain/types';
 import { BUILTIN_QA_BY_NAME } from '../../db/seed-content';
@@ -187,7 +187,8 @@ export class ScriptsService {
     );
     if (!row) throw new BizError(ERR.NOT_FOUND, '剧本不存在');
     const params = await this.settings.getParams();
-    return { ...row, roundsWarning: checkRounds((row.questionSeq || []).length, params) };
+    const questionSeq = normalizeLegacyQuestionSeq((row.questionSeq || []) as ScriptQuestion[]);
+    return { ...row, questionSeq, roundsWarning: checkRounds(questionSeq.length, params) };
   }
 
   /**
