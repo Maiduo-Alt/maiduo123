@@ -56,13 +56,23 @@ function matchesFlexible(text: string, point: SemanticGoalPoint): boolean {
 export function evaluateSemanticReply(
   text: string,
   questions: ScriptQuestion[],
-  vectorCandidates: Set<string> = new Set()
+  vectorCandidates: Set<string> = new Set(),
+  /**
+   * 运行时只应让当前问题的回复完成当前问题的目标。省略该参数时保留
+   * 领域函数原有的“一个回复可覆盖多个目标”能力，便于复盘和批量分析。
+   */
+  currentSeq?: number | null,
 ): SemanticReplyEvaluation {
   const normalizedText = normalize(text);
   const goalMatches: GoalPointMatch[] = [];
   const riskItems = new Map<string, RiskMatch>();
 
-  for (const question of questions) {
+  const scopedQuestions = currentSeq === undefined
+    ? questions
+    : currentSeq === null
+      ? []
+      : questions.filter((question) => question.seq === currentSeq);
+  for (const question of scopedQuestions) {
     for (const goal of question.semanticGoals || []) {
       const pointIds = (goal.requiredPoints || [])
         .filter((point) => {

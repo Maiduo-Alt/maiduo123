@@ -756,7 +756,7 @@ describe('客户新增需求：自由练习权限 / 接入人数可配置', () =
     expect(failed.body.message).toContain('剧本 + 商品');
   }, 60000);
 
-  it('C14：售前 / 售后问题按比例混合，比例可配（默认两成售后）', async () => {
+  it('C14：接待保持剧本问题所属的阶段，不跨阶段插入问题', async () => {
     const adminToken = await login('admin', 'Admin@123');
     const adminAuth = { Authorization: `Bearer ${adminToken}` };
     await finishRunningAttempt(adminToken);
@@ -775,20 +775,16 @@ describe('客户新增需求：自由练习权限 / 接入人数可配置', () =
       return sessions[0].questions as any[];
     };
 
-    // 比例 = 0：整场都是剧本本身的话题，一个问题都不换
+    // 比例 = 0：整场都保留剧本本身的话题。
     const none = await sessionsOf(0);
     expect(none.every((q) => q.stage === 'presale' || q.stage === 'aftersale')).toBe(true);
     expect(none.filter((q) => q.stage !== none[0].stage)).toHaveLength(0);
 
-    // 比例 = 50：换掉一半（不超过一半），且换进来的是「买完商品后」的订单类问题
+    // 即使设置比例 = 50，本轮也不覆盖剧本显式配置的问题与阶段。
     const half = await sessionsOf(50);
     const other = half.filter((q) => q.stage !== half[0].stage);
-    expect(other.length).toBe(Math.floor(half.length / 2));
-    expect(other.every((q) => /地址|快递|催|订单|电话|备注/.test(q.question))).toBe(true);
-    // 订单状态跟着问题走：还没发货的订单类问题给「待发货」
-    expect(other.every((q) => q.orderStage === 'unshipped' || q.orderStage === 'shipped')).toBe(true);
-    // 开场仍是剧本自己的话题
-    expect(half[0].question).not.toMatch(/改地址|催发货/);
+    expect(other).toHaveLength(0);
+    expect(half.every((q) => ['unpaid', 'unshipped', 'shipped'].includes(q.orderStage))).toBe(true);
 
     // 默认值是 20%
     await request(http).put('/api/settings').set(adminAuth).send({ aftersaleQuestionRatio: 20, levelTotal: {} });

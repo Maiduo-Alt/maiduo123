@@ -69,6 +69,13 @@ describe('semantic goal evaluation', () => {
     expect(evaluateSemanticReply('这件尺码偏大很多。', configured, candidates).goalMatches).toEqual([]);
   });
 
+  it('can scope runtime matching to the active question', () => {
+    expect(evaluateSemanticReply('商品损坏也可能影响退货，而且要看是否影响二次销售。', questions, new Set(), 1).goalMatches)
+      .toEqual([]);
+    expect(evaluateSemanticReply('商品损坏也可能影响退货，而且要看是否影响二次销售。', questions, new Set(), 3).goalMatches)
+      .toEqual([{ goalId: 'return-damage', pointIds: ['damage'] }]);
+  });
+
   it('retains partial completion across replies and can update multiple goals in one reply', () => {
     const first = evaluateSemanticReply('吊牌拆掉会影响退货。', questions);
     expect(getGoalProgress(questions, [first]).find((item) => item.goal.id === 'return-condition')?.status).toBe('partial');

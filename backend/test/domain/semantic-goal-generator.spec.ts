@@ -29,11 +29,22 @@ describe('generateSemanticGoals', () => {
       .flatMap((goal) => goal.requiredPoints.filter((point) => point.isPrimary));
     expect(primary).toHaveLength(1);
     expect(primary[0].label).toBe('发货时间');
-    expect(generated[0].question).toContain('大概什么时候发出');
+    expect(generated[0].conversationPlan?.topic).toBe('发货时间');
+    expect(generated[0].conversationPlan?.followUpTemplates[0]).toContain('发货');
     expect(generated[0].goalPriority).toBe('primary');
     expect(generated[1].question).toBe('材质是什么？');
     expect(generated[1].goalPriority).toBe('secondary');
     expect(generated[0].seq).toBe(1);
+  });
+
+  it('keeps secondary conversation plans on their own topic', () => {
+    const generated = generateSemanticGoals([
+      { seq: 1, question: '材质是什么？', keyPoints: ['面料'] },
+      { seq: 2, question: '何时发货？', keyPoints: ['发货时间'] },
+    ], '', () => 0);
+    const secondary = generated.find((question) => question.goalPriority === 'secondary');
+    expect(secondary?.conversationPlan?.topic).toBe('发货时间');
+    expect(secondary?.semanticGoals?.[0].name).toContain('次要目标：发货时间');
   });
 
   it('leaves generic fallback points on the existing keyword path', () => {

@@ -21,6 +21,8 @@ type ScenarioQa = {
   stage: string;
   question_list: string[];
   key_points: string[][];
+  /** 场景拆分后仍需保留原内容中的转主管问题索引。 */
+  transferIdxs?: number[];
 };
 
 /** 把多条咨询内容切成可独立训练的场景，避免一次会话串入互不相关的问题。 */
@@ -43,18 +45,25 @@ function groupScenarioQas(qas: ScenarioQa[]): ScenarioQa[] {
     const points = Array.isArray(qa.key_points) ? qa.key_points : [];
     questions.forEach((question, index) => {
       const topic = scenarioTopic(question);
-      const current = groups.get(topic);
+      // 同一主题在售前/售后阶段的处理口径不同，不能跨阶段合并。
+      const groupKey = `${qa.stage || 'presale'}:${topic}`;
+      const current = groups.get(groupKey);
       if (current) {
+        const nextIndex = current.question_list.length;
         current.question_list.push(question);
         current.key_points.push(points[index]?.length ? points[index] : ['有效回应']);
+        if (BUILTIN_QA_BY_NAME.get(qa.template_name)?.transferIdxs?.includes(index)) {
+          current.transferIdxs = [...new Set([...(current.transferIdxs || []), nextIndex])];
+        }
         return;
       }
-      groups.set(topic, {
+      groups.set(groupKey, {
         id: qa.id,
         template_name: `${qa.template_name}·${topic}`,
         stage: qa.stage,
         question_list: [question],
         key_points: [points[index]?.length ? points[index] : ['有效回应']],
+        transferIdxs: BUILTIN_QA_BY_NAME.get(qa.template_name)?.transferIdxs?.includes(index) ? [0] : [],
       });
     });
   }
@@ -467,7 +476,13 @@ export class ScriptsService {
     if (!scenarioQas.length) throw new BizError(ERR.PARAM, '所选咨询内容没有可用问题');
     const requestedCount = body.scriptCount === undefined
       ? scenarioQas.length
-      : Math.max(1, Math.min(200, Math.floor(Number(body.scriptCount))));
+      : (() => {
+        const value = Number(body.scriptCount);
+        if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1 || value > 200) {
+          throw new BizError(ERR.PARAM, '剧本数量必须是 1～200 的整数');
+        }
+        return value;
+      })();
     const actualCount = Math.max(requestedCount, scenarioQas.length);
 
     // 商品 id → 分类：用于「问题与商品必须匹配」的生成前校验（客户 2026-10-03）
@@ -480,6 +495,7 @@ export class ScriptsService {
     const styles = await this.db.many<{ id: number; code: string; ratio: string; is_emotional: boolean }>(
       `SELECT id, code, ratio, is_emotional FROM styles WHERE status = 1 ORDER BY sort, id`
     );
+    if (!styles.length) throw new BizError(ERR.PARAM, '还没有可用的沟通风格，请先在系统管理中启用至少一种风格');
     const ratios = normalizeRatios(styles.map((s) => ({ code: s.code, ratio: Number(s.ratio) })));
     const styleMap = new Map(styles.map((s) => [s.code, s]));
 
@@ -746,7 +762,7 @@ export class ScriptsService {
    * 与内置剧本共用 domain/question-seq.ts 的同一套口径：按接待阶段补追问、支持转接题。
    */
   buildSeqFromQa(
-    qa: { template_name?: string; stage?: string | null; question_list: string[]; key_points: string[][] },
+    qa: { template_name?: string; stage?: string | null; question_list: string[]; key_points: string[][]; transferIdxs?: number[] },
     rounds: [number, number]
   ): ScriptQuestion[] {
     // 内置内容带「转接题」标记，按模板名继承，保证界面批量生成的剧本与内置剧本一致。
@@ -756,7 +772,7 @@ export class ScriptsService {
         question_list: qa.question_list,
         key_points: qa.key_points,
         stage: qa.stage,
-        transferIdxs: builtin?.transferIdxs,
+        transferIdxs: qa.transferIdxs ?? builtin?.transferIdxs,
       },
       rounds
     );

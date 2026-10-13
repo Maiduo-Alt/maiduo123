@@ -30,6 +30,7 @@ export function generateSemanticGoals(
     const orderedPoints = isPrimaryRound
       ? [primary.point, ...keyPoints.filter((point) => point !== primary.point)]
       : keyPoints;
+    const goalTopic = isPrimaryRound ? primary.point : String(keyPoints[0] || question.question);
     return {
       ...question,
       // Keep the source question as the stable fallback. Runtime uses the plan's
@@ -37,10 +38,16 @@ export function generateSemanticGoals(
       question: question.question,
       goalPriority: isPrimaryRound ? 'primary' as const : 'secondary' as const,
       ...(isPrimaryRound ? { primaryGoal: primary.point, baseQuestion: question.question } : {}),
-      conversationPlan: buildConversationPlan(question.question, primary.point, isPrimaryRound),
+      // 主目标只决定优先级和追问深度；每个问题仍使用自己的目标主题，
+      // 否则次要问题答非所问时会被错误地追问主目标。
+      conversationPlan: buildConversationPlan(
+        question.question,
+        goalTopic,
+        isPrimaryRound,
+      ),
       semanticGoals: [{
         id: `auto-goal-${question.seq}`,
-        name: [context ? `「${context}」场景` : '', isPrimaryRound ? `主目标：${primary.point}` : `次要目标：${primary.point}`].filter(Boolean).join(' '),
+        name: [context ? `「${context}」场景` : '', isPrimaryRound ? `主目标：${primary.point}` : `次要目标：${goalTopic}`].filter(Boolean).join(' '),
         requiredPoints: orderedPoints.map((point, index) => ({
           id: `auto-point-${question.seq}-${index + 1}`,
           label: point,

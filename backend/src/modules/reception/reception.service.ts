@@ -91,6 +91,23 @@ export class ReceptionService implements OnModuleInit {
   };
 
   /**
+   * 内置风格有固定的买家话术；管理端新增的风格至少要读取其情绪属性，
+   * 不能因为编码不在这张表里就静默变成 friendly。
+   */
+  private async resolveStyleBehavior(styleCode: string) {
+    const builtin = this.styleBehavior[styleCode];
+    if (builtin) return builtin;
+    const row = await this.db.one<{ is_emotional: boolean }>(
+      `SELECT is_emotional FROM styles WHERE code = $1 AND status = 1`,
+      [styleCode],
+    );
+    if (!row) return this.styleBehavior.friendly;
+    return row.is_emotional
+      ? { emotional: true, transform: (q: string) => [q, '这个问题我比较在意，能再帮我确认一下吗？'] }
+      : { emotional: false, transform: (q: string) => [q] };
+  }
+
+  /**
    * 开场形态（2026-10-11 客户要求多元化）：直接抛问题 / 先问候 / 只发商品链接。
    * 按会话 id 确定性分配（4:3:3），服务重启后口径不变；问候与链接形态先进入开场白阶段
    * （opener_pending），客服有任何回应后再抛出第一个问题。
@@ -279,8 +296,10 @@ export class ReceptionService implements OnModuleInit {
     const candidateRows = await this.db.many<any>(
       `SELECT s.id, s.script_no, s.name, s.qa_id, s.stage, s.question_seq,
               s.practiced_count, s.last_practiced_at, s.category, s.product_ids AS "productIds",
-              false AS is_emotional
-       FROM scripts s WHERE s.status = 1`
+              COALESCE(st.is_emotional, false) AS is_emotional
+       FROM scripts s
+       LEFT JOIN styles st ON st.id = s.style_id
+       WHERE s.status = 1`
     );
     if (!candidateRows.length) throw new BizError(ERR.PARAM, '当前没有可用剧本，请先创建剧本');
 
@@ -628,7 +647,7 @@ export class ReceptionService implements OnModuleInit {
         return;
       }
     }
-    const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
+    const behavior = await this.resolveStyleBehavior(session.style_code);
     const plannedPrompt = question.conversationPlan?.promptTemplates?.[0] || question.baseQuestion || question.question;
     const texts = behavior.transform(plannedPrompt);
     /**
@@ -727,7 +746,7 @@ export class ReceptionService implements OnModuleInit {
     prompt: string,
     round: number,
   ): Promise<void> {
-    const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
+    const behavior = await this.resolveStyleBehavior(session.style_code);
     const text = behavior.transform(prompt)[0] || prompt;
     await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
       sessionId, text, session.current_seq,
@@ -758,9 +777,12 @@ export class ReceptionService implements OnModuleInit {
     round: number
   ): Promise<void> {
     const planned = question.conversationPlan?.followUpTemplates?.[round];
+    const behavior = await this.resolveStyleBehavior(session.style_code);
     const text = planned
-      ? ((this.styleBehavior[session.style_code] || this.styleBehavior.friendly).transform(planned)[0] || planned)
-      : buildFollowUpText(session.style_code, question.question, round);
+      ? (behavior.transform(planned)[0] || planned)
+      : this.styleBehavior[session.style_code]
+        ? buildFollowUpText(session.style_code, question.question, round)
+        : (behavior.transform(question.question)[0] || question.question);
     await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
       sessionId,
       text,
@@ -825,7 +847,8 @@ export class ReceptionService implements OnModuleInit {
       process.env.SEMANTIC_API_URL,
       Number(process.env.SEMANTIC_MATCH_THRESHOLD || 0.78)
     );
-    const semanticEvaluation = evaluateSemanticReply(text, session.questions, vectorCandidates);
+    // 语义完成状态按当前轮隔离，避免“天/可以/处理”等宽泛词误完成后续问题。
+    const semanticEvaluation = evaluateSemanticReply(text, session.questions, vectorCandidates, currentQuestion?.seq ?? null);
     const hitAny = hitPoints.length > 0 || semanticEvaluation.goalMatches.length > 0;
     // 开场白阶段（买家只发了问候/链接）：任何回应都算有效招呼，不参与要点/情绪扣分
     const openerStage = !!session.opener_pending;
@@ -1102,7 +1125,7 @@ export class ReceptionService implements OnModuleInit {
       `SELECT sender, content, seq, response_sec, is_timeout, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
       [sessionId]
     );
-    const styleEmotional = !!this.styleBehavior[session.style_code]?.emotional;
+    const styleEmotional = (await this.resolveStyleBehavior(session.style_code)).emotional;
 
     const result = scoreSession({
       questions: session.questions.filter((q) => q.seq <= session.total_questions),
