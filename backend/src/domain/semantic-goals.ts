@@ -199,25 +199,82 @@ export function selectNextQuestion(
   alreadySkipped: number[] = []
 ): { nextSeq: number | null; skippedSeqs: number[] } {
   const skipped = new Set(alreadySkipped);
-  // The persisted session cursor is monotonic. Never jump backwards: the caller
-  // records current_seq as nextSeq - 1 and relies on sequential round accounting.
-  const remaining = [...questions].filter((q) => q.seq > currentSeq).sort((a, b) => a.seq - b.seq);
-  for (const question of remaining) {
-    const goals = question.semanticGoals || [];
-    if (goals.length && goals.every((goal) => completedGoalIds.has(goal.id))) {
+  const current = questions.find((item) => item.seq === currentSeq) || null;
+  const currentTopic = conversationTopic(current);
+
+  const future = questions
+    .filter((question) => question.seq > currentSeq)
+    .filter((question) => !skipped.has(question.seq));
+
+  const unresolved: ScriptQuestion[] = [];
+  for (const question of future) {
+    if (isQuestionCompleted(question, completedGoalIds)) {
       skipped.add(question.seq);
       continue;
     }
-    // Optional context-dependent questions are not allowed to open a conversation.
-    // Once at least one core question has been discussed, their original position
-    // is respected to preserve persisted scoring and order state.
-    if (question.requiresContext && currentSeq <= 0) {
-      skipped.add(question.seq);
-      continue;
-    }
-    return { nextSeq: question.seq, skippedSeqs: [...skipped].sort((a, b) => a - b) };
+    unresolved.push(question);
   }
-  return { nextSeq: null, skippedSeqs: [...skipped].sort((a, b) => a - b) };
+
+  if (!unresolved.length) {
+    return { nextSeq: null, skippedSeqs: [...skipped].sort((a, b) => a - b) };
+  }
+
+  const eligible = unresolved.filter((question) => {
+    const sourceType = question.sourceType || 'core';
+    if (sourceType !== 'optional') return true;
+    if (!question.requiresContext) return true;
+
+    const candidateTopic = conversationTopic(question);
+    // 强依赖上下文的问题永远不能作为开场。
+    if (currentSeq <= 0) {
+      skipped.add(question.seq);
+      return false;
+    }
+    // optional 只有与刚刚的主题一致时才允许触发，否则自然跳过。
+    if (currentTopic !== 'general' && candidateTopic !== 'general' && candidateTopic !== currentTopic) {
+      skipped.add(question.seq);
+      return false;
+    }
+    return true;
+  });
+
+  if (!eligible.length) {
+    return { nextSeq: null, skippedSeqs: [...skipped].sort((a, b) => a - b) };
+  }
+
+  // 只要还有核心/衍生问题，就不允许 optional 抢占主线。
+  const substantive = eligible.filter((question) => (question.sourceType || 'core') !== 'optional');
+  const pool = substantive.length ? substantive : eligible;
+
+  const ranked = pool
+    .map((question) => {
+      const sourceType = question.sourceType || 'core';
+      const candidateTopic = conversationTopic(question);
+      let score = sourceType === 'core' ? 100 : sourceType === 'derived' ? 80 : 20;
+
+      // 上下文连续性优先于题号顺序。
+      if (candidateTopic === currentTopic && currentTopic !== 'general') score += 45;
+      if (question.goalPriority === 'primary') score += 15;
+      if (current && question.stage === current.stage) score += 5;
+
+      // 相关性相同才偏向原始顺序。
+      score -= Math.max(0, question.seq - currentSeq) * 0.5;
+      return { question, score };
+    })
+    .sort((a, b) => b.score - a.score || a.question.seq - b.question.seq);
+
+  const selectedSeq = ranked[0]?.question.seq ?? null;
+  if (selectedSeq !== null) {
+    // 因上下文连续性被跨过的问题，本轮视为“未自然触发”，避免最终评分把它当漏答。
+    for (const question of unresolved) {
+      if (question.seq > currentSeq && question.seq < selectedSeq) skipped.add(question.seq);
+    }
+  }
+
+  return {
+    nextSeq: selectedSeq,
+    skippedSeqs: [...skipped].sort((a, b) => a - b),
+  };
 }
 
 export function isNaturalClosingReply(text: string): boolean {
