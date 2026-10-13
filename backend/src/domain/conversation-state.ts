@@ -130,15 +130,6 @@ export function deriveConversationState(
     35 + resolutionScore * 0.65 - emotionPenalty - timeoutPenalty - unresolvedPenalty - followUpPenalty - riskPenalty,
   );
 
-  const purchaseIntent = clamp(
-    customerIntent === 'complaint_resolution'
-      ? 5
-      : customerIntent === 'aftersale_resolution'
-        ? 10 + satisfaction * 0.1
-        : 15 + resolutionScore * 0.35 + satisfaction * 0.3 +
-          (customerIntent === 'purchase_decision' ? 20 : customerIntent === 'order_service' ? 10 : 0),
-  );
-
   const currentSeq = Number(options.currentSeq || 0);
   const current = questions.find((question) => question.seq === currentSeq);
   const currentTopic = current ? conversationTopic(current) : null;
@@ -156,6 +147,15 @@ export function deriveConversationState(
           : ['promotion', 'payment', 'inventory'].includes(String(currentTopic))
             ? 'purchase_decision'
             : 'product_evaluation';
+
+  const purchaseIntent = clamp(
+    customerIntent === 'complaint_resolution'
+      ? 5
+      : customerIntent === 'aftersale_resolution'
+        ? 10 + satisfaction * 0.1
+        : 15 + resolutionScore * 0.35 + satisfaction * 0.3 +
+          (customerIntent === 'purchase_decision' ? 20 : customerIntent === 'order_service' ? 10 : 0),
+  );
 
   const hasTrackedGoals = activeProgress.length > 0 || activeKeywordProgress.length > 0;
   const allResolved = hasTrackedGoals && partialGoalIds.length === 0 && unresolvedGoalIds.length === 0;
