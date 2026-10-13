@@ -1,4 +1,4 @@
-import { getGoalProgress, SemanticReplyEvaluation } from './semantic-goals';
+import { conversationTopic, getGoalProgress, SemanticReplyEvaluation } from './semantic-goals';
 import { ConversationState, ScriptQuestion } from './types';
 
 const clamp = (value: number, min = 0, max = 100): number => Math.max(min, Math.min(max, Math.round(value)));
@@ -75,7 +75,7 @@ export function deriveConversationState(
 
   const currentSeq = Number(options.currentSeq || 0);
   const current = questions.find((question) => question.seq === currentSeq);
-  const currentTopic = current?.conversationPlan?.topic || current?.primaryGoal || null;
+  const currentTopic = current ? conversationTopic(current) : null;
 
   const hasTrackedGoals = activeProgress.length > 0;
   const allResolved = hasTrackedGoals && partialGoalIds.length === 0 && unresolvedGoalIds.length === 0;
