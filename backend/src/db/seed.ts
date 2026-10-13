@@ -134,6 +134,8 @@ export async function runSeed(db: DbService): Promise<{ products: number; backgr
     const scopeProducts = productRows.filter((p) => isScriptInScope(p.category));
     const variants = Math.min(SCRIPT_VARIANTS_PER_CONTENT, scopeProducts.length);
     const scopedPairs: { bg: { id: number; name: string }; qa: typeof qaRows[number]; productId: number }[] = [];
+    // 手册首选回归场景必须能在内置种子中直接复现。
+    const craftDurabilityBg = bgRows.find((bg) => bg.name === '关注点：耐穿与打理成本') || null;
     /** 客户 2026-10-03：一条内容都没有兼容商品时跳过，并记下来（不允许把不匹配的商品配给内容）。 */
     const skippedByConsistency: string[] = [];
     for (let c = 0; c < qaRows.length && bgRows.length; c += 1) {
@@ -153,7 +155,10 @@ export async function runSeed(db: DbService): Promise<{ products: number; backgr
       for (let k = 0; k < variants; k += 1) {
         const cursor = c * variants + k;
         scopedPairs.push({
-          bg: bgRows[cursor % bgRows.length],
+          bg:
+            qaRows[c].template_name === '咨询工艺细节' && k === 0 && craftDurabilityBg
+              ? craftDurabilityBg
+              : bgRows[cursor % bgRows.length],
           qa: qaRows[c],
           productId: compatibleProducts[cursor % compatibleProducts.length].id,
         });
