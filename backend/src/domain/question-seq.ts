@@ -1,5 +1,4 @@
 import { ScriptQuestion } from './types';
-import { FOLLOW_UPS_AFTERSALE, FOLLOW_UPS_PRESALE } from '../db/seed-content';
 import { orderStageForQuestion } from './order';
 
 /** 构建剧本所需的内容切片（买家咨询内容的最小输入）。 */
@@ -18,13 +17,13 @@ export interface QuestionSeqSource {
  * 1. 问题按 question_list 顺序展开，要点与问题一一对应；
  *    缺失要点时退化为「有效回应」，避免该轮无法得分。
  * 2. transferIdxs 标记的问题需要转接主管才算处理好（判定见 domain/scoring.ts）。
- * 3. 轮数不足下限时按接待阶段从追问库补足，超过上限则截断。
+ * 3. 不再为了满足最低轮数注入跨主题的“通用追问”；原始咨询有几条自然问题就保留几条。
+ *    轮数下限仅作为后台提示，不再驱动自动补题；超过上限仍截断。
  *
- * 追问库放在 db/seed-content.ts，与其它训练内容一起维护；
- * 内置剧本（seed）与界面上的批量生成都走本函数，保证两者口径一致。
+ * 这样可以避免“工艺细节”场景被自动插入“发货/优惠/竞品比较”等无关问题。
  */
 export function buildQuestionSeq(qa: QuestionSeqSource, rounds: [number, number]): ScriptQuestion[] {
-  const [minRounds, maxRounds] = rounds;
+  const [, maxRounds] = rounds;
   const transferIdxs = new Set(qa.transferIdxs || []);
   const list = Array.isArray(qa.question_list) ? qa.question_list : [];
   const points = Array.isArray(qa.key_points) ? qa.key_points : [];
@@ -36,29 +35,10 @@ export function buildQuestionSeq(qa: QuestionSeqSource, rounds: [number, number]
     seq: i + 1,
     question,
     keyPoints: points[i] && points[i].length ? points[i] : ['有效回应'],
+    sourceType: 'core',
     needTransfer: transferIdxs.has(i),
     stage: questionStage,
   }));
-
-  // 补追问时先避开与已有问题重复的条目（例如「我要投诉你们！」既可能是内容本身，
-  // 也在售后追问池里），池子用尽后仍不足下限才允许重复。
-  const followUps = qa.stage === 'aftersale' ? FOLLOW_UPS_AFTERSALE : FOLLOW_UPS_PRESALE;
-  const used = new Set(seq.map((item) => item.question));
-  let cursor = 0;
-  let guard = 0;
-  while (seq.length < minRounds && followUps.length && guard < followUps.length) {
-    const f = followUps[cursor % followUps.length];
-    cursor += 1;
-    guard += 1;
-    if (used.has(f.question)) continue;
-    used.add(f.question);
-    seq.push({ seq: seq.length + 1, question: f.question, keyPoints: f.keyPoints, needTransfer: false, stage: questionStage });
-  }
-  while (seq.length < minRounds && followUps.length) {
-    const f = followUps[cursor % followUps.length];
-    cursor += 1;
-    seq.push({ seq: seq.length + 1, question: f.question, keyPoints: f.keyPoints, needTransfer: false, stage: questionStage });
-  }
   // 每个问题带上它对应的订单状态（售前=发货前、售后=发货后），推送端据此生成/推进订单
   return seq.slice(0, maxRounds).map((item) => ({ ...item, orderStage: orderStageForQuestion(item) }));
 }
@@ -103,6 +83,8 @@ export function mixQuestionSeq(
       ...next[index],
       question: source.question,
       keyPoints: source.keyPoints && source.keyPoints.length ? source.keyPoints : ['有效回应'],
+      sourceType: 'optional',
+      requiresContext: true,
       needTransfer: false,
       stage,
     };
