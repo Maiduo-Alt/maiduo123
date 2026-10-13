@@ -1,6 +1,41 @@
 import { conversationTopic, getGoalProgress, SemanticReplyEvaluation } from './semantic-goals';
 import { ConversationState, ScriptQuestion } from './types';
 
+export interface KeywordQuestionProgress {
+  seq: number;
+  covered: number;
+  total: number;
+}
+
+export function buildKeywordQuestionProgress(
+  questions: ScriptQuestion[],
+  messages: Array<{ questionSeq?: number | null; hitPoints?: string[] }>,
+): KeywordQuestionProgress[] {
+  const hitsBySeq = new Map<number, Set<string>>();
+  for (const message of messages || []) {
+    const seq = Number(message.questionSeq || 0);
+    if (!seq) continue;
+    const set = hitsBySeq.get(seq) || new Set<string>();
+    (message.hitPoints || []).forEach((point) => set.add(String(point)));
+    hitsBySeq.set(seq, set);
+  }
+
+  return questions
+    .filter((question) => !(question.semanticGoals || []).length)
+    .map((question) => {
+      const required = [...new Set((question.keyPoints || []).filter((point) => point && point !== '有效回应'))];
+      const hits = hitsBySeq.get(question.seq) || new Set<string>();
+      const covered = required.length
+        ? required.filter((point) => hits.has(point)).length
+        : hits.size > 0 ? 1 : 0;
+      return {
+        seq: question.seq,
+        covered,
+        total: required.length || 1,
+      };
+    });
+}
+
 const clamp = (value: number, min = 0, max = 100): number => Math.max(min, Math.min(max, Math.round(value)));
 
 function stripGeneratedGoalName(value: string): string {
@@ -38,6 +73,7 @@ export function deriveConversationState(
     timeoutCount?: number;
     unresolvedStreak?: number;
     followUps?: number;
+    keywordProgress?: KeywordQuestionProgress[];
   } = {},
 ): ConversationState {
   const skipped = new Set(options.skippedSeqs || []);
@@ -56,8 +92,29 @@ export function deriveConversationState(
   const partialGoalIds = activeProgress.filter((item) => item.status === 'partial').map((item) => item.goal.id);
   const unresolvedGoalIds = activeProgress.filter((item) => item.status === 'untriggered').map((item) => item.goal.id);
 
-  const totalPoints = activeProgress.reduce((sum, item) => sum + (item.goal.requiredPoints || []).length, 0);
-  const coveredPoints = activeProgress.reduce((sum, item) => sum + item.coveredPointIds.length, 0);
+  const keywordQuestionBySeq = new Map(
+    questions
+      .filter((question) => !(question.semanticGoals || []).length)
+      .map((question) => [question.seq, question] as const),
+  );
+  const activeKeywordProgress = (options.keywordProgress || []).filter((item) => {
+    const question = keywordQuestionBySeq.get(item.seq);
+    return question && !skipped.has(item.seq) && (question.sourceType || 'core') !== 'optional';
+  });
+  for (const item of activeKeywordProgress) {
+    const id = `keyword-seq-${item.seq}`;
+    const ratio = item.total > 0 ? item.covered / item.total : 0;
+    if (ratio >= 0.8) resolvedGoalIds.push(id);
+    else if (ratio > 0) partialGoalIds.push(id);
+    else unresolvedGoalIds.push(id);
+  }
+
+  const semanticTotalPoints = activeProgress.reduce((sum, item) => sum + (item.goal.requiredPoints || []).length, 0);
+  const semanticCoveredPoints = activeProgress.reduce((sum, item) => sum + item.coveredPointIds.length, 0);
+  const keywordTotalPoints = activeKeywordProgress.reduce((sum, item) => sum + Math.max(1, item.total), 0);
+  const keywordCoveredPoints = activeKeywordProgress.reduce((sum, item) => sum + Math.min(item.total, item.covered), 0);
+  const totalPoints = semanticTotalPoints + keywordTotalPoints;
+  const coveredPoints = semanticCoveredPoints + keywordCoveredPoints;
   const resolutionScore = totalPoints ? clamp((coveredPoints / totalPoints) * 100) : 0;
 
   const emotionValue = Number(options.emotionValue ?? 20);
@@ -77,12 +134,15 @@ export function deriveConversationState(
   const current = questions.find((question) => question.seq === currentSeq);
   const currentTopic = current ? conversationTopic(current) : null;
 
-  const hasTrackedGoals = activeProgress.length > 0;
+  const hasTrackedGoals = activeProgress.length > 0 || activeKeywordProgress.length > 0;
   const allResolved = hasTrackedGoals && partialGoalIds.length === 0 && unresolvedGoalIds.length === 0;
   const primaryGoalIds = new Set(
     questions
       .filter((question) => (question.sourceType || 'core') === 'core' && question.goalPriority === 'primary')
-      .flatMap((question) => (question.semanticGoals || []).map((goal) => goal.id))
+      .flatMap((question) => {
+        const semanticIds = (question.semanticGoals || []).map((goal) => goal.id);
+        return semanticIds.length ? semanticIds : [`keyword-seq-${question.seq}`];
+      })
   );
   const primaryResolved =
     primaryGoalIds.size > 0 &&
@@ -91,7 +151,10 @@ export function deriveConversationState(
   const coreGoalIds = new Set(
     questions
       .filter((question) => (question.sourceType || 'core') === 'core')
-      .flatMap((question) => (question.semanticGoals || []).map((goal) => goal.id))
+      .flatMap((question) => {
+        const semanticIds = (question.semanticGoals || []).map((goal) => goal.id);
+        return semanticIds.length ? semanticIds : [`keyword-seq-${question.seq}`];
+      })
   );
   const allCoreResolved =
     coreGoalIds.size > 0 &&
