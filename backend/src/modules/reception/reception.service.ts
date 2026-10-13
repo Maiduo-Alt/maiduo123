@@ -491,8 +491,18 @@ export class ReceptionService implements OnModuleInit {
       const firstStage: OrderStage = questions[0].orderStage || orderStageForQuestion(questions[0]);
       const order = this.buildOrder(Number(row.id), firstStage, Date.parse(String(row.join_at)), product);
       await this.persistOrder(Number(row.id), order);
+      const initialConversationState = deriveConversationState(questions, [], {
+        currentSeq: 0,
+        skippedSeqs: [],
+        emotionValue: styleRow?.emotion_base ?? 20,
+      });
+      await this.db.query(`UPDATE sessions SET conversation_state = $2::jsonb WHERE id = $1`, [
+        row.id,
+        JSON.stringify(initialConversationState),
+      ]);
       createdSessions.push({
         ...row,
+        conversation_state: initialConversationState,
         order_no: order.orderNo,
         // 金额列是 NUMERIC，驱动回传的是字符串，这里按同一口径写字符串
         order_amount: String(order.amount),
