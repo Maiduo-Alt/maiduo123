@@ -826,6 +826,22 @@ export default function Scripts() {
                     </Typography.Text>
                     {q.goalPriority === 'primary' && <Tag color="gold">主目标：{q.primaryGoal}</Tag>}
                     {q.goalPriority === 'secondary' && <Tag>次要目标</Tag>}
+                    {q.sourceType === 'core' && <Tag color="blue">核心问题</Tag>}
+                    {q.sourceType === 'derived' && <Tag color="cyan">衍生追问</Tag>}
+                    {q.sourceType === 'optional' && <Tag color="purple">条件触发</Tag>}
+                    {q.triggerConditions && (
+                      <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
+                        触发条件：
+                        {q.triggerConditions.stages?.length ? ` 阶段 ${q.triggerConditions.stages.join(' / ')}` : ''}
+                        {q.triggerConditions.minResolutionScore !== undefined
+                          ? `；解决度 ≥ ${q.triggerConditions.minResolutionScore}%`
+                          : ''}
+                        {q.triggerConditions.afterBusinessAction?.length
+                          ? `；业务动作 ${q.triggerConditions.afterBusinessAction.join(' / ')}`
+                          : ''}
+                        {q.triggerConditions.requiresOrder ? '；需要订单上下文' : ''}
+                      </div>
+                    )}
                     {q.conversationPlan && (
                       <div style={{ fontSize: 12, color: '#59708a', marginTop: 4 }}>
                         提问计划：{q.conversationPlan.priority === 'primary' ? '主目标·细问' : '次要目标·简问'}；
