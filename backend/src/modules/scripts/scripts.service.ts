@@ -10,7 +10,7 @@ import { SettingsService } from '../settings/settings.service';
 import { ScriptQuestion } from '../../domain/types';
 import { BUILTIN_QA_BY_NAME } from '../../db/seed-content';
 import { isProductCompatibleWithQuestions, questionCategoryRule } from '../../domain/product-consistency';
-import { buildConversationPlan, generateSemanticGoals } from '../../domain/semantic-goal-generator';
+import { buildConversationPlan, generateSemanticGoals, inferGeneratedCustomerGoal } from '../../domain/semantic-goal-generator';
 import { inferCustomerGoal } from '../../domain/conversation-state';
 
 /** 案例回流统一使用的背景名（方案 F3-07）。 */
@@ -824,16 +824,25 @@ export class ScriptsService {
       const isOldPrimary = question.goalPriority === 'primary';
       const primaryGoal = isPrimary ? String(primary.point.label) : undefined;
       const originalQuestion = question.baseQuestion || question.question;
-      return {
+      const nextQuestion: ScriptQuestion = {
         ...question,
         ...(configuredGoals ? { semanticGoals: configuredGoals } : {}),
         ...(primary ? {
           goalPriority: isPrimary ? 'primary' as const : 'secondary' as const,
           conversationPlan: buildConversationPlan(originalQuestion, primaryGoal || String(question.keyPoints[0] || '咨询内容'), isPrimary),
-          ...(isPrimary ? { primaryGoal, baseQuestion: originalQuestion } : {}),
+          ...(isPrimary ? {
+            primaryGoal,
+            customerGoal: inferGeneratedCustomerGoal(questionSeq, primaryGoal || '咨询内容'),
+            baseQuestion: originalQuestion,
+          } : {}),
           ...(!isPrimary && isOldPrimary ? { question: originalQuestion } : {}),
         } : {}),
       };
+      if (primary && !isPrimary && isOldPrimary) {
+        delete nextQuestion.primaryGoal;
+        delete nextQuestion.customerGoal;
+      }
+      return nextQuestion;
     });
   }
 }
