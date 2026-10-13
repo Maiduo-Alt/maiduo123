@@ -101,6 +101,28 @@ describe('semantic goal evaluation', () => {
     expect(selectNextQuestion(questions, 1, new Set())).toEqual({ nextSeq: 2, skippedSeqs: [] });
   });
 
+  it('prefers a related core question over an unrelated optional question', () => {
+    const flow: ScriptQuestion[] = [
+      { seq: 1, question: '是包边还是锁边？', keyPoints: ['工艺'], sourceType: 'core',
+        conversationPlan: { topic: '工艺', priority: 'primary', depth: 'focused', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+      { seq: 2, question: '现在有额外优惠吗？', keyPoints: ['优惠'], sourceType: 'optional', requiresContext: true,
+        conversationPlan: { topic: '优惠', priority: 'secondary', depth: 'normal', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+      { seq: 3, question: '走线牢不牢？', keyPoints: ['走线'], sourceType: 'core',
+        conversationPlan: { topic: '工艺', priority: 'secondary', depth: 'normal', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+    ];
+    expect(selectNextQuestion(flow, 1, new Set())).toEqual({ nextSeq: 3, skippedSeqs: [2] });
+  });
+
+  it('naturally ends instead of forcing a context-dependent optional topic', () => {
+    const flow: ScriptQuestion[] = [
+      { seq: 1, question: '有内衬吗？', keyPoints: ['内衬'], sourceType: 'core',
+        conversationPlan: { topic: '内衬', priority: 'primary', depth: 'focused', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+      { seq: 2, question: '那大概多久能处理好呢？', keyPoints: ['发货', '时间'], sourceType: 'optional', requiresContext: true,
+        conversationPlan: { topic: '发货', priority: 'secondary', depth: 'normal', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+    ];
+    expect(selectNextQuestion(flow, 1, new Set())).toEqual({ nextSeq: null, skippedSeqs: [2] });
+  });
+
   it('recognizes a clear customer closing without treating an open follow-up as a close', () => {
     expect(isNaturalClosingReply('好的，暂时没有其他问题，谢谢您。')).toBe(true);
     expect(isNaturalClosingReply('谢谢，另外还想问一下发货时间')).toBe(false);
