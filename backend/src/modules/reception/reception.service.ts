@@ -885,9 +885,16 @@ export class ReceptionService implements OnModuleInit {
       currentProgress.every((progress: any) => progress.status === 'completed');
     const partialProgress = currentProgress.filter((progress: any) => progress.status === 'partial');
 
+    const meaningfulKeyPointCount = (question.keyPoints || [])
+      .filter((point) => point && point !== '有效回应').length;
     const judgePassed = judgedReplies.some((r) => {
       const rr = r.rule_result || {};
-      if (rr.judge) return !!rr.judge.pass;
+      if (rr.judge) {
+        if (!rr.judge.pass) return false;
+        // 关键词模式下，多要点问题也不能被泛化“可以/支持”一句带过。
+        if (rr.judge.signal === 'stance' && meaningfulKeyPointCount > 1) return false;
+        return true;
+      }
       return (rr.hitPoints || []).length > 0;
     });
     const semanticPointCount = (question.semanticGoals || [])
