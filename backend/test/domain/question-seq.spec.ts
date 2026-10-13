@@ -1,4 +1,4 @@
-import { buildQuestionSeq, mixQuestionSeq } from '../../src/domain/question-seq';
+import { buildQuestionSeq, mixQuestionSeq, normalizeLegacyQuestionSeq } from '../../src/domain/question-seq';
 import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../src/db/seed-content';
 
 /** 构造一条最小的买家咨询内容。 */
@@ -95,5 +95,39 @@ describe('问题序列：售前 / 售后按比例混合（客户 2026-10-03）',
     expect(presale.length).toBe(2);
     expect(mixed.filter((q) => q.stage === 'aftersale').length).toBe(4);
     expect(presale.every((q) => PRESALE_PRODUCT_QUESTIONS.some((p) => p.question === q.question))).toBe(true);
+  });
+});
+
+
+describe('旧剧本兼容：通用补题降级', () => {
+  it('把旧版自动生成的通用补题降级为 optional，且取消错误主目标', () => {
+    const normalized = normalizeLegacyQuestionSeq([
+      {
+        seq: 1,
+        question: '那大概多久能处理好呢？',
+        keyPoints: ['发货', '时间'],
+        goalPriority: 'primary',
+        primaryGoal: '发货',
+        semanticGoals: [{ id: 'auto-goal-1', name: '主目标：发货', requiredPoints: [{ id: 'p1', label: '发货', matchAny: ['发货'] }] }],
+      },
+      {
+        seq: 2,
+        question: '是包边还是锁边？',
+        keyPoints: ['工艺', '走线'],
+        semanticGoals: [{ id: 'auto-goal-2', name: '次要目标：工艺', requiredPoints: [{ id: 'p2', label: '工艺', matchAny: ['工艺'] }] }],
+      },
+    ]);
+    expect(normalized[0]).toEqual(expect.objectContaining({
+      sourceType: 'optional',
+      requiresContext: true,
+      goalPriority: 'secondary',
+    }));
+    expect(normalized[0].primaryGoal).toBeUndefined();
+    expect(normalized[1].sourceType).toBe('core');
+  });
+
+  it('人工/新结构问题不做旧版误判', () => {
+    const current = [{ seq: 1, question: '现在下单还有什么额外优惠吗？', keyPoints: ['优惠'], sourceType: 'core' as const }];
+    expect(normalizeLegacyQuestionSeq(current)).toEqual(current);
   });
 });
