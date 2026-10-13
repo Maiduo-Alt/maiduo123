@@ -35,6 +35,9 @@ export function deriveConversationState(
     currentSeq?: number;
     skippedSeqs?: number[];
     emotionValue?: number;
+    timeoutCount?: number;
+    unresolvedStreak?: number;
+    followUps?: number;
   } = {},
 ): ConversationState {
   const skipped = new Set(options.skippedSeqs || []);
@@ -59,7 +62,16 @@ export function deriveConversationState(
 
   const emotionValue = Number(options.emotionValue ?? 20);
   const emotionPenalty = Math.max(0, emotionValue - 30) * 0.6;
-  const satisfaction = clamp(35 + resolutionScore * 0.65 - emotionPenalty);
+  const timeoutPenalty = Math.max(0, Number(options.timeoutCount || 0)) * 4;
+  const unresolvedPenalty = Math.max(0, Number(options.unresolvedStreak || 0)) * 5;
+  const followUpPenalty = Math.max(0, Number(options.followUps || 0)) * 3;
+  const riskPenalty = evaluations.reduce(
+    (sum, evaluation) => sum + (evaluation.riskItems || []).reduce((inner, item) => inner + Math.min(10, Math.max(0, item.penalty || 0)), 0),
+    0,
+  );
+  const satisfaction = clamp(
+    35 + resolutionScore * 0.65 - emotionPenalty - timeoutPenalty - unresolvedPenalty - followUpPenalty - riskPenalty,
+  );
 
   const currentSeq = Number(options.currentSeq || 0);
   const current = questions.find((question) => question.seq === currentSeq);
