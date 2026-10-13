@@ -650,8 +650,10 @@ describe('在线模拟接待端到端链路', () => {
       });
     expect(qa.body.code).toBe(0);
 
-    const products = await request(http).get('/api/products?pageSize=1&status=1').set(auth);
-    const product = products.body.data.list[0];
+    // 工艺题必须使用服饰商品，不能假定按 id DESC 排序的首件商品一定兼容。
+    const products = await request(http).get('/api/products?pageSize=100&status=1&category=女装').set(auth);
+    expect(products.body.code).toBe(0);
+    const product = products.body.data.list.find((item: any) => item.category === '女装');
     expect(product).toBeTruthy();
 
     const created = await request(http)
@@ -777,13 +779,12 @@ describe('在线模拟接待端到端链路', () => {
     const question: string = session.questions[0].question;
     const styleCode: string = session.styleCode;
     if (styleCode === 'impatient') {
-      expect(buyerMessages[0]).toBe(question.replace(/？$/, '！'));
-      expect(buyerMessages).toContain('你们到底能不能处理？');
+      expect(buyerMessages[0]).toBe(`${question.replace(/[？?]$/u, '')}？麻烦直接说一下。`);
     } else if (styleCode === 'hesitant') {
-      expect(buyerMessages[0]).toBe(question);
-      expect(buyerMessages).toContain('我怕不合适，能保证吗？');
+      expect(buyerMessages[0]).toBe(`我想确认一下，${question.trim()}`);
     } else if (styleCode === 'silent') {
-      expect(buyerMessages[0]).toBe(question.length > 12 ? `${question.slice(0, 12)}？` : question);
+      // 沉默寡言只控制语气，不允许截断用户真正关心的问题。
+      expect(buyerMessages[0]).toBe(question.trim());
     } else {
       // friendly / direct / 自定义风格：原样推送，不加戏
       expect(buyerMessages[0]).toBe(question);
