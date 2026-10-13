@@ -54,6 +54,21 @@ const MISSING_POINT_TEMPLATES: Record<string, Template> = {
 
 const DEFAULT_MISSING_POINT_TEMPLATE: Template = MISSING_POINT_TEMPLATES.friendly;
 
+const TOPIC_TRANSITION_TEMPLATES: Record<string, string> = {
+  friendly: '对了，我还想顺便问一下：{q}',
+  hesitant: '另外我还想确认一下：{q}',
+  direct: '另外一个问题：{q}',
+  impatient: '还有个问题，麻烦直接说下：{q}',
+  silent: '还有，{q}',
+};
+
+export function buildTopicTransitionText(styleCode: string, question: string): string {
+  const text = String(question || '').trim();
+  if (!text) return text;
+  const template = TOPIC_TRANSITION_TEMPLATES[styleCode] || TOPIC_TRANSITION_TEMPLATES.friendly;
+  return template.replace('{q}', text);
+}
+
 /**
  * 生成追问话术（1 条）。
  * @param styleCode 沟通风格编码
