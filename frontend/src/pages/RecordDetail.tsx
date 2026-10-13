@@ -66,7 +66,12 @@ export default function RecordDetail() {
     { title: '买家', dataIndex: 'buyerName', width: 120 },
     { title: '剧本', dataIndex: 'scriptName', ellipsis: true, render: (v: string) => v || <Typography.Text type="secondary">已删除剧本</Typography.Text> },
     { title: '买家风格', dataIndex: 'styleName', width: 120 },
-    { title: '问题数', dataIndex: 'totalQuestions', width: 80 },
+    {
+      title: '有效问题数',
+      dataIndex: 'totalQuestions',
+      width: 90,
+      render: (v: number, row: any) => Math.max(0, Number(v || 0) - (row.skippedSeqs || []).length),
+    },
     { title: '超时', dataIndex: 'timeoutCount', width: 70 },
     { title: '情绪值', dataIndex: 'emotionValue', width: 80 },
     { title: '响应时效', dataIndex: 'responseScore', width: 90, render: (v) => v ?? '-' },
