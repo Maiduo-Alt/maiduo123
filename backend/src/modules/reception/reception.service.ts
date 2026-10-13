@@ -494,6 +494,9 @@ export class ReceptionService implements OnModuleInit {
         currentSeq: 0,
         skippedSeqs: [],
         emotionValue: styleRow?.emotion_base ?? 20,
+        timeoutCount: 0,
+        unresolvedStreak: 0,
+        followUps: 0,
       });
       await this.db.query(`UPDATE sessions SET conversation_state = $2::jsonb WHERE id = $1`, [
         row.id,
@@ -559,6 +562,9 @@ export class ReceptionService implements OnModuleInit {
       currentSeq: overrides.currentSeq ?? session.current_seq,
       skippedSeqs: overrides.skippedSeqs ?? session.skipped_seqs ?? [],
       emotionValue: overrides.emotionValue ?? session.emotion_value,
+      timeoutCount: session.timeout_count,
+      unresolvedStreak: session.unresolved_streak,
+      followUps: session.follow_ups,
     });
     await this.db.query(`UPDATE sessions SET conversation_state = $2::jsonb WHERE id = $1`, [
       session.id,
@@ -1066,6 +1072,9 @@ export class ReceptionService implements OnModuleInit {
       currentSeq: session.current_seq,
       skippedSeqs: session.skipped_seqs || [],
       emotionValue: emotion.value,
+      timeoutCount: session.timeout_count + (isTimeout ? 1 : 0),
+      unresolvedStreak: hitAny || openerStage ? 0 : session.unresolved_streak + 1,
+      followUps: session.follow_ups,
     });
 
     const ruleResult = {
