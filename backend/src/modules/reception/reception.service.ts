@@ -754,6 +754,10 @@ export class ReceptionService implements OnModuleInit {
       [sessionId, nextSeq]
     );
     const updated = await this.loadSession(sessionId);
+    const pushedConversationState = await this.persistConversationState(updated, evaluations, {
+      currentSeq: nextSeq,
+      skippedSeqs: next.skippedSeqs,
+    });
     const attempt = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
       updated.attempt_id,
     ]);
@@ -767,6 +771,7 @@ export class ReceptionService implements OnModuleInit {
       // 售前问题不带订单；售后问题会在这里带上自动生成的订单（前端据此直接刷新订单卡）
       order,
       questionStage: question.stage || null,
+      conversationState: pushedConversationState,
       // 服务端发送时间：供前端与压测工具测算端到端推送延迟（方案 9.3）
       sentAt: new Date().toISOString(),
     });
