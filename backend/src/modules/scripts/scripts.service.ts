@@ -11,6 +11,7 @@ import { ScriptQuestion } from '../../domain/types';
 import { BUILTIN_QA_BY_NAME } from '../../db/seed-content';
 import { isProductCompatibleWithQuestions, questionCategoryRule } from '../../domain/product-consistency';
 import { buildConversationPlan, generateSemanticGoals } from '../../domain/semantic-goal-generator';
+import { inferCustomerGoal } from '../../domain/conversation-state';
 
 /** 案例回流统一使用的背景名（方案 F3-07）。 */
 const CASE_BACKGROUND_NAME = '案例回流';
@@ -186,7 +187,12 @@ export class ScriptsService {
     if (!row) throw new BizError(ERR.NOT_FOUND, '剧本不存在');
     const params = await this.settings.getParams();
     const questionSeq = normalizeLegacyQuestionSeq((row.questionSeq || []) as ScriptQuestion[]);
-    return { ...row, questionSeq, roundsWarning: checkRounds(questionSeq.length, params) };
+    return {
+      ...row,
+      questionSeq,
+      customerGoal: inferCustomerGoal(questionSeq),
+      roundsWarning: checkRounds(questionSeq.length, params),
+    };
   }
 
   /**
