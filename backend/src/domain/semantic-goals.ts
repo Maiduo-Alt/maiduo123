@@ -155,6 +155,43 @@ export function getGoalProgress(questions: ScriptQuestion[], evaluations: Semant
   });
 }
 
+type ConversationTopic =
+  | 'craft'
+  | 'material'
+  | 'size'
+  | 'logistics'
+  | 'aftersale'
+  | 'price'
+  | 'order'
+  | 'general';
+
+function conversationTopic(question?: ScriptQuestion | null): ConversationTopic {
+  const text = [question?.conversationPlan?.topic, question?.question, ...(question?.keyPoints || [])].filter(Boolean).join(' ');
+  if (/工艺|做工|走线|缝线|包边|锁边|内衬|耐穿|开线|脱线/u.test(text)) return 'craft';
+  if (/材质|面料|透气|厚度|起球|掉色|缩水|洗涤/u.test(text)) return 'material';
+  if (/尺码|码数|尺寸|偏大|偏小|裙长|衣长|身高|体重/u.test(text)) return 'size';
+  if (/发货|物流|快递|配送|现货|预售|到货|时效/u.test(text)) return 'logistics';
+  if (/退|换|退款|售后|补发|赔偿|质量|破损/u.test(text)) return 'aftersale';
+  if (/价格|优惠|折扣|活动|便宜|券|满减/u.test(text)) return 'price';
+  if (/支付|付款|下单|订单|发票/u.test(text)) return 'order';
+  return 'general';
+}
+
+function isQuestionCompleted(question: ScriptQuestion, completedGoalIds: Set<string>): boolean {
+  const goals = question.semanticGoals || [];
+  return goals.length > 0 && goals.every((goal) => completedGoalIds.has(goal.id));
+}
+
+/**
+ * 选择下一条“自然可问”的问题。
+ *
+ * 与旧版 currentSeq + 1 不同：
+ * 1. 已经被客服提前回答完整的目标直接跳过；
+ * 2. core/derived 优先于 optional；
+ * 3. 强依赖上下文的 optional 只有与当前话题一致时才允许出现；
+ * 4. 同话题问题优先，避免“工艺 → 发货 → 优惠”式跳跃；
+ * 5. 如果只剩不符合上下文的 optional，则自然结束，而不是为了覆盖率硬问。
+ */
 export function selectNextQuestion(
   questions: ScriptQuestion[],
   currentSeq: number,
@@ -162,16 +199,66 @@ export function selectNextQuestion(
   alreadySkipped: number[] = []
 ): { nextSeq: number | null; skippedSeqs: number[] } {
   const skipped = new Set(alreadySkipped);
-  let seq = currentSeq + 1;
-  const finalSeq = questions.reduce((max, question) => Math.max(max, question.seq), 0);
-  while (seq <= finalSeq) {
-    const question = questions.find((item) => item.seq === seq);
-    const goals = question?.semanticGoals || [];
-    if (!goals.length || !goals.every((goal) => completedGoalIds.has(goal.id))) break;
-    skipped.add(seq);
-    seq += 1;
+  const current = questions.find((item) => item.seq === currentSeq) || null;
+  const currentTopic = conversationTopic(current);
+
+  const future = questions
+    .filter((question) => question.seq > currentSeq)
+    .filter((question) => !skipped.has(question.seq));
+
+  const unresolved: ScriptQuestion[] = [];
+  for (const question of future) {
+    if (isQuestionCompleted(question, completedGoalIds)) {
+      skipped.add(question.seq);
+      continue;
+    }
+    unresolved.push(question);
   }
-  return { nextSeq: seq <= finalSeq ? seq : null, skippedSeqs: [...skipped] };
+
+  if (!unresolved.length) return { nextSeq: null, skippedSeqs: [...skipped].sort((a, b) => a - b) };
+
+  const eligible = unresolved.filter((question) => {
+    const sourceType = question.sourceType || 'core';
+    if (sourceType !== 'optional') return true;
+    if (!question.requiresContext) return true;
+
+    // 上下文依赖问题必须和刚聊的话题一致；否则视为本次会话未自然触发，不强行覆盖。
+    const candidateTopic = conversationTopic(question);
+    if (currentSeq <= 0) {
+      skipped.add(question.seq);
+      return false;
+    }
+    if (currentTopic !== 'general' && candidateTopic !== 'general' && candidateTopic !== currentTopic) {
+      skipped.add(question.seq);
+      return false;
+    }
+    return true;
+  });
+
+  if (!eligible.length) return { nextSeq: null, skippedSeqs: [...skipped].sort((a, b) => a - b) };
+
+  // 只要还有核心/衍生问题，就不让 optional 抢占对话主线。
+  const substantive = eligible.filter((question) => (question.sourceType || 'core') !== 'optional');
+  const pool = substantive.length ? substantive : eligible;
+
+  const ranked = pool
+    .map((question) => {
+      const sourceType = question.sourceType || 'core';
+      const candidateTopic = conversationTopic(question);
+      let score = sourceType === 'core' ? 100 : sourceType === 'derived' ? 80 : 20;
+      if (candidateTopic === currentTopic && currentTopic !== 'general') score += 45;
+      if (question.goalPriority === 'primary') score += 15;
+      if (current && question.stage === current.stage) score += 5;
+      // 在相关性相近时保留原有自然顺序，避免无意义跳跃。
+      score -= Math.max(0, question.seq - currentSeq) * 0.5;
+      return { question, score };
+    })
+    .sort((a, b) => b.score - a.score || a.question.seq - b.question.seq);
+
+  return {
+    nextSeq: ranked[0]?.question.seq ?? null,
+    skippedSeqs: [...skipped].sort((a, b) => a - b),
+  };
 }
 
 export function isNaturalClosingReply(text: string): boolean {
