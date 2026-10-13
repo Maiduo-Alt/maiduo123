@@ -184,6 +184,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   follow_ups    INTEGER NOT NULL DEFAULT 0,
   -- 2026-10-11 开场多元化：买家先只发问候/商品链接，客服回应后再抛出第一个问题
   opener_pending BOOLEAN NOT NULL DEFAULT false,
+  -- 客户行为层状态：核心目标/当前主题/解决度/满意度。可由消息重建，持久化便于恢复与复盘。
+  conversation_state JSONB NOT NULL DEFAULT '{}'::jsonb,
   score         NUMERIC(5,1)
 );
 
@@ -191,6 +193,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS follow_ups INTEGER NOT NULL DEFAULT 0;
 -- 老库补列（幂等）：开场白阶段标记
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS opener_pending BOOLEAN NOT NULL DEFAULT false;
+-- 老库补列（幂等）：客户行为层状态
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS conversation_state JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS messages (
   id            SERIAL PRIMARY KEY,
