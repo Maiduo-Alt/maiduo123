@@ -115,10 +115,8 @@ export class ReceptionService implements OnModuleInit {
     },
     silent: {
       emotional: false,
-      transform: (q) => {
-        const text = String(q || '').trim();
-        return [text.length > 18 ? `${text.slice(0, 18).replace(/[，。！？?！]+$/u, '')}？` : text];
-      },
+      // “沉默寡言”只减少额外语气，不截断问题本身，避免关键条件被裁掉后改变语义。
+      transform: (q) => [String(q || '').trim()],
     },
   };
 
@@ -755,14 +753,17 @@ export class ReceptionService implements OnModuleInit {
     const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
     const rawPrompt = question.conversationPlan?.promptTemplates?.[0] || question.baseQuestion || question.question;
     const nextTopic = conversationTopic(question);
-    const plannedPrompt =
+    const isTopicTransition =
       session.current_seq > 0 &&
       previousTopic !== 'general' &&
       nextTopic !== 'general' &&
-      previousTopic !== nextTopic
-        ? buildTopicTransitionText(session.style_code, rawPrompt)
-        : rawPrompt;
-    const texts = behavior.transform(plannedPrompt);
+      previousTopic !== nextTopic;
+    const plannedPrompt = isTopicTransition
+      ? buildTopicTransitionText(session.style_code, rawPrompt)
+      : rawPrompt;
+    // 转场文案已经按风格生成，不能再套一次 styleBehavior，否则会出现
+    // “我想确认一下，另外我还想确认一下……”这类双重风格前缀。
+    const texts = isTopicTransition ? [plannedPrompt] : behavior.transform(plannedPrompt);
     /**
      * 客户 2026-10-03：**推送哪个问题，就带出与之关联的订单状态**。
      * 售前问题配「待支付 / 待发货」，售后问题配「已发货」——同一笔记订单随问题推进状态。
