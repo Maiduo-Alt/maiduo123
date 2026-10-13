@@ -831,7 +831,7 @@ export default function Reception() {
                 }
               >
                 <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                  并发客户 {level.concurrent} 名 · 每会话 6～10 轮
+                  并发客户 {level.concurrent} 名 · 会话按素材自然问题推进（建议 6～10 轮）
                   <br />
                   响应等待口径：{level.waitTolerance > 1 ? '宽松（×1.5）' : '标准'}
                 </Typography.Paragraph>
