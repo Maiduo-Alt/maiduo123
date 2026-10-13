@@ -466,7 +466,7 @@ export default function Scripts() {
             title: '轮数',
             dataIndex: 'rounds',
             width: 90,
-            render: (v: number) => (v < 6 ? <Tag color="orange">{v} 轮</Tag> : <Tag color="green">{v} 轮</Tag>),
+            render: (v: number) => <Tag color="blue">{v} 轮</Tag>,
           },
           { title: '被练次数', dataIndex: 'practicedCount', width: 90 },
           { title: '平均分', dataIndex: 'avgScore', width: 90, render: (v) => (v === null ? '-' : Number(v).toFixed(1)) },
@@ -608,7 +608,7 @@ export default function Scripts() {
                   name="ruleMode"
                   label="规则模式"
                   rules={[{ required: true }]}
-                  extra="随机抽取一个主目标并优先推送更具体的问题，其余要点作为次要目标；评分仍按现有要点规则计算。生成后可在剧本列表调整目标。"
+                  extra="系统根据买家背景、咨询主题、接受方案与核心问题确定主目标，不再随机抽取；原始问题顺序保持不变。生成后可在剧本列表调整目标。"
                 >
                   <Radio.Group>
                     <Radio value="keyword">关键词规则（现有模式）</Radio>
@@ -786,11 +786,11 @@ export default function Scripts() {
                 showIcon
                 style={{ marginTop: 16 }}
                 message="系统会自动整理语义目标和提问计划"
-                description="创建时根据所选咨询内容的问题和考核要点，为每轮生成可审核的场景、主次目标和固定提问计划。系统只从计划模板中推进问题，不自由生成问题；生成后可在剧本列表打开“预览”，点击“配置语义目标”进行调整。"
+                description="创建时根据咨询内容、买家背景与接受方案生成可审核的客户核心目标、主次目标和提问计划。不再为了最低轮数跨主题补题，也不会把主目标强行移动到第一轮；生成后可在“预览”中检查并调整语义目标。"
               />
             )}
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-              生成数量 = 背景数 × 每个背景生成数量；相似问题归入同一场景，不同主题尽量分布到不同剧本。买家沟通风格按《沟通风格》中的占比自动分配。
+              生成数量 = 背景数 × 每个背景生成数量；每条咨询内容保持独立场景，内部问题顺序和上下文关系不打散。买家沟通风格按《沟通风格》中的占比自动分配。
             </Typography.Paragraph>
           </div>
         </Form>
@@ -810,6 +810,8 @@ export default function Scripts() {
               买家背景：{detail.bgName}
               <br />
               咨询内容：{detail.qaTemplate}
+              <br />
+              客户核心目标：{detail.customerGoal || '未生成'}
               <br />
               买家接受方案：{detail.acceptedAnswer || '未填写'}
             </Typography.Paragraph>
