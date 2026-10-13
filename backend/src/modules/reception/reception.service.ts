@@ -1221,8 +1221,8 @@ export class ReceptionService implements OnModuleInit {
       session.total_questions - (session.skipped_seqs || []).length
     );
     await this.db.query(
-      `UPDATE sessions SET state = $7,
-                           close_deadline_at = CASE WHEN $7 = 'awaiting_agent_close' THEN $8 ELSE NULL END,
+      `UPDATE sessions SET state = $7::varchar,
+                           close_deadline_at = CASE WHEN $7::varchar = 'awaiting_agent_close' THEN $8::timestamptz ELSE NULL END,
                            last_agent_at = now(),
                            first_reply_at = COALESCE(first_reply_at, now()),
                            max_response_sec = $2,
@@ -1383,7 +1383,7 @@ export class ReceptionService implements OnModuleInit {
         this.scheduler.cancel(`next:${s.id}`);
         this.scheduler.cancel(`join:${s.id}`);
         this.scheduler.cancel(`close:${s.id}`);
-        await this.completeSession(s.id, s.current_seq >= s.total_questions ? 'normal' : 'early');
+        await this.completeSession(s.id, s.state === 'awaiting_agent_close' ? 'manual' : s.current_seq >= s.total_questions ? 'normal' : 'early');
       }
     }
     return this.finalizeAttempt(attemptId);
