@@ -759,7 +759,7 @@ export class ScriptsService {
 
   /**
    * 由咨询内容构建提问序列（方案 4.5 兜底规则）。
-   * 与内置剧本共用 domain/question-seq.ts 的同一套口径：按接待阶段补追问、支持转接题。
+   * 与内置剧本共用 domain/question-seq.ts 的同一套口径：保留原始自然问题顺序、支持转接题，不为最低轮数跨主题补题。
    */
   buildSeqFromQa(
     qa: { template_name?: string; stage?: string | null; question_list: string[]; key_points: string[][] },
