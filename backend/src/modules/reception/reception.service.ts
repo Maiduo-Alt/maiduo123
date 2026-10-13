@@ -1026,16 +1026,24 @@ export class ReceptionService implements OnModuleInit {
       hitAnyPoint: hitAny || openerStage,
     });
 
+    const allSemanticEvaluations = [
+      ...historyRows
+        .filter((m) => m.sender === 'agent' && m.rule_result?.semanticEvaluation)
+        .map((m) => m.rule_result.semanticEvaluation),
+      semanticEvaluation,
+    ];
+    const conversationState = deriveConversationState(session.questions, allSemanticEvaluations, {
+      currentSeq: session.current_seq,
+      skippedSeqs: session.skipped_seqs || [],
+      emotionValue: emotion.value,
+    });
+
     const ruleResult = {
       questionSeq: insertSeq,
       hitPoints,
       semanticEvaluation,
-      goalProgress: getGoalProgress(session.questions, [
-        ...historyRows
-          .filter((m) => m.sender === 'agent' && m.rule_result?.semanticEvaluation)
-          .map((m) => m.rule_result.semanticEvaluation),
-        semanticEvaluation,
-      ]),
+      goalProgress: getGoalProgress(session.questions, allSemanticEvaluations),
+      conversationState,
       missingPoints: currentQuestion ? currentQuestion.keyPoints.filter((p) => !hitPoints.includes(p)) : [],
       emotionDelta: emotion.delta,
       emotionValue: emotion.value,
@@ -1093,9 +1101,17 @@ export class ReceptionService implements OnModuleInit {
                            max_response_sec = $2,
                            avg_response_sec = $3,
                            emotion_value = $4,
-                           unresolved_streak = $5
+                           unresolved_streak = $5,
+                           conversation_state = $6::jsonb
        WHERE id = $1`,
-      [sessionId, maxResponseSec, avgResponseSec, emotion.value, hitAny || openerStage ? 0 : session.unresolved_streak + 1]
+      [
+        sessionId,
+        maxResponseSec,
+        avgResponseSec,
+        emotion.value,
+        hitAny || openerStage ? 0 : session.unresolved_streak + 1,
+        JSON.stringify(conversationState),
+      ]
     );
 
     this.gateway.emitToUser(accountId, 'agent.message.ack', {
