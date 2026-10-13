@@ -769,6 +769,10 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* 右栏可点商品名（2026-10-13）：悬浮下划线，提示可查看商品详情 */
+.consult-product-title.clickable:hover {
+  text-decoration: underline;
+}
 .consult-product-meta {
   font-size: 12px;
   color: #8c8c8c;

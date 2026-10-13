@@ -623,12 +623,24 @@ export default function Reception() {
   };
   const openSpec = () => openSpecOf(activeSession?.product);
 
-  /** 打开飞鸽式「商品预览」侧滑面板：点击商品卡图片/标题时用（客户 2026-10-10） */
-  const openPreviewOf = (product?: any) => {
+  /** 打开飞鸽式「商品预览」侧滑面板：点击商品卡图片/标题时用（客户 2026-10-10）。
+   * 2026-10-13：右栏商品库/咨询宝贝点商品名也走这里；列表数据里没有详情长图，
+   * 所以打开前先按 id 拉一次《商品库》完整详情（含 detailImages/SKU/属性），失败则用现有数据兜底。 */
+  const openPreviewOf = async (product?: any) => {
     const target = product ?? activeSession?.product;
     if (!target) {
       message.warning('请选择一件商品');
       return;
+    }
+    if (target.id) {
+      try {
+        const full = await api<any>(`/products/${target.id}`);
+        setPreviewProduct({ ...target, ...full });
+        setPreviewOpen(true);
+        return;
+      } catch {
+        /* 详情接口不可用时用列表/快照数据兜底 */
+      }
     }
     setPreviewProduct(target);
     setPreviewOpen(true);
@@ -1544,7 +1556,14 @@ export default function Reception() {
                           )}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div className="consult-product-title">{activeSession.product.title}</div>
+                          <div
+                            className="consult-product-title clickable"
+                            style={{ cursor: 'pointer' }}
+                            title="查看商品详情"
+                            onClick={() => openPreview()}
+                          >
+                            {activeSession.product.title}
+                          </div>
                           <div className="consult-product-price">
                             ¥{activeSession.product.price}
                             {activeSession.product.stock !== undefined ? (
@@ -1636,7 +1655,14 @@ export default function Reception() {
                             {item.coverUrl ? <img src={item.coverUrl} alt="" /> : <ShoppingOutlined />}
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div className="consult-product-title">{item.title}</div>
+                            <div
+                              className="consult-product-title clickable"
+                              style={{ cursor: 'pointer' }}
+                              title="查看商品详情"
+                              onClick={() => openPreviewOf(item)}
+                            >
+                              {item.title}
+                            </div>
                             <div className="consult-product-meta">
                               {item.category || '未分类'} · 商品ID：{item.productNo}
                             </div>
