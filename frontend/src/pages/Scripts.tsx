@@ -116,6 +116,16 @@ export default function Scripts() {
     ['bgIds', 'qaIds'],
   ];
   const nextStep = async () => {
+    if (createWay === 'case') {
+      if (step === 0) {
+        await form.validateFields(['caseId']);
+        setStep(1);
+        return;
+      }
+      await form.validateFields(['caseId', 'productIds']);
+      await generate();
+      return;
+    }
     await form.validateFields(stepFields[step]);
     setStep(step + 1);
   };
@@ -195,7 +205,7 @@ export default function Scripts() {
   };
 
   const generate = async () => {
-    const values = await form.validateFields();
+    const values = await form.validateFields(createWay === 'case' ? ['createWay', 'caseId', 'productIds'] : undefined);
     try {
       const autoSemanticGoals = values.ruleMode === 'semantic' && values.createWay !== 'case';
       // 按案例创建（方案 F3-07）：案例的买家消息先沉淀成咨询内容，再走标准建剧本流程
@@ -415,10 +425,21 @@ export default function Scripts() {
             onClick={() => {
               setBatchOpen(true);
               form.resetFields();
+              form.setFieldsValue({ category: '培训', stage: 'presale', createMode: 'batch', createWay: 'custom', ruleMode: 'semantic', scriptCount: 1 });
               setStep(0);
             }}
           >
-            新建剧本
+            快速创建
+          </Button>
+          <Button
+            onClick={() => {
+              setBatchOpen(true);
+              form.resetFields();
+              form.setFieldsValue({ category: '案例回流', stage: 'presale', createMode: 'single', createWay: 'case', ruleMode: 'semantic', scriptCount: 1 });
+              setStep(0);
+            }}
+          >
+            按案例创建
           </Button>
           <Button
             icon={<BarChartOutlined />}
@@ -579,7 +600,7 @@ export default function Scripts() {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ category: '培训', stage: 'presale', createMode: 'batch', createWay: 'custom', ruleMode: 'keyword' }}
+          initialValues={{ category: '培训', stage: 'presale', createMode: 'batch', createWay: 'custom', ruleMode: 'semantic', scriptCount: 1 }}
         >
           {/* 客户 2026-10-10：三段式向导——每一步只渲染本步字段，眼不见为净 */}
           <Steps
@@ -591,33 +612,9 @@ export default function Scripts() {
 
           <div className="script-section" style={{ display: step === 0 ? 'block' : 'none' }}>
             <div className="script-section-title">基础设置</div>
-            <Form.Item name="createMode" label="创建模式" rules={[{ required: true }]}>
-              <Radio.Group>
-                <Radio value="single">单个剧本</Radio>
-                <Radio value="batch">批量剧本</Radio>
-              </Radio.Group>
-            </Form.Item>
-            <Form.Item name="createWay" label="创建方式" rules={[{ required: true }]}>
-              <Radio.Group>
-                <Radio value="custom">自定义创建</Radio>
-                <Radio value="case">根据聊天案例创建</Radio>
-              </Radio.Group>
-            </Form.Item>
-            {createWay !== 'case' && (
-              <>
-                <Form.Item
-                  name="ruleMode"
-                  label="规则模式"
-                  rules={[{ required: true }]}
-                  extra="系统根据买家背景、咨询主题、接受方案与核心问题确定主目标，不再随机抽取；原始问题顺序保持不变。生成后可在剧本列表调整目标。"
-                >
-                  <Radio.Group>
-                    <Radio value="keyword">关键词规则（现有模式）</Radio>
-                    <Radio value="semantic">自动生成语义目标（推荐）</Radio>
-                  </Radio.Group>
-                </Form.Item>
-              </>
-            )}
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+              快速创建默认按背景和咨询内容批量生成剧本；单个创建、接待类型和语义规则可在高级设置中调整。
+            </Typography.Paragraph>
             {createWay === 'case' && (
               <Form.Item name="caseId" label="选择案例" rules={[{ required: true, message: '请选择案例' }]}>
                 <Select
@@ -631,25 +628,47 @@ export default function Scripts() {
                 />
               </Form.Item>
             )}
-            <Form.Item name="category" label="剧本分类" rules={[{ required: true, message: '请选择剧本分类' }]}>
-              <Select
-                style={{ width: 200 }}
-                placeholder="请选择剧本分类"
-                // 选项来自《数据字典》的「剧本分类」，字典里增删改这里同步生效
-                options={(options.scriptCategories.length
-                  ? options.scriptCategories.map((c: any) => c.name)
-                  : ['培训', '售前', '售后', '退款', '物流', '其他']
-                ).map((v) => ({ value: v, label: v }))}
-              />
-            </Form.Item>
-            <Form.Item name="name" label="剧本名称" tooltip="批量生成时自动拼接为「接待类型-背景-内容」，无需手动填写">
-              <Input
-                placeholder="自动生成剧本名称，无需手动填写"
-                maxLength={100}
-                showCount
-                disabled={createMode !== 'single'}
-              />
-            </Form.Item>
+            <details>
+              <summary style={{ cursor: 'pointer', marginBottom: 12 }}>高级设置</summary>
+              <Form.Item name="createMode" label="创建模式" rules={[{ required: true }]}>
+                <Radio.Group>
+                  <Radio value="single">单个剧本</Radio>
+                  <Radio value="batch">批量剧本</Radio>
+                </Radio.Group>
+              </Form.Item>
+              <Form.Item name="createWay" label="创建方式" rules={[{ required: true }]}>
+                <Radio.Group>
+                  <Radio value="custom">自定义创建</Radio>
+                  <Radio value="case">根据聊天案例创建</Radio>
+                </Radio.Group>
+              </Form.Item>
+              {createWay !== 'case' && (
+                <Form.Item
+                  name="ruleMode"
+                  label="规则模式"
+                  rules={[{ required: true }]}
+                  extra="系统根据买家背景、咨询主题、接受方案与核心问题确定主目标，不再随机抽取；原始问题顺序保持不变。生成后可在剧本列表调整目标。"
+                >
+                  <Radio.Group>
+                    <Radio value="keyword">关键词规则（现有模式）</Radio>
+                    <Radio value="semantic">自动生成语义目标（推荐）</Radio>
+                  </Radio.Group>
+                </Form.Item>
+              )}
+              <Form.Item name="category" label="剧本分类" rules={[{ required: true, message: '请选择剧本分类' }]}>
+                <Select
+                  style={{ width: 200 }}
+                  placeholder="请选择剧本分类"
+                  options={(options.scriptCategories.length
+                    ? options.scriptCategories.map((c: any) => c.name)
+                    : ['培训', '售前', '售后', '退款', '物流', '其他']
+                  ).map((v) => ({ value: v, label: v }))}
+                />
+              </Form.Item>
+              <Form.Item name="name" label="剧本名称" tooltip="批量生成时自动拼接为「接待类型-背景-内容」，无需手动填写">
+                <Input placeholder="自动生成剧本名称，无需手动填写" maxLength={100} showCount disabled={createMode !== 'single'} />
+              </Form.Item>
+            </details>
           </div>
 
           <div className="script-section" style={{ display: step === 1 ? 'block' : 'none' }}>

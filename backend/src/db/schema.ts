@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   product_id    INTEGER,
   buyer_name    VARCHAR(32) NOT NULL,
   style_code    VARCHAR(32) NOT NULL DEFAULT 'friendly',
-  state         VARCHAR(16) NOT NULL DEFAULT 'wait',
+  state         VARCHAR(32) NOT NULL DEFAULT 'wait',
   current_seq   INTEGER NOT NULL DEFAULT 0,
   total_questions INTEGER NOT NULL DEFAULT 0,
   questions     JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -173,6 +173,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   join_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at   TIMESTAMPTZ,
   finished_reason VARCHAR(16),
+  close_deadline_at TIMESTAMPTZ,
   max_response_sec INTEGER,
   avg_response_sec INTEGER,
   timeout_count INTEGER NOT NULL DEFAULT 0,
@@ -188,6 +189,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   conversation_state JSONB NOT NULL DEFAULT '{}'::jsonb,
   score         NUMERIC(5,1)
 );
+
+ALTER TABLE sessions ALTER COLUMN state TYPE VARCHAR(32);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS close_deadline_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_sessions_close_deadline ON sessions (close_deadline_at) WHERE state = 'awaiting_agent_close';
 
 -- 老库补列（幂等）：自适应推送追问计数
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS follow_ups INTEGER NOT NULL DEFAULT 0;

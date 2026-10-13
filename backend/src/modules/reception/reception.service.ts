@@ -68,6 +68,7 @@ interface SessionRow {
   join_at: string;
   finished_at: string | null;
   finished_reason: string | null;
+  close_deadline_at: string | null;
   max_response_sec: number | null;
   avg_response_sec: number | null;
   timeout_count: number;
@@ -155,6 +156,7 @@ export class ReceptionService implements OnModuleInit {
 
   /** 客服回复后，买家「思考」多久再抛下一个问题；服务重启补挂定时器时沿用同一口径。 */
   private readonly REPLY_THINK_DELAY_MS = 1500;
+  private readonly AGENT_CLOSE_WINDOW_MS = 5 * 60 * 1000;
 
   constructor(
     private readonly db: DbService,
@@ -189,8 +191,8 @@ export class ReceptionService implements OnModuleInit {
     if (!attempts.length) return;
 
     const idList = attempts.map((a) => a.id);
-    const sessions = await this.db.many<{ id: number; state: string }>(
-      `SELECT id, state FROM sessions
+    const sessions = await this.db.many<{ id: number; state: string; close_deadline_at: string | null }>(
+      `SELECT id, state, close_deadline_at FROM sessions
        WHERE attempt_id IN (${idList.map((_, i) => `$${i + 1}`).join(',')})
          AND state NOT IN ('finished','transferred','aborted')`,
       idList
@@ -203,6 +205,13 @@ export class ReceptionService implements OnModuleInit {
         rearmed += 1;
       } else if (session.state === 'waiting_buyer') {
         this.scheduler.schedule(`next:${session.id}`, this.REPLY_THINK_DELAY_MS, () => this.advanceAfterReply(session.id));
+        rearmed += 1;
+      } else if (session.state === 'awaiting_agent_close') {
+        if (session.close_deadline_at) {
+          this.scheduleAgentClose(session.id, Date.parse(session.close_deadline_at));
+        } else {
+          await this.enterAgentCloseWindow(session.id);
+        }
         rearmed += 1;
       }
     }
@@ -630,7 +639,32 @@ export class ReceptionService implements OnModuleInit {
         sentAt: new Date().toISOString(),
       });
     }
-    await this.completeSession(session.id, reason);
+    await this.enterAgentCloseWindow(session.id);
+  }
+
+  private scheduleAgentClose(sessionId: number, deadlineMs: number): void {
+    this.scheduler.cancel(`close:${sessionId}`);
+    this.scheduler.schedule(`close:${sessionId}`, Math.max(0, deadlineMs - Date.now()), () => this.autoCloseSession(sessionId));
+  }
+
+  private async enterAgentCloseWindow(sessionId: number): Promise<void> {
+    const deadline = new Date(Date.now() + this.AGENT_CLOSE_WINDOW_MS);
+    const row = await this.db.one<{ id: number }>(
+      `UPDATE sessions SET state = 'awaiting_agent_close', close_deadline_at = $2 WHERE id = $1 AND state NOT IN ('finished','transferred','aborted') RETURNING id`,
+      [sessionId, deadline.toISOString()]
+    );
+    if (row) this.scheduleAgentClose(sessionId, deadline.getTime());
+  }
+
+  private async autoCloseSession(sessionId: number): Promise<void> {
+    const claimed = await this.db.one<{ id: number }>(
+      `UPDATE sessions SET close_deadline_at = NULL
+       WHERE id = $1 AND state = 'awaiting_agent_close' AND close_deadline_at IS NOT NULL AND close_deadline_at <= now()
+       RETURNING id`,
+      [sessionId]
+    );
+    if (!claimed) return;
+    await this.completeSession(sessionId, 'auto_timeout');
   }
 
   /**
@@ -1032,6 +1066,7 @@ export class ReceptionService implements OnModuleInit {
     if (!session || session.attempt_id !== attemptId) throw new BizError(ERR.NOT_FOUND, '会话不存在');
     if (session.state === 'pending') throw new BizError(ERR.SESSION_STATE, '该买家还在排队待接入，请稍候');
     if (['finished', 'transferred', 'aborted'].includes(session.state)) throw new BizError(ERR.SESSION_STATE, '该会话已结束');
+    const inAgentCloseWindow = session.state === 'awaiting_agent_close';
 
     const text = String(content || '').trim();
     if (!text) throw new BizError(ERR.PARAM, '请输入有效回复');
@@ -1040,7 +1075,7 @@ export class ReceptionService implements OnModuleInit {
 
     const tolerance = params.waitToleranceFactor[attempt.level] ?? 1;
     const now = Date.now();
-    const lastBuyerAt = session.last_buyer_at ? new Date(session.last_buyer_at).getTime() : null;
+    const lastBuyerAt = inAgentCloseWindow ? null : session.last_buyer_at ? new Date(session.last_buyer_at).getTime() : null;
 
     const currentQuestion = session.questions.find((q) => q.seq === session.current_seq) || null;
     const hitPoints = currentQuestion ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
@@ -1186,7 +1221,8 @@ export class ReceptionService implements OnModuleInit {
       session.total_questions - (session.skipped_seqs || []).length
     );
     await this.db.query(
-      `UPDATE sessions SET state = 'waiting_buyer',
+      `UPDATE sessions SET state = $7,
+                           close_deadline_at = CASE WHEN $7 = 'awaiting_agent_close' THEN $8 ELSE NULL END,
                            last_agent_at = now(),
                            first_reply_at = COALESCE(first_reply_at, now()),
                            max_response_sec = $2,
@@ -1202,6 +1238,8 @@ export class ReceptionService implements OnModuleInit {
         emotion.value,
         hitAny || openerStage ? 0 : session.unresolved_streak + 1,
         JSON.stringify(conversationState),
+        inAgentCloseWindow ? 'awaiting_agent_close' : 'waiting_buyer',
+        inAgentCloseWindow ? new Date(Date.now() + this.AGENT_CLOSE_WINDOW_MS).toISOString() : null,
       ]
     );
 
@@ -1241,10 +1279,14 @@ export class ReceptionService implements OnModuleInit {
       }
     }
 
-    const rng = createRng(now + sessionId);
-    const thinkDelay = 3000 + Math.round(rng() * 4000);
-    // 2026-10-11 自适应推送：不再无条件推下一题，先看本轮回复是否答到要点
-    this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.advanceAfterReply(sessionId));
+    if (inAgentCloseWindow) {
+      this.scheduleAgentClose(sessionId, Date.now() + this.AGENT_CLOSE_WINDOW_MS);
+    } else {
+      const rng = createRng(now + sessionId);
+      const thinkDelay = 3000 + Math.round(rng() * 4000);
+      // 2026-10-11 自适应推送：不再无条件推下一题，先看本轮回复是否答到要点
+      this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.advanceAfterReply(sessionId));
+    }
 
     return { messageId: inserted.id, responseSec, isTimeout, ruleResult, level: attempt.level };
   }
@@ -1324,8 +1366,11 @@ export class ReceptionService implements OnModuleInit {
     if (!session || session.attempt_id !== attemptId) throw new BizError(ERR.NOT_FOUND, '会话不存在');
     if (session.state === 'pending') throw new BizError(ERR.SESSION_STATE, '该买家还在排队待接入，请稍候');
     if (['finished', 'transferred', 'aborted'].includes(session.state)) throw new BizError(ERR.SESSION_STATE, '该会话已结束');
-    const reason = session.current_seq >= session.total_questions ? 'normal' : 'early';
+    const reason: 'normal' | 'early' | 'manual' = session.state === 'awaiting_agent_close'
+      ? 'manual'
+      : session.current_seq >= session.total_questions ? 'normal' : 'early';
     this.scheduler.cancel(`next:${sessionId}`);
+    this.scheduler.cancel(`close:${sessionId}`);
     await this.completeSession(sessionId, reason);
     return { success: true, reason };
   }
@@ -1337,6 +1382,7 @@ export class ReceptionService implements OnModuleInit {
       if (!['finished', 'transferred', 'aborted'].includes(s.state)) {
         this.scheduler.cancel(`next:${s.id}`);
         this.scheduler.cancel(`join:${s.id}`);
+        this.scheduler.cancel(`close:${s.id}`);
         await this.completeSession(s.id, s.current_seq >= s.total_questions ? 'normal' : 'early');
       }
     }
@@ -1345,7 +1391,8 @@ export class ReceptionService implements OnModuleInit {
 
   /* ---------------- 评分与收尾 ---------------- */
 
-  async completeSession(sessionId: number, reason: 'normal' | 'early' | 'transferred' | 'aborted'): Promise<void> {
+  async completeSession(sessionId: number, reason: 'normal' | 'early' | 'transferred' | 'aborted' | 'manual' | 'auto_timeout'): Promise<void> {
+    this.scheduler.cancel(`close:${sessionId}`);
     const session = await this.loadSession(sessionId);
     if (!session) return;
     if (['finished', 'transferred', 'aborted'].includes(session.state)) return;
@@ -1401,7 +1448,7 @@ export class ReceptionService implements OnModuleInit {
         ]
       );
       await client.query(
-        `UPDATE sessions SET state = $2, finished_reason = $3, finished_at = now(), score = $4 WHERE id = $1`,
+        `UPDATE sessions SET state = $2, finished_reason = $3, finished_at = now(), close_deadline_at = NULL, score = $4 WHERE id = $1`,
         [sessionId, aborted ? 'aborted' : 'finished', reason, finalScore]
       );
     });
@@ -1577,7 +1624,17 @@ export class ReceptionService implements OnModuleInit {
       sessions: sessions.map((s) => {
         const lastBuyer = s.last_buyer_at ? new Date(s.last_buyer_at).getTime() : null;
         const waitedSec = lastBuyer ? Math.round((now - lastBuyer) / 1000) : 0;
-        return { ...this.toSessionDto(s), waitedSec, timeoutLimitSec: limit, remainSec: Math.max(0, limit - waitedSec) };
+        const closeRemainSec = s.state === 'awaiting_agent_close' && s.close_deadline_at
+          ? Math.max(0, Math.ceil((Date.parse(s.close_deadline_at) - now) / 1000))
+          : null;
+        return {
+          ...this.toSessionDto(s),
+          waitedSec,
+          timeoutLimitSec: limit,
+          remainSec: closeRemainSec ?? Math.max(0, limit - waitedSec),
+          closeRemainSec,
+          timerMode: closeRemainSec === null ? 'response' : 'agent_close',
+        };
       }),
       messages,
     };
@@ -1695,7 +1752,7 @@ export class ReceptionService implements OnModuleInit {
    */
   private async broadcastTimerTick(): Promise<void> {
     const rows = await this.db.many<any>(
-      `SELECT s.id, s.attempt_id, s.state, s.last_buyer_at, a.account_id, a.level, a.param_snapshot
+      `SELECT s.id, s.attempt_id, s.state, s.last_buyer_at, s.close_deadline_at, a.account_id, a.level, a.param_snapshot
        FROM sessions s JOIN attempts a ON a.id = s.attempt_id
        WHERE a.status = 'running'`
     );
@@ -1708,6 +1765,10 @@ export class ReceptionService implements OnModuleInit {
       const limit = Math.round(params.timeoutSec * (params.waitToleranceFactor[row.level] ?? 1));
       const lastBuyer = row.last_buyer_at ? new Date(row.last_buyer_at).getTime() : null;
       const waitedSec = lastBuyer ? Math.max(0, Math.round((now - lastBuyer) / 1000)) : 0;
+      const closeDeadline = row.close_deadline_at ? Date.parse(row.close_deadline_at) : null;
+      const closeRemainSec = row.state === 'awaiting_agent_close' && closeDeadline
+        ? Math.max(0, Math.ceil((closeDeadline - now) / 1000))
+        : null;
 
       const entry = grouped.get(row.attempt_id) ?? { accountId: row.account_id, sessions: [] };
       entry.sessions.push({
@@ -1715,7 +1776,9 @@ export class ReceptionService implements OnModuleInit {
         state: row.state,
         waitedSec,
         timeoutLimitSec: limit,
-        remainSec: Math.max(0, limit - waitedSec),
+        remainSec: closeRemainSec ?? Math.max(0, limit - waitedSec),
+        closeRemainSec,
+        timerMode: closeRemainSec === null ? 'response' : 'agent_close',
       });
       grouped.set(row.attempt_id, entry);
     }
@@ -1731,6 +1794,7 @@ export class ReceptionService implements OnModuleInit {
   }
 
   private async scanTimeout(): Promise<void> {
+    await this.scanAgentCloseDeadlines();
     await this.abortDisconnectedAttempts();
     await this.broadcastTimerTick();
     const rows = await this.db.many<any>(
@@ -1764,6 +1828,15 @@ export class ReceptionService implements OnModuleInit {
         timeoutSec: Math.round(params.timeoutSec * tolerance),
       });
     }
+  }
+
+  private async scanAgentCloseDeadlines(): Promise<void> {
+    const rows = await this.db.many<{ id: number }>(
+      `SELECT id FROM sessions
+       WHERE state = 'awaiting_agent_close' AND close_deadline_at IS NOT NULL AND close_deadline_at <= now()
+       ORDER BY close_deadline_at LIMIT 100`
+    );
+    for (const row of rows) await this.autoCloseSession(row.id);
   }
 
   /**
@@ -1877,6 +1950,7 @@ export class ReceptionService implements OnModuleInit {
       conversationState: s.conversation_state || {},
       score: s.score === null ? null : Number(s.score),
       joinAt: s.join_at,
+      closeDeadlineAt: s.close_deadline_at,
     };
   }
 }

@@ -78,6 +78,9 @@ interface SessionDto {
   waitedSec: number;
   timeoutLimitSec: number;
   remainSec: number;
+  closeRemainSec: number | null;
+  timerMode: 'response' | 'agent_close';
+  closeDeadlineAt?: string | null;
   /** 会话接入时间，用于对话区首条咨询商品卡的时间戳 */
   joinAt?: string;
 }
@@ -99,6 +102,7 @@ const STATE_LABEL: Record<string, string> = {
   wait: '等待接入',
   serving: '接待中',
   waiting_buyer: '等待买家',
+  awaiting_agent_close: '等待客服结束',
   timeout: '已超时',
   finished: '已结束',
   transferred: '已转交',
@@ -366,8 +370,9 @@ export default function Reception() {
     if (!queueGrouped) return [{ label: '', items: list }];
     return [
       { label: '待接入', items: list.filter((s) => isPending(s)) },
-      { label: '即将超时', items: list.filter((s) => isRunning(s) && s.remainSec <= 30) },
-      { label: '接待中', items: list.filter((s) => isRunning(s) && s.remainSec > 30) },
+      { label: '整理中', items: list.filter((s) => isRunning(s) && s.timerMode === 'agent_close') },
+      { label: '即将超时', items: list.filter((s) => isRunning(s) && s.timerMode !== 'agent_close' && s.remainSec <= 30) },
+      { label: '接待中', items: list.filter((s) => isRunning(s) && s.timerMode !== 'agent_close' && s.remainSec > 30) },
       { label: '已结束 / 已转交', items: list.filter((s) => !isOpen(s)) },
     ].filter((group) => group.items.length);
   }, [visibleSessions, queueSort, queueGrouped, isRunning, isPending, isOpen]);
@@ -458,6 +463,8 @@ export default function Reception() {
                   waitedSec: next.waitedSec,
                   remainSec: next.remainSec,
                   timeoutLimitSec: next.timeoutLimitSec,
+                  closeRemainSec: next.closeRemainSec ?? s.closeRemainSec,
+                  timerMode: next.timerMode ?? s.timerMode,
                   state: next.state ?? s.state,
                 }
               : s;
@@ -1462,7 +1469,16 @@ export default function Reception() {
       </div>
 
       <div className="reception-right">
-        {activeSession && activeSession.remainSec <= 30 && running && (
+        {activeSession?.timerMode === 'agent_close' && running && (
+          <Alert
+            type="info"
+            showIcon
+            icon={<ClockCircleOutlined />}
+            style={{ marginBottom: 12 }}
+            message={`问题推送已完成，请整理会话后结束（剩余 ${formatDuration(activeSession.remainSec)}）`}
+          />
+        )}
+        {activeSession && activeSession.timerMode !== 'agent_close' && activeSession.remainSec <= 30 && running && (
           <Alert
             type="warning"
             showIcon

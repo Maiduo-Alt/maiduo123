@@ -203,6 +203,8 @@ export class ScriptsService {
    * 再走标准建剧本流程 —— 这样后续的批量生成、风格占比对它同样生效。
    */
   async createFromCase(body: { caseId: number; productIds: number[]; name?: string }, accountId: number) {
+    if (!body.caseId) throw new BizError(ERR.PARAM, '请选择案例');
+    if (!Array.isArray(body.productIds) || !body.productIds.length) throw new BizError(ERR.PARAM, '请至少关联一个商品');
     const caseRow = await this.db.one<{ id: number; title: string; stage: string }>(
       `SELECT id, title, stage FROM cases WHERE id = $1`,
       [body.caseId]
@@ -261,6 +263,7 @@ export class ScriptsService {
   }
 
   async create(body: any, accountId: number) {
+    body = { ...body, stage: body.stage || 'presale', category: body.category || '培训', autoSemanticGoals: body.autoSemanticGoals ?? true };
     if (!body.bgId || !body.qaId) throw new BizError(ERR.PARAM, '买家咨询背景和内容为必填项');
     if (!Array.isArray(body.productIds) || !body.productIds.length) throw new BizError(ERR.PARAM, '请至少关联一个商品');
     // scripts.style_id 是历史表结构中的必填兼容字段；实际会话风格由系统管理的沟通风格配置决定。
@@ -460,6 +463,7 @@ export class ScriptsService {
       semanticGoalsBySeq?: Record<string, any[]>;
     }
   ) {
+    body = { ...body, stage: body.stage || 'presale', category: body.category || '培训', autoSemanticGoals: body.autoSemanticGoals ?? true };
     if (!body.bgIds?.length) throw new BizError(ERR.PARAM, '请至少选择一个买家咨询背景');
     if (!body.qaIds?.length) throw new BizError(ERR.PARAM, '请至少选择一个买家咨询内容');
     if (!body.productIds?.length) throw new BizError(ERR.PARAM, '请至少关联一个商品');
@@ -487,9 +491,11 @@ export class ScriptsService {
     if (!bgs.length || !qas.length) throw new BizError(ERR.PARAM, '所选素材不存在');
     const scenarioQas = groupScenarioQas(qas);
     if (!scenarioQas.length) throw new BizError(ERR.PARAM, '所选咨询内容没有可用问题');
-    const requestedCount = body.scriptCount === undefined
-      ? scenarioQas.length
-      : Math.max(1, Math.min(200, Math.floor(Number(body.scriptCount))));
+    const rawScriptCount = body.scriptCount === undefined ? 1 : Number(body.scriptCount);
+    if (!Number.isInteger(rawScriptCount) || rawScriptCount < 1 || rawScriptCount > 200) {
+      throw new BizError(ERR.PARAM, '剧本数量必须是 1～200 的整数');
+    }
+    const requestedCount = rawScriptCount;
     const actualCount = Math.max(requestedCount, scenarioQas.length);
 
     // 商品 id → 分类：用于「问题与商品必须匹配」的生成前校验（客户 2026-10-03）
