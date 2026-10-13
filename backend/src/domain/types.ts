@@ -177,6 +177,8 @@ export interface ScriptQuestion {
     stages?: ConversationState['conversationStage'][];
     /** 最低核心目标解决度。 */
     minResolutionScore?: number;
+    /** 最低购买意愿；适合优惠/下单等决策型可选问题。 */
+    minPurchaseIntent?: number;
     /** 只有刚才/此前发生过指定业务动作才允许触发。 */
     afterBusinessAction?: string[];
     /** 只有当前话题属于这些语义主题才允许触发。 */
@@ -221,13 +223,21 @@ export interface ConversationPlan {
 export interface ConversationState {
   /** 本场客户真正想解决的核心问题。 */
   customerGoal: string;
-  /** 当前正在讨论的主题。 */
+  /** 当前正在讨论的标准化主题。 */
   currentTopic: string | null;
+  /** 当前更细的关注点，如“走线”“缩水”“退款条件”。 */
+  currentSubtopic: string | null;
+  /** 当前客户意图，用于决定追问、决策或售后处理方向。 */
+  customerIntent: 'product_evaluation' | 'purchase_decision' | 'order_service' | 'aftersale_resolution' | 'complaint_resolution';
+  /** 当前最需要客服补充说明的顾虑。 */
+  pendingConcern: string | null;
   resolvedGoalIds: string[];
   partialGoalIds: string[];
   unresolvedGoalIds: string[];
-  /** 0～100，依据核心目标覆盖度与当前情绪计算。 */
+  /** 0～100，依据核心目标覆盖度、情绪、超时与反复追问计算。 */
   satisfaction: number;
+  /** 0～100，当前购买意愿；售后/投诉场景会自然降低。 */
+  purchaseIntent: number;
   /** 0～100，当前核心语义点的完成比例。 */
   resolutionScore: number;
   conversationStage: 'opening' | 'discovery' | 'clarification' | 'decision' | 'closing';
