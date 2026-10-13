@@ -71,7 +71,7 @@ export async function runMigrations(db: DbService): Promise<void> {
   );
   for (const row of sessions) {
     const before = Array.isArray(row.questions) ? row.questions : [];
-    const after = normalizeLegacyQuestionSeq(before);
+    const after = repairCraftDetailQuestionSeq(normalizeLegacyQuestionSeq(before));
     if (JSON.stringify(after) === JSON.stringify(before)) continue;
     await db.query(
       `UPDATE sessions
