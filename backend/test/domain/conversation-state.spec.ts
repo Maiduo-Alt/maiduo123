@@ -69,6 +69,11 @@ describe('conversation state', () => {
     expect(state.unresolvedGoalIds).not.toContain('g3');
     expect(state.resolutionScore).toBe(33);
     expect(state.conversationStage).toBe('clarification');
+    expect(state.currentTopic).toBe('craft');
+    expect(state.currentSubtopic).toBe('工艺');
+    expect(state.customerIntent).toBe('product_evaluation');
+    expect(state.pendingConcern).toBe('走线');
+    expect(state.purchaseIntent).toBeGreaterThan(0);
     expect(state.shouldClose).toBe(false);
   });
 
@@ -136,6 +141,28 @@ describe('conversation state', () => {
 
     expect(state.resolutionScore).toBe(100);
     expect(state.satisfaction).toBeLessThan(75);
+  });
+
+  it('keeps purchase intent low in complaint/aftersale states', () => {
+    const complaintQuestions: ScriptQuestion[] = [{
+      seq: 1,
+      question: '我要投诉这个质量问题',
+      keyPoints: ['投诉'],
+      sourceType: 'core',
+      goalPriority: 'primary',
+      semanticGoals: [{
+        id: 'complaint',
+        name: '处理投诉',
+        requiredPoints: [{ id: 'response', label: '投诉处理', matchAny: ['处理'] }],
+      }],
+    }];
+    const state = deriveConversationState(complaintQuestions, [{
+      goalMatches: [{ goalId: 'complaint', pointIds: ['response'] }],
+      riskItems: [],
+    }], { currentSeq: 1, emotionValue: 20 });
+
+    expect(state.customerIntent).toBe('complaint_resolution');
+    expect(state.purchaseIntent).toBe(5);
   });
 
   it('high negative emotion can prevent an otherwise solved conversation from auto-closing', () => {
