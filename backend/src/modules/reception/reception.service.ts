@@ -672,10 +672,16 @@ export class ReceptionService implements OnModuleInit {
       `SELECT rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
       [sessionId]
     );
-    const completedGoals = new Set(getGoalProgress(
-      session.questions,
-      priorMessages.map((row) => row.rule_result?.semanticEvaluation).filter(Boolean)
-    ).filter((progress) => progress.status === 'completed').map((progress) => progress.goal.id));
+    const evaluations = priorMessages.map((row) => row.rule_result?.semanticEvaluation).filter(Boolean);
+    let conversationState = await this.persistConversationState(session, evaluations);
+
+    // 客户核心目标已经解决、整体覆盖度足够时，不再为了“把题问完”继续机械推进。
+    if (session.current_seq > 0 && conversationState.shouldClose) {
+      await this.closeWithBuyerMessage(session, conversationState, 'normal');
+      return;
+    }
+
+    const completedGoals = new Set(conversationState.resolvedGoalIds);
     const next = selectNextQuestion(session.questions, session.current_seq, completedGoals, session.skipped_seqs || []);
     const nextSeq = next.nextSeq ?? session.total_questions + 1;
     if (next.skippedSeqs.length !== (session.skipped_seqs || []).length) {
@@ -693,14 +699,18 @@ export class ReceptionService implements OnModuleInit {
       const avgResponseSec = weightedAvgResponseSec(countedRounds.map((row) => Number(row.sec)), activeRoundCount);
       await this.db.query(`UPDATE sessions SET avg_response_sec = $2 WHERE id = $1`, [sessionId, avgResponseSec]);
       session = { ...session, current_seq: nextSeq - 1, skipped_seqs: next.skippedSeqs };
+      conversationState = await this.persistConversationState(session, evaluations, {
+        currentSeq: nextSeq - 1,
+        skippedSeqs: next.skippedSeqs,
+      });
     }
     if (nextSeq > session.total_questions) {
-      await this.completeSession(sessionId, 'normal');
+      await this.closeWithBuyerMessage(session, conversationState, 'normal');
       return;
     }
     const question = session.questions.find((q) => q.seq === nextSeq);
     if (!question) {
-      await this.completeSession(sessionId, 'normal');
+      await this.closeWithBuyerMessage(session, conversationState, 'normal');
       return;
     }
     /**
