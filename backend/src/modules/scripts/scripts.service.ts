@@ -19,6 +19,7 @@ const CASE_BACKGROUND_NAME = '案例回流';
 type ScenarioQa = {
   id: number;
   template_name: string;
+  accepted_answer?: string | null;
   stage: string;
   question_list: string[];
   key_points: string[][];
@@ -52,6 +53,7 @@ function groupScenarioQas(qas: ScenarioQa[]): ScenarioQa[] {
       return {
         id: qa.id,
         template_name: qa.template_name,
+        accepted_answer: qa.accepted_answer,
         stage: qa.stage,
         question_list: questionList,
         key_points: keyPoints,
@@ -264,7 +266,10 @@ export class ScriptsService {
     // scripts.style_id 是历史表结构中的必填兼容字段；实际会话风格由系统管理的沟通风格配置决定。
     const defaultStyle = await this.db.one<{ id: number }>(`SELECT id FROM styles WHERE status = 1 ORDER BY sort, id LIMIT 1`);
     if (!defaultStyle) throw new BizError(ERR.PARAM, '还没有可用的沟通风格，请先在系统管理中配置');
-    const qa = await this.db.one<{ template_name: string }>(`SELECT template_name FROM buyer_qa WHERE id = $1`, [body.qaId]);
+    const qa = await this.db.one<{ template_name: string; accepted_answer?: string | null }>(
+      `SELECT template_name, accepted_answer FROM buyer_qa WHERE id = $1`,
+      [body.qaId],
+    );
     const bg = await this.db.one<{ name: string; description?: string }>(
       `SELECT name, description FROM buyer_bg WHERE id = $1`,
       [body.bgId]
@@ -273,7 +278,12 @@ export class ScriptsService {
     const generatedQuestionSeq = await this.buildQuestionSeq(body.qaId, body.questionSeq);
     const questionSeq = this.applySemanticGoals(
       body.autoSemanticGoals
-        ? generateSemanticGoals(generatedQuestionSeq, [bg.name, bg.description].filter(Boolean).join(' '))
+        ? generateSemanticGoals(
+          generatedQuestionSeq,
+          [bg.name, bg.description].filter(Boolean).join(' '),
+          undefined,
+          { templateName: qa.template_name, acceptedAnswer: qa.accepted_answer || '' },
+        )
         : generatedQuestionSeq,
       body.semanticGoalsBySeq
     );
@@ -464,7 +474,7 @@ export class ScriptsService {
     );
     const qaPlaceholders = body.qaIds.map((_, i) => `$${i + 1}`).join(',');
     const qas = await this.db.many<ScenarioQa>(
-      `SELECT id, template_name, stage, question_list, key_points FROM buyer_qa WHERE id IN (${qaPlaceholders})`,
+      `SELECT id, template_name, accepted_answer, stage, question_list, key_points FROM buyer_qa WHERE id IN (${qaPlaceholders})`,
       body.qaIds
     );
     if (!bgs.length || !qas.length) throw new BizError(ERR.PARAM, '所选素材不存在');
@@ -632,6 +642,7 @@ export class ScriptsService {
           baseQuestionSeq,
           [pair.bg.name, pair.bg.description].filter(Boolean).join(' '),
           createRng((body.seed ?? Date.now()) + index * 104729),
+          { templateName: pair.qa.template_name, acceptedAnswer: pair.qa.accepted_answer || '' },
         )
         : baseQuestionSeq,
       body.semanticGoalsBySeq
