@@ -22,10 +22,32 @@ export function generateSemanticGoals(
   });
   if (!candidates.length) return questions;
 
-  // 不再随机挑“主目标”。优先选择最早的核心问题，并把该问题第一个业务要点作为主目标。
-  // 这保证剧本主题稳定、可解释，也避免“发货/优惠”之类偶然成为工艺场景的主目标。
-  const primary = candidates
-    .sort((a, b) => a.questionIndex - b.questionIndex || a.pointIndex - b.pointIndex)[0];
+  // 不再随机挑“主目标”。优先让 accepted_answer / 咨询主题 / 买家背景决定重点，
+  // 都没有明确指向时才回退到最早的核心问题，保证结果稳定且可解释。
+  const normalizedContext = (value: string) => String(value || '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
+  const accepted = normalizedContext(goalContext.acceptedAnswer || '');
+  const template = normalizedContext(goalContext.templateName || '');
+  const buyer = normalizedContext(buyerContext);
+  const candidateScore = (candidate: { questionIndex: number; pointIndex: number; point: string }) => {
+    const expressions = [candidate.point, ...(KEY_POINT_ALIASES[candidate.point] || [])]
+      .map(normalizedContext)
+      .filter(Boolean);
+    const hits = (text: string) => expressions.some((expression) => text.includes(expression));
+    const sourceQuestion = normalizedContext(questions[candidate.questionIndex]?.question || '');
+    return (
+      (hits(accepted) ? 60 : 0) +
+      (hits(template) ? 40 : 0) +
+      (hits(buyer) ? 25 : 0) +
+      (hits(sourceQuestion) ? 15 : 0) +
+      Math.max(0, 10 - candidate.questionIndex * 2) +
+      Math.max(0, 5 - candidate.pointIndex)
+    );
+  };
+  const primary = [...candidates].sort((a, b) =>
+    candidateScore(b) - candidateScore(a) ||
+    a.questionIndex - b.questionIndex ||
+    a.pointIndex - b.pointIndex
+  )[0];
   const customerGoal = inferGeneratedCustomerGoal(
     questions,
     primary.point,
