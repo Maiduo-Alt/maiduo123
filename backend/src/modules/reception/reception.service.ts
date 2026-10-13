@@ -37,7 +37,7 @@ import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-sco
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
 import { evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
-import { decidePush, buildFollowUpText, followUpEmotionDelta } from '../../domain/adaptive-push';
+import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, followUpEmotionDelta } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
 
 interface SessionRow {
@@ -696,56 +696,87 @@ export class ReceptionService implements OnModuleInit {
     // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
     // 必须从判定集合剔除——否则首题任何回复都会被它带成「已通过」（2026-10-11 线上实测）。
     const judgedReplies = replies.filter((r) => r.rule_result?.judge?.signal !== 'opener');
-    const passed = judgedReplies.some((r) => {
+    const hasAction = replies.some((r) => !!r.rule_result?.businessAction);
+    const followUps = session.follow_ups || 0;
+    const maxFollowUps = question.conversationPlan?.maxFollowUps;
+
+    // 语义目标优先决定“问题是否真的解决”。不再把“有回应”直接等同于“已解决”。
+    const latestProgress = [...judgedReplies]
+      .reverse()
+      .map((r) => r.rule_result?.goalProgress)
+      .find((progress) => Array.isArray(progress)) || [];
+    const currentGoalIds = new Set((question.semanticGoals || []).map((goal) => goal.id));
+    const currentProgress = latestProgress.filter((progress: any) => currentGoalIds.has(progress?.goal?.id));
+    const hasSemanticGoals = currentGoalIds.size > 0;
+    const semanticCompleted =
+      hasSemanticGoals &&
+      currentProgress.length > 0 &&
+      currentProgress.every((progress: any) => progress.status === 'completed');
+    const partialProgress = currentProgress.filter((progress: any) => progress.status === 'partial');
+
+    const judgePassed = judgedReplies.some((r) => {
       const rr = r.rule_result || {};
       if (rr.judge) return !!rr.judge.pass;
       return (rr.hitPoints || []).length > 0;
     });
-    const hasAction = replies.some((r) => !!r.rule_result?.businessAction);
-    const followUps = session.follow_ups || 0;
-    // 客户 2026-10-11 口径：敷衍回复只扣分（见 scoring 的敷衍扣分项）、不追问，直接推进下一题；
-    // 答非所问（off-topic）维持原行为——买家追问。旧数据没有 judge 字段时不触发本分支。
-    const judged = judgedReplies.map((r) => r.rule_result?.judge?.signal ?? null).filter((s) => s !== null);
-    const perfunctoryOnly = !passed && !hasAction && judged.length > 0 && judged.every((s) => s === 'perfunctory');
-    const plannedPrompt = question.conversationPlan?.promptTemplates?.[followUps + 1];
-    if (passed && plannedPrompt) {
-      await this.pushPlannedPrompt(sessionId, session, question, plannedPrompt, followUps);
+    const stanceResolved = judgedReplies.some((r) => r.rule_result?.judge?.signal === 'stance');
+
+    // 有语义目标时，完整完成才视为解决；是非题的明确表态仍保留为兼容兜底。
+    const resolved = hasAction || semanticCompleted || (!hasSemanticGoals && judgePassed) || (hasSemanticGoals && stanceResolved);
+
+    // 部分完成时，优先追“缺了什么”，而不是把原问题原样再问一遍。
+    if (!resolved && partialProgress.length && followUps < (maxFollowUps ?? 2)) {
+      const missingLabels = partialProgress.flatMap((progress: any) => {
+        const missing = new Set(progress.missingPointIds || []);
+        return (progress.goal?.requiredPoints || [])
+          .filter((point: any) => missing.has(point.id))
+          .map((point: any) => point.label);
+      });
+      await this.pushMissingPointFollowUp(sessionId, session, question, missingLabels, followUps);
       return;
     }
-    const maxFollowUps = question.conversationPlan?.maxFollowUps;
-    if (perfunctoryOnly || decidePush(passed, hasAction, followUps, maxFollowUps) === 'advance') {
+
+    // 敷衍回复维持“扣分后推进”的既有训练口径；答非所问/打太极则继续追问。
+    const judged = judgedReplies.map((r) => r.rule_result?.judge?.signal ?? null).filter((s) => s !== null);
+    const perfunctoryOnly = !resolved && !hasAction && judged.length > 0 && judged.every((s) => s === 'perfunctory');
+    if (perfunctoryOnly || decidePush(resolved, hasAction, followUps, maxFollowUps) === 'advance') {
       await this.pushNextQuestion(sessionId);
       return;
     }
     await this.pushFollowUp(sessionId, session, question, followUps);
   }
 
-  private async pushPlannedPrompt(
+  private async pushMissingPointFollowUp(
     sessionId: number,
     session: SessionRow,
     question: ScriptQuestion,
-    prompt: string,
+    missingLabels: string[],
     round: number,
   ): Promise<void> {
-    const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
-    const text = behavior.transform(prompt)[0] || prompt;
+    const text = buildMissingPointFollowUpText(session.style_code, missingLabels, round);
     await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
-      sessionId, text, session.current_seq,
+      sessionId,
+      text,
+      session.current_seq,
     ]);
+    const emotionValue = Math.max(0, session.emotion_value + followUpEmotionDelta(round));
     await this.db.query(
-      `UPDATE sessions SET state = 'serving', last_buyer_at = now(), follow_ups = $2 WHERE id = $1`,
-      [sessionId, round + 1],
+      `UPDATE sessions SET state = 'serving', last_buyer_at = now(), follow_ups = $2, emotion_value = $3 WHERE id = $1`,
+      [sessionId, round + 1, emotionValue],
     );
-    const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [session.attempt_id]);
+    const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
+      session.attempt_id,
+    ]);
     this.gateway.emitToUser(attemptRow.account_id, 'buyer.message', {
       attemptId: session.attempt_id,
       sessionId,
       seq: session.current_seq,
       contents: [text],
-      emotion: session.emotion_value,
+      emotion: emotionValue,
       question,
       followUp: true,
-      plannedFollowUp: true,
+      semanticFollowUp: true,
+      missingLabels,
       sentAt: new Date().toISOString(),
     });
   }
