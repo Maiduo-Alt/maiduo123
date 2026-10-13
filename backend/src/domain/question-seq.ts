@@ -174,10 +174,15 @@ export function mixQuestionSeq(
 ): ScriptQuestion[] {
   const { pool, stage } = options;
   const ratio = Math.max(0, Math.min(80, Math.round(Number(options.ratioPct) || 0)));
-  if (!pool.length || ratio <= 0 || seq.length < 3) return seq;
+  if (!pool.length || ratio <= 0 || seq.length < 2) return seq;
 
-  // 「小部分」：最多替换掉一半（并且至少留 2 轮原话题，第一轮一定是剧本自己的开场）
-  const count = Math.min(Math.max(1, Math.round((seq.length * ratio) / 100)), Math.floor(seq.length / 2), seq.length - 2);
+  // 「小部分」：最多替换掉一半；第一轮永远保留为剧本自己的开场。
+  // 2 轮短剧本在 50% 配比下允许替换第 2 轮，否则 C14 永远无法满足配置比例。
+  const count = Math.min(
+    Math.max(1, Math.round((seq.length * ratio) / 100)),
+    Math.floor(seq.length / 2),
+    seq.length - 1,
+  );
   if (count <= 0) return seq;
 
   const offset = Math.max(0, Math.round(Number(options.offset) || 0));
