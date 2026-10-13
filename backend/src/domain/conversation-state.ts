@@ -130,9 +130,32 @@ export function deriveConversationState(
     35 + resolutionScore * 0.65 - emotionPenalty - timeoutPenalty - unresolvedPenalty - followUpPenalty - riskPenalty,
   );
 
+  const purchaseIntent = clamp(
+    customerIntent === 'complaint_resolution'
+      ? 5
+      : customerIntent === 'aftersale_resolution'
+        ? 10 + satisfaction * 0.1
+        : 15 + resolutionScore * 0.35 + satisfaction * 0.3 +
+          (customerIntent === 'purchase_decision' ? 20 : customerIntent === 'order_service' ? 10 : 0),
+  );
+
   const currentSeq = Number(options.currentSeq || 0);
   const current = questions.find((question) => question.seq === currentSeq);
   const currentTopic = current ? conversationTopic(current) : null;
+  const currentSubtopic = current
+    ? String(current.primaryGoal || current.keyPoints?.[0] || current.conversationPlan?.topic || '').trim() || null
+    : null;
+
+  const customerIntent: ConversationState['customerIntent'] =
+    currentTopic === 'complaint'
+      ? 'complaint_resolution'
+      : ['refund', 'exchange', 'quality'].includes(String(currentTopic))
+        ? 'aftersale_resolution'
+        : ['shipping', 'delivery', 'order'].includes(String(currentTopic))
+          ? 'order_service'
+          : ['promotion', 'payment', 'inventory'].includes(String(currentTopic))
+            ? 'purchase_decision'
+            : 'product_evaluation';
 
   const hasTrackedGoals = activeProgress.length > 0 || activeKeywordProgress.length > 0;
   const allResolved = hasTrackedGoals && partialGoalIds.length === 0 && unresolvedGoalIds.length === 0;
@@ -170,13 +193,30 @@ export function deriveConversationState(
   else if (partialGoalIds.length > 0) stage = 'clarification';
   else if (resolutionScore >= 70) stage = 'decision';
 
+  const firstPartial = activeProgress.find((item) => item.status === 'partial');
+  const firstUnresolved = activeProgress.find((item) => item.status === 'untriggered');
+  const pendingConcern =
+    firstPartial?.goal.requiredPoints.find((point) => firstPartial.missingPointIds.includes(point.id))?.label ||
+    firstUnresolved?.goal.name ||
+    (
+      activeKeywordProgress
+        .filter((item) => item.covered < item.total)
+        .map((item) => keywordQuestionBySeq.get(item.seq)?.question)
+        .find(Boolean)
+    ) ||
+    null;
+
   return {
     customerGoal: inferCustomerGoal(questions),
     currentTopic,
+    currentSubtopic,
+    customerIntent,
+    pendingConcern,
     resolvedGoalIds,
     partialGoalIds,
     unresolvedGoalIds,
     satisfaction,
+    purchaseIntent,
     resolutionScore,
     conversationStage: stage,
     shouldClose,
