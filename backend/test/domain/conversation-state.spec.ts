@@ -1,4 +1,4 @@
-import { deriveConversationState, inferCustomerGoal } from '../../src/domain/conversation-state';
+import { buildKeywordQuestionProgress, deriveConversationState, inferCustomerGoal } from '../../src/domain/conversation-state';
 import { ScriptQuestion } from '../../src/domain/types';
 
 const questions: ScriptQuestion[] = [
@@ -69,6 +69,27 @@ describe('conversation state', () => {
     expect(state.unresolvedGoalIds).not.toContain('g3');
     expect(state.resolutionScore).toBe(33);
     expect(state.conversationStage).toBe('clarification');
+    expect(state.shouldClose).toBe(false);
+  });
+
+  it('tracks resolution for keyword-only legacy scripts without semantic goals', () => {
+    const keywordQuestions: ScriptQuestion[] = [
+      { seq: 1, question: '材质是什么？', keyPoints: ['面料'], sourceType: 'core', goalPriority: 'primary', primaryGoal: '面料' },
+      { seq: 2, question: '会缩水吗？', keyPoints: ['缩水'], sourceType: 'core' },
+    ];
+    const keywordProgress = buildKeywordQuestionProgress(keywordQuestions, [
+      { questionSeq: 1, hitPoints: ['面料'] },
+      { questionSeq: 2, hitPoints: [] },
+    ]);
+    const state = deriveConversationState(keywordQuestions, [], {
+      currentSeq: 1,
+      emotionValue: 20,
+      keywordProgress,
+    });
+
+    expect(state.resolvedGoalIds).toContain('keyword-seq-1');
+    expect(state.unresolvedGoalIds).toContain('keyword-seq-2');
+    expect(state.resolutionScore).toBe(50);
     expect(state.shouldClose).toBe(false);
   });
 
