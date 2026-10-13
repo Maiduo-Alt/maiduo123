@@ -22,7 +22,7 @@ export interface JudgeResult {
     | 'perfunctory' // 敷衍 → 不通过
     | 'key-point' // 要点命中（含同义词）→ 通过
     | 'stance' // 是非题 + 表态词 → 通过
-    | 'hedge' // 打太极 → 通过（客户 2026-10-11 口径）
+    | 'hedge' // 仅表示已回应但未解决，不应直接推进下一题
     | 'fallback' // 兜底要点「有效回应」→ 通过
     | 'opener' // 开场白阶段（问候/链接）的回应 → 通过，不参与要点判定
     | 'off-topic'; // 答非所问的实质内容 → 不通过
@@ -56,7 +56,7 @@ const BARE_EXISTENTIAL = /^(有|没有|没|木有)[哒呢哦呀哈嘛啊呐~～\
 /** 踢皮球前缀：表态词跟在其后时不算表态（「你可以看看详情页」）。 */
 const DEFLECT_PREFIX = /[您你](是)?(可以|能)/;
 
-/** 打太极 / 搪塞话术：没有给结论，但属于正常服务性回应（客户口径：算通过）。 */
+/** 打太极 / 搪塞话术：只表示“客服有回应”，不能代表买家问题已经解决。 */
 const HEDGE_PHRASES = [
   '为准', '以页面', '页面为准', '看情况', '具体看', '尽量', '尽快', '安排', '核实', '确认一下',
   '到时候', '仓库那边', '页面显示', '以实际', '帮您看看', '帮您确认', '帮您核实', '留意', '关注',
@@ -144,7 +144,7 @@ export function judgeReply(ctx: JudgeContext): JudgeResult {
   if (isYesNoQuestion(ctx.question) && (hasStance(reply) || BARE_EXISTENTIAL.test(reply.trim()))) {
     return { pass: true, signal: 'stance' };
   }
-  if (isHedge(reply)) return { pass: true, signal: 'hedge' };
+  if (isHedge(reply)) return { pass: false, signal: 'hedge' };
   return { pass: false, signal: 'off-topic' };
 }
 
