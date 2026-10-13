@@ -135,6 +135,32 @@ describe('semantic goal evaluation', () => {
     expect(selectNextQuestion(flow, 1, new Set())).toEqual({ nextSeq: 3, skippedSeqs: [2] });
   });
 
+  it('does not let an optional cross-topic question interrupt discovery', () => {
+    const flow: ScriptQuestion[] = [
+      { seq: 1, question: '走线整齐吗？', keyPoints: ['走线'], sourceType: 'core',
+        conversationPlan: { topic: '工艺', priority: 'primary', depth: 'focused', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+      { seq: 2, question: '现在有什么优惠？', keyPoints: ['优惠'], sourceType: 'optional',
+        conversationPlan: { topic: '优惠', priority: 'secondary', depth: 'normal', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+    ];
+    expect(selectNextQuestion(flow, 1, new Set(), [], {
+      conversationStage: 'discovery',
+      resolutionScore: 30,
+    })).toEqual({ nextSeq: null, skippedSeqs: [2] });
+  });
+
+  it('allows a non-context optional transition only after entering decision stage', () => {
+    const flow: ScriptQuestion[] = [
+      { seq: 1, question: '尺码怎么选？', keyPoints: ['尺码'], sourceType: 'core',
+        conversationPlan: { topic: '尺码', priority: 'primary', depth: 'focused', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+      { seq: 2, question: '现在有什么优惠？', keyPoints: ['优惠'], sourceType: 'optional',
+        conversationPlan: { topic: '优惠', priority: 'secondary', depth: 'normal', promptTemplates: [], followUpTemplates: [], maxFollowUps: 1 } },
+    ];
+    expect(selectNextQuestion(flow, 1, new Set(), [], {
+      conversationStage: 'decision',
+      resolutionScore: 80,
+    })).toEqual({ nextSeq: 2, skippedSeqs: [] });
+  });
+
   it('recognizes a clear customer closing without treating an open follow-up as a close', () => {
     expect(isNaturalClosingReply('好的，暂时没有其他问题，谢谢您。')).toBe(true);
     expect(isNaturalClosingReply('谢谢，另外还想问一下发货时间')).toBe(false);
