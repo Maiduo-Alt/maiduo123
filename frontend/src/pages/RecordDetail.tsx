@@ -263,6 +263,30 @@ export default function RecordDetail() {
                           <Descriptions.Item label="剧本">{s.scriptName || '已删除剧本'}</Descriptions.Item>
                           <Descriptions.Item label="买家风格">{s.styleName}</Descriptions.Item>
                           <Descriptions.Item label="结束原因">{s.finishedReason || '-'}</Descriptions.Item>
+                          <Descriptions.Item label="客户核心目标" span={3}>
+                            {s.conversationState?.customerGoal || '旧记录未生成'}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="最终阶段">
+                            {s.conversationState?.conversationStage || '-'}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="解决度">
+                            {s.conversationState?.resolutionScore !== undefined
+                              ? `${s.conversationState.resolutionScore}%`
+                              : '-'}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="客户满意度">
+                            {s.conversationState?.satisfaction !== undefined
+                              ? `${s.conversationState.satisfaction}/100`
+                              : '-'}
+                          </Descriptions.Item>
+                          <Descriptions.Item label="目标状态" span={3}>
+                            <Space size={4} wrap>
+                              <Tag color="green">已解决 {s.conversationState?.resolvedGoalIds?.length || 0}</Tag>
+                              <Tag color="orange">部分解决 {s.conversationState?.partialGoalIds?.length || 0}</Tag>
+                              <Tag>未解决 {s.conversationState?.unresolvedGoalIds?.length || 0}</Tag>
+                              {(s.skippedSeqs || []).length ? <Tag color="blue">自然跳过 {(s.skippedSeqs || []).length}</Tag> : null}
+                            </Space>
+                          </Descriptions.Item>
                           <Descriptions.Item label={`业务动作（${actionsOfSession(s.id).length}）`} span={3}>
                             {actionsOfSession(s.id).length ? (
                               <Space size={4} wrap>
