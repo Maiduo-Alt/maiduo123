@@ -1523,6 +1523,7 @@ export class ReceptionService implements OnModuleInit {
     const sessions = await this.db.many<any>(
       `SELECT s.id, s.buyer_name AS "buyerName", s.state, s.finished_reason AS "finishedReason", s.score,
               s.emotion_value AS "emotionValue", s.timeout_count AS "timeoutCount", s.total_questions AS "totalQuestions",
+              s.conversation_state AS "conversationState",
               sc.response_score AS "responseScore", sc.solving_score AS "solvingScore", sc.wording_score AS "wordingScore",
               sc.emotion_score AS "emotionScore", sc.risk_score AS "riskScore", sc.total_score AS "totalScore", sc.deductions, sc.metrics,
               sc2.name AS "scriptName", sc2.script_no AS "scriptNo", st.name AS "styleName"
