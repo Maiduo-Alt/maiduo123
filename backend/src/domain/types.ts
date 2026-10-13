@@ -168,6 +168,22 @@ export interface ScriptQuestion {
   sourceType?: 'core' | 'derived' | 'optional';
   /** 强依赖前文的问题不能作为开场，例如“那大概多久能处理好呢？”。 */
   requiresContext?: boolean;
+  /**
+   * 可选/衍生问题的运行时触发条件。全部满足才允许成为下一问。
+   * 不配置时保持向后兼容。
+   */
+  triggerConditions?: {
+    /** 只有处于这些会话阶段才允许触发。 */
+    stages?: ConversationState['conversationStage'][];
+    /** 最低核心目标解决度。 */
+    minResolutionScore?: number;
+    /** 只有刚才/此前发生过指定业务动作才允许触发。 */
+    afterBusinessAction?: string[];
+    /** 只有当前话题属于这些语义主题才允许触发。 */
+    topics?: string[];
+    /** 需要已有模拟订单。 */
+    requiresOrder?: boolean;
+  };
   /** Generated from selected consultation content to control how detailed the buyer asks. */
   goalPriority?: 'primary' | 'secondary';
   primaryGoal?: string;
