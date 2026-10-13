@@ -135,13 +135,35 @@ export function matchPoints(reply: string, keyPoints: string[]): string[] {
   });
 }
 
+/**
+ * 是非题中的“表态”必须和问题类型兼容。
+ * 例如“会缩水吗？”回复“可以的”虽然包含肯定词，但并没有回答“会/不会缩水”，不能推进下一题。
+ */
+export function hasCompatibleStance(question: string, reply: string): boolean {
+  const q = String(question || '');
+  const r = String(reply || '').trim();
+  if (!isYesNoQuestion(q)) return false;
+
+  // 发生性/属性类问题需要“会/不会/容易/不容易”一类对应表态。
+  if (/(会不会|会.{0,10}[吗嘛么][？?!！.\s]*$)/u.test(q) && !/(能不能|能否)/u.test(q)) {
+    return /(不会|会的|会哦|会呀|会哈|会呢|容易|不容易|可能会|一般会|一般不会)/u.test(r);
+  }
+
+  // 存在类问题需要明确“有/没有”。
+  if (/(有没有|有.{0,10}[吗嘛么][？?!！.\s]*$)/u.test(q)) {
+    return BARE_EXISTENTIAL.test(r) || /(?:^|[，。！？!\s])(有的|有哦|有呀|有哈|有呢|没有|没|暂时没有)/u.test(r);
+  }
+
+  return hasStance(r) || BARE_EXISTENTIAL.test(r);
+}
+
 /** 综合判定（见模块头注释的优先级）。 */
 export function judgeReply(ctx: JudgeContext): JudgeResult {
   const reply = String(ctx.reply || '');
   if (isPerfunctory(ctx)) return { pass: false, signal: 'perfunctory' };
   const hits = matchPoints(reply, ctx.keyPoints || []);
   if (hits.length > 0) return { pass: true, signal: hits.includes('有效回应') ? 'fallback' : 'key-point' };
-  if (isYesNoQuestion(ctx.question) && (hasStance(reply) || BARE_EXISTENTIAL.test(reply.trim()))) {
+  if (hasCompatibleStance(ctx.question, reply)) {
     return { pass: true, signal: 'stance' };
   }
   if (isHedge(reply)) return { pass: false, signal: 'hedge' };
