@@ -28,6 +28,7 @@ import {
 } from 'antd';
 import {
   AudioOutlined,
+  CheckCircleOutlined,
   CloseOutlined,
   ClockCircleOutlined,
   CopyOutlined,
@@ -1083,11 +1084,27 @@ export default function Reception() {
                             return last.sender === 'agent' ? `我：${text}` : text;
                           })()}
                         </span>
-                        {/* 训练需要的等待计时 / 状态标签保留在预览行右侧 */}
+                        {/* 训练需要的等待计时 / 状态标签保留在预览行右侧。
+                            飞鸽口径：买家等待回复时计秒；客服已回复（waiting_buyer）显示「已回复」计时停止；
+                            已超时显示红色标签；整理中显示关单倒计时。 */}
                         {runningSession ? (
-                          <span className="conversation-timer" style={{ color: waitColor }}>
-                            {session.waitedSec}s
-                          </span>
+                          session.timerMode === 'agent_close' ? (
+                            <span className="conversation-timer" style={{ color: '#d46b08' }}>
+                              整理 {session.closeRemainSec ?? 0}s
+                            </span>
+                          ) : session.state === 'waiting_buyer' ? (
+                            <Tag color="success" style={{ marginInlineEnd: 0 }}>
+                              <CheckCircleOutlined /> 已回复
+                            </Tag>
+                          ) : session.state === 'timeout' ? (
+                            <Tag color="error" style={{ marginInlineEnd: 0 }}>
+                              已超时
+                            </Tag>
+                          ) : (
+                            <span className="conversation-timer" style={{ color: waitColor }}>
+                              {session.waitedSec}s
+                            </span>
+                          )
                         ) : session.state === 'pending' ? (
                           <Tag color="blue" style={{ marginInlineEnd: 0 }}>
                             {STATE_LABEL.pending}
@@ -1158,14 +1175,33 @@ export default function Reception() {
             </div>
           </div>
           <div className="center-header-right">
-            {activeSession && (
-              <Tooltip title="距离超时的剩余时间">
-                <span className={`session-countdown ${urgent ? 'urgent' : ''}`}>
-                  <ClockCircleOutlined /> 剩余 {remain}s
-                  <span className="session-countdown-limit"> / 时限 {activeSession.timeoutLimitSec}s</span>
-                </span>
-              </Tooltip>
-            )}
+            {activeSession &&
+              (activeSession.timerMode === 'agent_close' ? (
+                <Tooltip title="会话已进入整理阶段，请在倒计时内结束会话">
+                  <span className={`session-countdown ${(activeSession.closeRemainSec ?? 0) <= 30 ? 'urgent' : ''}`}>
+                    <ClockCircleOutlined /> 整理剩余 {activeSession.closeRemainSec ?? 0}s
+                  </span>
+                </Tooltip>
+              ) : activeSession.state === 'waiting_buyer' ? (
+                <Tooltip title="本轮已回复，计时已停止；买家发起下一轮后重新计时">
+                  <span className="session-countdown">
+                    <CheckCircleOutlined /> 已回复 · 等待买家
+                  </span>
+                </Tooltip>
+              ) : activeSession.state === 'timeout' ? (
+                <Tooltip title="本轮已超过时限，系统已记录一次超时">
+                  <span className="session-countdown urgent">
+                    <ClockCircleOutlined /> 已超时
+                  </span>
+                </Tooltip>
+              ) : (
+                <Tooltip title="距离超时的剩余时间">
+                  <span className={`session-countdown ${urgent ? 'urgent' : ''}`}>
+                    <ClockCircleOutlined /> 剩余 {remain}s
+                    <span className="session-countdown-limit"> / 时限 {activeSession.timeoutLimitSec}s</span>
+                  </span>
+                </Tooltip>
+              ))}
             {activeSession && (
               <div className="center-header-actions">
                 {/* 参考图 1：会话头右侧的备注 / 收藏 / @ / 转交 / 更多 图标组 */}
