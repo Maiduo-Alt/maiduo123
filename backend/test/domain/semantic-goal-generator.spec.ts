@@ -35,6 +35,24 @@ describe('generateSemanticGoals', () => {
     expect(generated[0].seq).toBe(1);
   });
 
+  it('uses accepted answer semantics to choose a later core goal without reordering questions', () => {
+    const generated = generateSemanticGoals([
+      { seq: 1, question: '这款面料摸起来怎么样？', keyPoints: ['面料', '手感'], sourceType: 'core' },
+      { seq: 2, question: '洗几次会不会容易缩水？', keyPoints: ['缩水', '洗涤'], sourceType: 'core' },
+    ], '关注后续打理成本', () => 0.5, {
+      templateName: '材质与打理',
+      acceptedAnswer: '说明洗涤方式，并明确正常洗护不易缩水',
+    });
+
+    expect(generated.map((question) => question.question)).toEqual([
+      '这款面料摸起来怎么样？',
+      '洗几次会不会容易缩水？',
+    ]);
+    expect(generated[1].goalPriority).toBe('primary');
+    expect(generated[1].primaryGoal).toBe('缩水');
+    expect(generated[0].goalPriority).toBe('secondary');
+  });
+
   it('never promotes an optional padding question to the primary goal', () => {
     const generated = generateSemanticGoals([
       { seq: 1, question: '是包边还是锁边？', keyPoints: ['工艺', '走线'], sourceType: 'core' },
