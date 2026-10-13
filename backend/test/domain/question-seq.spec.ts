@@ -53,7 +53,11 @@ describe('问题混合保留主目标', () => {
     expect(mixed.find((question) => question.goalPriority === 'primary')?.question).toBe('主目标原问题');
     expect(mixed.some((question) => question.question === '售后补充问题')).toBe(true);
     expect(mixed.find((question) => question.question === '售后补充问题')).toEqual(
-      expect.objectContaining({ sourceType: 'optional', requiresContext: true })
+      expect.objectContaining({
+        sourceType: 'optional',
+        requiresContext: true,
+        triggerConditions: expect.objectContaining({ stages: expect.any(Array) }),
+      })
     );
   });
 });
@@ -121,6 +125,10 @@ describe('旧剧本兼容：通用补题降级', () => {
       sourceType: 'optional',
       requiresContext: true,
       goalPriority: 'secondary',
+      triggerConditions: expect.objectContaining({
+        requiresOrder: true,
+        afterBusinessAction: expect.arrayContaining(['ship_goods', 'after_sale_proxy']),
+      }),
     }));
     expect(normalized[0].primaryGoal).toBeUndefined();
     expect(normalized[1].sourceType).toBe('core');
