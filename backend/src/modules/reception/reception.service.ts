@@ -1623,7 +1623,9 @@ export class ReceptionService implements OnModuleInit {
       },
       sessions: sessions.map((s) => {
         const lastBuyer = s.last_buyer_at ? new Date(s.last_buyer_at).getTime() : null;
-        const waitedSec = lastBuyer ? Math.round((now - lastBuyer) / 1000) : 0;
+        // 只有「等待客服回复」（serving）和「排队待接入」（wait）时才累计响应计时；
+        // 客服已回复、买家思考中（waiting_buyer）时计时暂停，避免回复后倒计时继续走动
+        const waitedSec = s.state === 'waiting_buyer' || !lastBuyer ? 0 : Math.round((now - lastBuyer) / 1000);
         const closeRemainSec = s.state === 'awaiting_agent_close' && s.close_deadline_at
           ? Math.max(0, Math.ceil((Date.parse(s.close_deadline_at) - now) / 1000))
           : null;
@@ -1764,7 +1766,7 @@ export class ReceptionService implements OnModuleInit {
       const params = row.param_snapshot as SystemParams;
       const limit = Math.round(params.timeoutSec * (params.waitToleranceFactor[row.level] ?? 1));
       const lastBuyer = row.last_buyer_at ? new Date(row.last_buyer_at).getTime() : null;
-      const waitedSec = lastBuyer ? Math.max(0, Math.round((now - lastBuyer) / 1000)) : 0;
+      const waitedSec = row.state === 'waiting_buyer' || !lastBuyer ? 0 : Math.max(0, Math.round((now - lastBuyer) / 1000));
       const closeDeadline = row.close_deadline_at ? Date.parse(row.close_deadline_at) : null;
       const closeRemainSec = row.state === 'awaiting_agent_close' && closeDeadline
         ? Math.max(0, Math.ceil((closeDeadline - now) / 1000))
@@ -1800,7 +1802,7 @@ export class ReceptionService implements OnModuleInit {
     const rows = await this.db.many<any>(
       `SELECT s.id, s.attempt_id, s.last_buyer_at, s.state, a.level, a.account_id, a.param_snapshot
        FROM sessions s JOIN attempts a ON a.id = s.attempt_id
-       WHERE a.status = 'running' AND s.state IN ('serving','waiting_buyer','wait','timeout')`
+       WHERE a.status = 'running' AND s.state IN ('serving','wait','timeout')`
     );
     for (const row of rows) {
       if (!row.last_buyer_at) continue;
