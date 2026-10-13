@@ -388,6 +388,7 @@ export class RecordsService {
               s.total_questions AS "totalQuestions", s.emotion_value AS "emotionValue", s.timeout_count AS "timeoutCount",
               s.max_response_sec AS "maxResponseSec", s.avg_response_sec AS "avgResponseSec", s.score,
               s.finished_reason AS "finishedReason", s.questions, s.products,
+              s.skipped_seqs AS "skippedSeqs", s.conversation_state AS "conversationState",
               sc.response_score AS "responseScore", sc.solving_score AS "solvingScore", sc.wording_score AS "wordingScore",
               sc.emotion_score AS "emotionScore", sc.total_score AS "totalScore", sc.deductions, sc.metrics,
               sc2.id AS "scriptId", sc2.name AS "scriptName", sc2.script_no AS "scriptNo", st.name AS "styleName"
