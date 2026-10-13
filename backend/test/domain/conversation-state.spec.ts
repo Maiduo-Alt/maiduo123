@@ -109,6 +109,17 @@ describe('conversation state', () => {
     expect(state.shouldClose).toBe(false);
   });
 
+  it('prioritizes the current unresolved concern over an older partial goal', () => {
+    const state = deriveConversationState(questions, [{
+      goalMatches: [{ goalId: 'g1', pointIds: ['p1'] }],
+      riskItems: [],
+    }], { currentSeq: 2, emotionValue: 20 });
+
+    expect(state.partialGoalIds).toContain('g1');
+    expect(state.unresolvedGoalIds).toContain('g2');
+    expect(state.pendingConcern).toBe('次要目标：内衬');
+  });
+
   it('does not close just because the primary goal is solved when another core question remains', () => {
     const state = deriveConversationState(questions, [{
       goalMatches: [{ goalId: 'g1', pointIds: ['p1', 'p2'] }],
