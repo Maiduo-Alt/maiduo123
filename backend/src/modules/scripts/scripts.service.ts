@@ -43,13 +43,16 @@ function groupScenarioQas(qas: ScenarioQa[]): ScenarioQa[] {
     const points = Array.isArray(qa.key_points) ? qa.key_points : [];
     questions.forEach((question, index) => {
       const topic = scenarioTopic(question);
-      const current = groups.get(topic);
+      // 主题相同不代表客户动机相同：退货规则、质量问题、错发商品都可能落在“售后处理”。
+      // 保留原始 QA 边界，避免批量生成时把多个独立咨询内容拼成一个不连贯的会话。
+      const groupKey = `${qa.id}:${topic}`;
+      const current = groups.get(groupKey);
       if (current) {
         current.question_list.push(question);
         current.key_points.push(points[index]?.length ? points[index] : ['有效回应']);
         return;
       }
-      groups.set(topic, {
+      groups.set(groupKey, {
         id: qa.id,
         template_name: `${qa.template_name}·${topic}`,
         stage: qa.stage,
