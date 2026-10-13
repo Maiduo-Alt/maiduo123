@@ -98,6 +98,25 @@ describe('conversation state', () => {
     expect(state.shouldClose).toBe(true);
   });
 
+  it('timeouts and unresolved streak reduce satisfaction even when semantic coverage is high', () => {
+    const state = deriveConversationState(questions, [{
+      goalMatches: [
+        { goalId: 'g1', pointIds: ['p1', 'p2'] },
+        { goalId: 'g2', pointIds: ['p3'] },
+      ],
+      riskItems: [],
+    }], {
+      currentSeq: 2,
+      emotionValue: 20,
+      timeoutCount: 3,
+      unresolvedStreak: 2,
+      followUps: 2,
+    });
+
+    expect(state.resolutionScore).toBe(100);
+    expect(state.satisfaction).toBeLessThan(75);
+  });
+
   it('high negative emotion can prevent an otherwise solved conversation from auto-closing', () => {
     const state = deriveConversationState(questions, [{
       goalMatches: [
