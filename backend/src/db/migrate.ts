@@ -34,11 +34,11 @@ export async function runMigrations(db: DbService): Promise<void> {
     await db.query(
       `UPDATE sessions
        SET questions = $2::jsonb,
-           total_questions = jsonb_array_length($2::jsonb),
+           total_questions = $3,
            skipped_seqs = '[]'::jsonb,
            conversation_state = '{}'::jsonb
        WHERE id = $1`,
-      [row.id, JSON.stringify(after)],
+      [row.id, JSON.stringify(after), after.length],
     );
   }
 }
