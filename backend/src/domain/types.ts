@@ -171,6 +171,8 @@ export interface ScriptQuestion {
   /** Generated from selected consultation content to control how detailed the buyer asks. */
   goalPriority?: 'primary' | 'secondary';
   primaryGoal?: string;
+  /** 剧本级客户核心目的的可读提示，仅主目标轮需要携带。 */
+  customerGoal?: string;
   /** Original buyer question before adding the generated primary-goal follow-up. */
   baseQuestion?: string;
   /** Deterministic buyer-question plan. Templates are reviewed with the script. */
