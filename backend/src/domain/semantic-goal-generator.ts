@@ -43,7 +43,7 @@ export function generateSemanticGoals(
       question: question.question,
       goalPriority: isPrimaryRound ? 'primary' as const : 'secondary' as const,
       ...(isPrimaryRound ? { primaryGoal: primary.point, baseQuestion: question.question } : {}),
-      conversationPlan: buildConversationPlan(question.question, primary.point, isPrimaryRound),
+      conversationPlan: buildConversationPlan(question.question, isPrimaryRound ? primary.point : keyPoints[0], isPrimaryRound),
       semanticGoals: [{
         id: `auto-goal-${question.seq}`,
         name: [context ? `「${context}」场景` : '', isPrimaryRound ? `主目标：${primary.point}` : `次要目标：${keyPoints[0]}`].filter(Boolean).join(' '),
@@ -66,6 +66,11 @@ const TOPIC_TEMPLATES: Array<{
   prompts: string[];
   followUps: string[];
 }> = [
+  {
+    pattern: /工艺|做工|走线|缝线|包边|锁边|内衬|耐穿|开线|脱线/u,
+    prompts: ['这款做工细节怎么样？', '这种做工平时穿洗会不会容易开线？'],
+    followUps: ['我主要想确认做工牢不牢，走线和边缘处理能具体说一下吗？', '那内衬和容易磨损的位置是怎么处理的？'],
+  },
   {
     pattern: /材质|面料|透气|厚度|透明|起球|掉色|缩水|洗涤/u,
     prompts: ['这款具体是什么面料？', '贴身穿会不会闷或者扎？'],
