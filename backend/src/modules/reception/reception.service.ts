@@ -807,9 +807,9 @@ export class ReceptionService implements OnModuleInit {
 
   /**
    * 自适应推送（2026-10-11）：客服回复后，用语义判定器评估本轮是否「答到」，再决定推下一题还是追问。
-   *  - 任一条回复判定通过（要点/表态/打太极/兜底）或执行过业务动作 → 推进下一题；
-   *  - 全部回复都是敷衍（客户口径）→ 只扣分、不追问，直接推进下一题；
-   *  - 答非所问 → 买家按沟通风格追问（最多 MAX_FOLLOWUPS 次，见 domain/adaptive-push）。
+   *  - 完整语义目标已解决、明确表态成立，或执行过业务动作 → 推进；
+   *  - 部分解决 → 针对缺失语义点追问；
+   *  - 打太极/答非所问 → 继续追问；纯敷衍按既有训练口径扣分后推进。
    * 历史消息没有 judge 字段（旧数据）时退回要点命中口径。
    */
   async advanceAfterReply(sessionId: number): Promise<void> {
