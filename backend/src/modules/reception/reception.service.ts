@@ -666,6 +666,9 @@ export class ReceptionService implements OnModuleInit {
       [sessionId]
     );
     const evaluations = priorMessages.map((row) => row.rule_result?.semanticEvaluation).filter(Boolean);
+    const businessActionCodes = priorMessages
+      .map((row) => row.rule_result?.businessAction?.code)
+      .filter((code): code is string => !!code);
     let conversationState = await this.persistConversationState(session, evaluations);
 
     // 客户核心目标已经解决、整体覆盖度足够时，不再为了“把题问完”继续机械推进。
@@ -685,6 +688,8 @@ export class ReceptionService implements OnModuleInit {
       {
         conversationStage: conversationState.conversationStage,
         resolutionScore: conversationState.resolutionScore,
+        businessActionCodes,
+        hasOrder: !!session.order_no,
       },
     );
     const nextSeq = next.nextSeq ?? session.total_questions + 1;
