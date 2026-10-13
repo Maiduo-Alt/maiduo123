@@ -44,6 +44,27 @@ export function buildQuestionSeq(qa: QuestionSeqSource, rounds: [number, number]
 }
 
 
+function triggerConditionsForOptionalQuestion(question: string): ScriptQuestion['triggerConditions'] {
+  const text = String(question || '').trim();
+  if (/优惠|活动|优势|别家|考虑一下/u.test(text)) {
+    return { stages: ['decision'], minResolutionScore: 70 };
+  }
+  if (/多久能处理好|什么时候能给我结果|等了好几天/u.test(text)) {
+    return {
+      stages: ['clarification', 'decision'],
+      afterBusinessAction: ['ship_goods', 'ship_negotiate', 'after_sale_proxy'],
+      requiresOrder: true,
+    };
+  }
+  if (/投诉|质量也太差/u.test(text)) {
+    return { stages: ['clarification', 'decision'], minResolutionScore: 0 };
+  }
+  if (/退货|退款|补偿|售后/u.test(text)) {
+    return { stages: ['clarification', 'decision'], requiresOrder: true };
+  }
+  return { stages: ['clarification', 'decision'] };
+}
+
 const LEGACY_GENERIC_FILLERS = new Set([
   '那大概多久能处理好呢？',
   '我再看一下别家，你们有什么优势吗？',
@@ -82,6 +103,7 @@ export function normalizeLegacyQuestionSeq(questions: ScriptQuestion[]): ScriptQ
       sourceType: 'optional',
       requiresContext: true,
       goalPriority: 'secondary',
+      triggerConditions: question.triggerConditions || triggerConditionsForOptionalQuestion(question.question),
       semanticGoals: (question.semanticGoals || []).map((goal) => ({
         ...goal,
         requiredPoints: (goal.requiredPoints || []).map((point) => {
@@ -165,6 +187,7 @@ export function mixQuestionSeq(
       keyPoints: source.keyPoints && source.keyPoints.length ? source.keyPoints : ['有效回应'],
       sourceType: 'optional',
       requiresContext: true,
+      triggerConditions: triggerConditionsForOptionalQuestion(source.question),
       needTransfer: false,
       stage,
     };
