@@ -2,8 +2,8 @@ import { judgeReply, isYesNoQuestion, hasStance, isPerfunctory, isHedge } from '
 
 /**
  * 语义判定器（2026-10-11 客户口径）：
- *  - 符合语义（表态 / 要点 / 打太极 / 兜底）→ 通过；
- *  - 明显敷衍（语气词 / 过短 / 复读 / 重复）与答非所问 → 不通过。
+ *  - 符合语义（表态 / 要点 / 兜底）→ 通过；
+ *  - 打太极只算“有回应但未解决”，与敷衍/答非所问一样不能直接推进。
  */
 const base = { question: '胯宽能穿吗', keyPoints: ['胯宽', '遮胯', '显瘦'], buyerText: '胯宽能穿吗', prevAgentText: null };
 
@@ -70,9 +70,9 @@ describe('综合判定（客户口径决策表）', () => {
     const r = judgeReply({ question: '能机洗吗', keyPoints: ['洗涤', '机洗'], buyerText: '能机洗吗', reply: '没问题，放心机洗，建议套洗衣袋哦' });
     expect(r.pass).toBe(true);
   });
-  it('打太极 → 通过（客户 2026-10-11 口径）', () => {
+  it('打太极 → 已回应但未解决，不能直接推进', () => {
     const r = judgeReply({ question: '能指定顺丰吗', keyPoints: ['快递', '指定', '顺丰'], buyerText: '能指定顺丰吗', reply: '这个要看仓库那边的安排哦' });
-    expect(r).toEqual({ pass: true, signal: 'hedge' });
+    expect(r).toEqual({ pass: false, signal: 'hedge' });
   });
   it('踩中要点/同义词 → 通过', () => {
     const r = judgeReply({ question: '发什么快递', keyPoints: ['快递', '顺丰', '中通'], buyerText: '发什么快递', reply: '亲我们默认发中通和韵达哦' });
