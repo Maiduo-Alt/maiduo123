@@ -54,6 +54,24 @@ describe('semantic goal evaluation', () => {
     ]);
   });
 
+  it('recognizes a natural lining answer without forcing repeated buyer follow-ups', () => {
+    const craft: ScriptQuestion[] = [{
+      seq: 3,
+      question: '有内衬吗？',
+      keyPoints: ['内衬', '不透'],
+      semanticGoals: [{
+        id: 'craft-lining',
+        name: '次要目标：内衬',
+        requiredPoints: [
+          { id: 'lining', label: '内衬', matchAny: ['内衬', '里布', '衬里'] },
+          { id: 'opaque', label: '不透', matchAny: ['不透', '不会透', '不透光'] },
+        ],
+      }],
+    }];
+    expect(evaluateSemanticReply('有的亲，这款带轻薄内衬，贴合不透，春秋单穿也合适。', craft).goalMatches)
+      .toEqual([{ goalId: 'craft-lining', pointIds: ['lining', 'opaque'] }]);
+  });
+
   it('supports another explicitly configured natural expression', () => {
     expect(evaluateSemanticReply('平时穿 M 的话我们家也拿 M 就可以。', [
       { ...questions[0], semanticGoals: [{ ...questions[0].semanticGoals![0], requiredPoints: [
