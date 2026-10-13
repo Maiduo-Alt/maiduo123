@@ -191,6 +191,31 @@ export function conversationTopic(question?: ScriptQuestion | null): Conversatio
   return 'general';
 }
 
+const NATURAL_TOPIC_TRANSITIONS: Partial<Record<ConversationTopic, ConversationTopic[]>> = {
+  craft: ['quality', 'care', 'material'],
+  material: ['care', 'quality', 'fit'],
+  fit: ['inventory', 'exchange', 'promotion'],
+  care: ['quality', 'material'],
+  inventory: ['shipping', 'promotion', 'order'],
+  promotion: ['payment', 'order'],
+  payment: ['order', 'shipping'],
+  shipping: ['delivery', 'order'],
+  delivery: ['quality', 'refund', 'exchange'],
+  quality: ['exchange', 'refund', 'complaint'],
+  exchange: ['delivery', 'order'],
+  refund: ['complaint'],
+  complaint: ['refund', 'exchange'],
+  order: ['shipping', 'delivery', 'payment'],
+};
+
+/** 同主题最高，常见相邻主题次之，生硬跨主题给负分。 */
+export function topicTransitionScore(from: ConversationTopic, to: ConversationTopic): number {
+  if (from === 'general' || to === 'general') return 0;
+  if (from === to) return 45;
+  if ((NATURAL_TOPIC_TRANSITIONS[from] || []).includes(to)) return 18;
+  return -18;
+}
+
 function isQuestionCompleted(question: ScriptQuestion, completedGoalIds: Set<string>): boolean {
   const goals = question.semanticGoals || [];
   return goals.length > 0 && goals.every((goal) => completedGoalIds.has(goal.id));
@@ -322,8 +347,8 @@ export function selectNextQuestion(
       const candidateTopic = conversationTopic(question);
       let score = sourceType === 'core' ? 100 : sourceType === 'derived' ? 80 : 20;
 
-      // 上下文连续性优先于题号顺序。
-      if (candidateTopic === currentTopic && currentTopic !== 'general') score += 45;
+      // 上下文连续性优先于题号顺序：同主题 > 常见相邻主题 > 生硬跨主题。
+      score += topicTransitionScore(currentTopic, candidateTopic);
       if (question.goalPriority === 'primary') score += 15;
       if (current && question.stage === current.stage) score += 5;
 
