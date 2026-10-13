@@ -3,10 +3,52 @@ import { SCHEMA_SQL } from './schema';
 import { loadEnv } from './env';
 import { normalizeLegacyQuestionSeq } from '../domain/question-seq';
 import { ScriptQuestion } from '../domain/types';
+import { KEY_POINT_ALIASES } from '../domain/key-point-aliases';
+
+function repairCraftDetailQuestionSeq(questions: ScriptQuestion[]): ScriptQuestion[] {
+  const pointsByQuestion: Record<string, string[]> = {
+    '是包边还是锁边？': ['工艺', '锁边'],
+    '走线整齐吗？': ['走线', '整齐'],
+    '有内衬吗？': ['内衬', '不透'],
+  };
+  return (questions || []).map((question) => {
+    const keyPoints = pointsByQuestion[String(question.question || '').trim()];
+    if (!keyPoints) return question;
+    const autoGoals = (question.semanticGoals || []).map((goal) => {
+      if (!String(goal.id || '').startsWith('auto-goal-')) return goal;
+      return {
+        ...goal,
+        requiredPoints: keyPoints.map((point, index) => ({
+          id: `auto-point-${question.seq}-${index + 1}`,
+          label: point,
+          matchMode: 'flexible' as const,
+          ...(question.goalPriority === 'primary' && index === 0 ? { isPrimary: true } : {}),
+          matchAny: [...new Set([point, ...(KEY_POINT_ALIASES[point] || [])])],
+        })),
+      };
+    });
+    return { ...question, keyPoints, semanticGoals: autoGoals };
+  });
+}
 
 /** 独立执行的建表脚本：node dist/db/migrate.js */
 export async function runMigrations(db: DbService): Promise<void> {
   await db.query(SCHEMA_SQL);
+
+  // 修复内置“咨询工艺细节”早期错位要点：第 2/3 轮曾把包边/锁边、整齐/说明
+  // 错配到走线/内衬问题，导致明确回答仍判 0 命中并反复追问。
+  await db.query(
+    `UPDATE buyer_qa
+     SET key_points = $2::jsonb,
+         accepted_answer = $3,
+         updated_at = now()
+     WHERE template_name = $1`,
+    [
+      '咨询工艺细节',
+      JSON.stringify([['工艺', '锁边'], ['走线', '整齐'], ['内衬', '不透']]),
+      '说明工艺做法、走线水平和内衬情况，可提供细节实拍',
+    ],
+  );
 
   // 数据迁移（幂等）：把旧版“为凑轮数注入的通用补题”直接降级成 optional，
   // 避免测试库里已经生成的旧剧本仍展示错误主目标。运行时还有同一层兼容兜底。
@@ -15,7 +57,7 @@ export async function runMigrations(db: DbService): Promise<void> {
   );
   for (const row of scripts) {
     const before = Array.isArray(row.question_seq) ? row.question_seq : [];
-    const after = normalizeLegacyQuestionSeq(before);
+    const after = repairCraftDetailQuestionSeq(normalizeLegacyQuestionSeq(before));
     if (JSON.stringify(after) === JSON.stringify(before)) continue;
     await db.query(
       `UPDATE scripts SET question_seq = $2::jsonb, updated_at = now() WHERE id = $1`,
