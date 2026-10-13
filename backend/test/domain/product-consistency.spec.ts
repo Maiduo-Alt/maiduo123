@@ -17,6 +17,9 @@ describe('商品与问题的一致性（客户 2026-10-03）', () => {
     expect(isQuestionCompatibleWithCategory('我 165 体重 50 公斤，穿什么码合适？', '男装')).toBe(true);
     expect(isQuestionCompatibleWithCategory('我 165 体重 50 公斤，穿什么码合适？', '数码')).toBe(false);
     expect(isQuestionCompatibleWithCategory('面料会不会起球呀？', '食品')).toBe(false);
+    expect(isQuestionCompatibleWithCategory('是包边还是锁边？', '食品')).toBe(false);
+    expect(isQuestionCompatibleWithCategory('走线整齐吗？', '食品')).toBe(false);
+    expect(isQuestionCompatibleWithCategory('是包边还是锁边？', '女装')).toBe(true);
     expect(isQuestionCompatibleWithCategory('鞋码偏大还是偏小？', '女装')).toBe(false);
     expect(isQuestionCompatibleWithCategory('鞋码偏大还是偏小？', '鞋靴')).toBe(true);
     expect(isQuestionCompatibleWithCategory('这个保质期到什么时候？', '食品')).toBe(true);
