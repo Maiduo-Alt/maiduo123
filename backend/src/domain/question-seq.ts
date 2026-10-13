@@ -85,8 +85,9 @@ export function normalizeLegacyQuestionSeq(questions: ScriptQuestion[]): ScriptQ
       semanticGoals: (question.semanticGoals || []).map((goal) => ({
         ...goal,
         requiredPoints: (goal.requiredPoints || []).map((point) => {
-          const { isPrimary: _isPrimary, ...rest } = point;
-          return rest;
+          const normalizedPoint = { ...point };
+          delete normalizedPoint.isPrimary;
+          return normalizedPoint;
         }),
       })),
     };
