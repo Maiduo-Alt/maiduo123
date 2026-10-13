@@ -85,6 +85,23 @@ describe('问题序列：售前 / 售后按比例混合（客户 2026-10-03）',
     expect(mixed.map((q) => q.seq)).toEqual(seq.map((q) => q.seq));
   });
 
+  it('两轮短剧本在 50% 配比下也会混入 1 轮另一阶段问题', () => {
+    const short = buildQuestionSeq(qa('presale', ['问题一？', '问题二？']), [2, 2]);
+    const mixed = mixQuestionSeq(short, {
+      ratioPct: 50,
+      pool: ORDER_AFTERSALE_QUESTIONS,
+      stage: 'aftersale',
+    });
+    expect(mixed).toHaveLength(2);
+    expect(mixed[0].stage).toBe('presale');
+    expect(mixed[1].stage).toBe('aftersale');
+    expect(mixed[1]).toEqual(expect.objectContaining({
+      sourceType: 'optional',
+      requiresContext: true,
+      triggerConditions: expect.objectContaining({ requiresOrder: true, minResolutionScore: 70 }),
+    }));
+  });
+
   it('占比 0 表示不混（整场都是剧本本身的话题）；占比有上限，最多换掉一半', () => {
     const seq = base();
     expect(mixQuestionSeq(seq, { ratioPct: 0, pool: ORDER_AFTERSALE_QUESTIONS, stage: 'aftersale' })).toEqual(seq);
