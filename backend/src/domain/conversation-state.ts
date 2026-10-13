@@ -202,16 +202,22 @@ export function deriveConversationState(
   const currentUnresolved = activeProgress.find(
     (item) => currentGoalIds.has(item.goal.id) && item.status === 'untriggered',
   );
-  const firstPartial = currentPartial || activeProgress.find((item) => item.status === 'partial');
-  const firstUnresolved = currentUnresolved || activeProgress.find((item) => item.status === 'untriggered');
+  const fallbackPartial = activeProgress.find((item) => item.status === 'partial');
+  const fallbackUnresolved = activeProgress.find((item) => item.status === 'untriggered');
   const currentKeywordConcern = activeKeywordProgress
     .filter((item) => item.seq === currentSeq && item.covered < item.total)
     .map((item) => keywordQuestionBySeq.get(item.seq)?.question)
     .find(Boolean);
+  const currentSemanticConcern =
+    currentPartial?.goal.requiredPoints.find((point) => currentPartial.missingPointIds.includes(point.id))?.label ||
+    currentUnresolved?.goal.name;
+  const fallbackSemanticConcern =
+    fallbackPartial?.goal.requiredPoints.find((point) => fallbackPartial.missingPointIds.includes(point.id))?.label ||
+    fallbackUnresolved?.goal.name;
   const pendingConcern =
-    firstPartial?.goal.requiredPoints.find((point) => firstPartial.missingPointIds.includes(point.id))?.label ||
-    firstUnresolved?.goal.name ||
+    currentSemanticConcern ||
     currentKeywordConcern ||
+    fallbackSemanticConcern ||
     (
       activeKeywordProgress
         .filter((item) => item.covered < item.total)
