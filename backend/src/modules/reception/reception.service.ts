@@ -36,11 +36,11 @@ import {
 } from '../../domain/business-actions';
 import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-scope';
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
-import { evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
+import { conversationTopic, evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
 import { normalizeLegacyQuestionSeq } from '../../domain/question-seq';
 import { deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
-import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, followUpEmotionDelta } from '../../domain/adaptive-push';
+import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
 
 interface SessionRow {
@@ -676,7 +676,18 @@ export class ReceptionService implements OnModuleInit {
     }
 
     const completedGoals = new Set(conversationState.resolvedGoalIds);
-    const next = selectNextQuestion(session.questions, session.current_seq, completedGoals, session.skipped_seqs || []);
+    const previousQuestion = session.questions.find((question) => question.seq === session.current_seq) || null;
+    const previousTopic = conversationTopic(previousQuestion);
+    const next = selectNextQuestion(
+      session.questions,
+      session.current_seq,
+      completedGoals,
+      session.skipped_seqs || [],
+      {
+        conversationStage: conversationState.conversationStage,
+        resolutionScore: conversationState.resolutionScore,
+      },
+    );
     const nextSeq = next.nextSeq ?? session.total_questions + 1;
     if (next.skippedSeqs.length !== (session.skipped_seqs || []).length) {
       await this.db.query(`UPDATE sessions SET current_seq = $2, skipped_seqs = $3::jsonb WHERE id = $1`, [
@@ -742,7 +753,15 @@ export class ReceptionService implements OnModuleInit {
       }
     }
     const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
-    const plannedPrompt = question.conversationPlan?.promptTemplates?.[0] || question.baseQuestion || question.question;
+    const rawPrompt = question.conversationPlan?.promptTemplates?.[0] || question.baseQuestion || question.question;
+    const nextTopic = conversationTopic(question);
+    const plannedPrompt =
+      session.current_seq > 0 &&
+      previousTopic !== 'general' &&
+      nextTopic !== 'general' &&
+      previousTopic !== nextTopic
+        ? buildTopicTransitionText(session.style_code, rawPrompt)
+        : rawPrompt;
     const texts = behavior.transform(plannedPrompt);
     /**
      * 客户 2026-10-03：**推送哪个问题，就带出与之关联的订单状态**。
