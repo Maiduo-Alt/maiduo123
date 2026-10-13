@@ -1,4 +1,4 @@
-import { evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../src/domain/semantic-goals';
+import { evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion, topicTransitionScore } from '../../src/domain/semantic-goals';
 import { ScriptQuestion } from '../../src/domain/types';
 
 const questions: ScriptQuestion[] = [
@@ -37,6 +37,15 @@ const questions: ScriptQuestion[] = [
     }],
   },
 ];
+
+describe('topic transition continuity', () => {
+  it('ranks same and naturally adjacent topics above abrupt jumps', () => {
+    expect(topicTransitionScore('craft', 'craft')).toBeGreaterThan(topicTransitionScore('craft', 'care'));
+    expect(topicTransitionScore('craft', 'care')).toBeGreaterThan(topicTransitionScore('craft', 'promotion'));
+    expect(topicTransitionScore('shipping', 'delivery')).toBeGreaterThan(0);
+    expect(topicTransitionScore('quality', 'refund')).toBeGreaterThan(0);
+  });
+});
 
 describe('semantic goal evaluation', () => {
   it('recognizes a configured equivalent expression for the size goal', () => {
