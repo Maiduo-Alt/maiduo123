@@ -47,7 +47,7 @@ export function buildQuestionSeq(qa: QuestionSeqSource, rounds: [number, number]
 function triggerConditionsForOptionalQuestion(question: string): ScriptQuestion['triggerConditions'] {
   const text = String(question || '').trim();
   if (/优惠|活动|优势|别家|考虑一下/u.test(text)) {
-    return { stages: ['decision'], minResolutionScore: 70 };
+    return { stages: ['decision'], minResolutionScore: 70, minPurchaseIntent: 45 };
   }
   if (/多久能处理好|什么时候能给我结果|等了好几天/u.test(text)) {
     return {
