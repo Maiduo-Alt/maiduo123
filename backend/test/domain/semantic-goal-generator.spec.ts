@@ -19,21 +19,30 @@ describe('generateSemanticGoals', () => {
     expect(generated.semanticGoals![0].requiredPoints[0].isPrimary).toBe(true);
   });
 
-  it('selects exactly one primary point across the selected consultation content', () => {
+  it('selects a deterministic primary point from core questions and preserves conversation order', () => {
     const generated = generateSemanticGoals([
-      { seq: 1, question: '材质是什么？', keyPoints: ['面料', '透气'] },
-      { seq: 2, question: '推荐什么尺码？', keyPoints: ['尺码', '偏大'] },
-      { seq: 3, question: '何时发货？', keyPoints: ['发货时间'] },
+      { seq: 1, question: '材质是什么？', keyPoints: ['面料', '透气'], sourceType: 'core' },
+      { seq: 2, question: '推荐什么尺码？', keyPoints: ['尺码', '偏大'], sourceType: 'core' },
+      { seq: 3, question: '何时发货？', keyPoints: ['发货时间'], sourceType: 'optional' },
     ], '', () => 0.99);
     const primary = generated.flatMap((question) => question.semanticGoals || [])
       .flatMap((goal) => goal.requiredPoints.filter((point) => point.isPrimary));
     expect(primary).toHaveLength(1);
-    expect(primary[0].label).toBe('发货时间');
-    expect(generated[0].question).toContain('大概什么时候发出');
+    expect(primary[0].label).toBe('面料');
+    expect(generated.map((question) => question.question)).toEqual(['材质是什么？', '推荐什么尺码？', '何时发货？']);
     expect(generated[0].goalPriority).toBe('primary');
-    expect(generated[1].question).toBe('材质是什么？');
-    expect(generated[1].goalPriority).toBe('secondary');
+    expect(generated[2].goalPriority).toBe('secondary');
     expect(generated[0].seq).toBe(1);
+  });
+
+  it('never promotes an optional padding question to the primary goal', () => {
+    const generated = generateSemanticGoals([
+      { seq: 1, question: '是包边还是锁边？', keyPoints: ['工艺', '走线'], sourceType: 'core' },
+      { seq: 2, question: '那大概多久能处理好呢？', keyPoints: ['发货', '时间'], sourceType: 'optional', requiresContext: true },
+    ], '关注耐穿与打理成本', () => 0.999);
+    expect(generated[0].primaryGoal).toBe('工艺');
+    expect(generated[0].goalPriority).toBe('primary');
+    expect(generated[1].goalPriority).toBe('secondary');
   });
 
   it('leaves generic fallback points on the existing keyword path', () => {
