@@ -158,22 +158,36 @@ export function getGoalProgress(questions: ScriptQuestion[], evaluations: Semant
 export type ConversationTopic =
   | 'craft'
   | 'material'
-  | 'size'
-  | 'logistics'
-  | 'aftersale'
-  | 'price'
+  | 'fit'
+  | 'care'
+  | 'inventory'
+  | 'promotion'
+  | 'payment'
+  | 'shipping'
+  | 'delivery'
+  | 'refund'
+  | 'exchange'
+  | 'quality'
+  | 'complaint'
   | 'order'
   | 'general';
 
 export function conversationTopic(question?: ScriptQuestion | null): ConversationTopic {
   const text = [question?.conversationPlan?.topic, question?.question, ...(question?.keyPoints || [])].filter(Boolean).join(' ');
+  if (/投诉|主管|平台介入|举报|曝光/u.test(text)) return 'complaint';
+  if (/退款|仅退款|退钱|退货/u.test(text)) return 'refund';
+  if (/换货|换码|更换/u.test(text)) return 'exchange';
+  if (/破损|瑕疵|质量|损坏|坏了|有问题/u.test(text)) return 'quality';
   if (/工艺|做工|走线|缝线|包边|锁边|内衬|耐穿|开线|脱线/u.test(text)) return 'craft';
-  if (/材质|面料|透气|厚度|起球|掉色|缩水|洗涤/u.test(text)) return 'material';
-  if (/尺码|码数|尺寸|偏大|偏小|裙长|衣长|身高|体重/u.test(text)) return 'size';
-  if (/发货|物流|快递|配送|现货|预售|到货|时效/u.test(text)) return 'logistics';
-  if (/退|换|退款|售后|补发|赔偿|质量|破损/u.test(text)) return 'aftersale';
-  if (/价格|优惠|折扣|活动|便宜|券|满减/u.test(text)) return 'price';
-  if (/支付|付款|下单|订单|发票/u.test(text)) return 'order';
+  if (/洗涤|打理|清洗|机洗|手洗|缩水|掉色|起球|熨烫/u.test(text)) return 'care';
+  if (/材质|面料|透气|厚度|成分|手感/u.test(text)) return 'material';
+  if (/尺码|码数|尺寸|偏大|偏小|版型|裙长|衣长|身高|体重|能穿/u.test(text)) return 'fit';
+  if (/库存|现货|缺货|补货|预售/u.test(text)) return 'inventory';
+  if (/优惠|折扣|活动|便宜|优惠券|券|满减|赠品/u.test(text)) return 'promotion';
+  if (/支付|付款|改价|催付/u.test(text)) return 'payment';
+  if (/发货|出库|多久发|发出/u.test(text)) return 'shipping';
+  if (/物流|快递|配送|到货|几天到|签收|物流单号/u.test(text)) return 'delivery';
+  if (/下单|订单|发票|地址|收货信息/u.test(text)) return 'order';
   return 'general';
 }
 
@@ -197,7 +211,12 @@ export function selectNextQuestion(
   currentSeq: number,
   completedGoalIds: Set<string>,
   alreadySkipped: number[] = [],
-  context: { conversationStage?: string; resolutionScore?: number } = {},
+  context: {
+    conversationStage?: string;
+    resolutionScore?: number;
+    businessActionCodes?: string[];
+    hasOrder?: boolean;
+  } = {},
 ): { nextSeq: number | null; skippedSeqs: number[] } {
   const skipped = new Set(alreadySkipped);
   const current = questions.find((item) => item.seq === currentSeq) || null;
@@ -222,6 +241,33 @@ export function selectNextQuestion(
 
   const eligible = unresolved.filter((question) => {
     const sourceType = question.sourceType || 'core';
+    const trigger = question.triggerConditions;
+    if (trigger) {
+      if (trigger.stages?.length && !trigger.stages.includes(context.conversationStage as any)) {
+        skipped.add(question.seq);
+        return false;
+      }
+      if (trigger.minResolutionScore !== undefined && Number(context.resolutionScore || 0) < trigger.minResolutionScore) {
+        skipped.add(question.seq);
+        return false;
+      }
+      if (trigger.requiresOrder && !context.hasOrder) {
+        skipped.add(question.seq);
+        return false;
+      }
+      if (
+        trigger.afterBusinessAction?.length &&
+        !trigger.afterBusinessAction.some((code) => (context.businessActionCodes || []).includes(code))
+      ) {
+        skipped.add(question.seq);
+        return false;
+      }
+      const currentTopicForTrigger = conversationTopic(current);
+      if (trigger.topics?.length && !trigger.topics.includes(currentTopicForTrigger)) {
+        skipped.add(question.seq);
+        return false;
+      }
+    }
     if (sourceType !== 'optional') return true;
 
     const candidateTopic = conversationTopic(question);
