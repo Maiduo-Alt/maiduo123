@@ -295,6 +295,10 @@ export function selectNextQuestion(
     }
     if (sourceType !== 'optional') return true;
 
+    // 明确 triggerConditions 已经完整描述了触发上下文；条件全部满足后直接允许，
+    // 不再被下面的通用 optional 限制二次拦截。
+    if (trigger) return currentSeq > 0 || !question.requiresContext;
+
     const candidateTopic = conversationTopic(question);
     // 可选话题不能在主目标尚未推进时突然抢话题。跨主题 optional 只有进入决策阶段后才允许出现。
     if (
