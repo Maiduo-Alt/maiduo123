@@ -333,7 +333,7 @@ export class ScriptsService {
   async update(id: number, body: any) {
     const current = await this.db.one(`SELECT * FROM scripts WHERE id = $1`, [id]);
     if (!current) throw new BizError(ERR.NOT_FOUND, '剧本不存在');
-    const questionSeq = body.questionSeq ? body.questionSeq : null;
+    let questionSeq: ScriptQuestion[] | null = body.questionSeq ? body.questionSeq : null;
     if (questionSeq !== null) {
       if (!Array.isArray(questionSeq)) throw new BizError(ERR.PARAM, '问题序列必须是数组');
       const goalIds = new Set<string>();
@@ -359,6 +359,13 @@ export class ScriptsService {
           }
         }
       }
+
+      // 手工调整语义目标后同步主目标元数据，避免 semanticGoals.isPrimary 与
+      // goalPriority / primaryGoal / customerGoal 出现两套口径。
+      const goalsBySeq = Object.fromEntries(
+        questionSeq.map((question) => [String(question.seq), question.semanticGoals || []]),
+      );
+      questionSeq = this.applySemanticGoals(questionSeq, goalsBySeq);
     }
     await this.db.query(
       `UPDATE scripts SET name = COALESCE($2, name), category = COALESCE($3, category), stage = COALESCE($4, stage),
