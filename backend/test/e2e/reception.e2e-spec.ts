@@ -676,7 +676,7 @@ describe('在线模拟接待端到端链路', () => {
     ]);
     expect(preview.body.data.questionSeq.every((q: any) => q.sourceType === 'core')).toBe(true);
     expect(preview.body.data.questionSeq[0].primaryGoal).toBe('工艺');
-    expect(preview.body.data.customerGoal).toContain('工艺');
+    expect(preview.body.data.customerGoal).toBe('确认商品工艺质量和耐穿程度');
     expect(preview.body.data.roundsWarning).toContain('不强制补题');
 
     const allText = preview.body.data.questionSeq.map((q: any) => q.question).join(' ');
