@@ -1,5 +1,6 @@
 import { buildKeywordQuestionProgress, deriveConversationState, inferCustomerGoal } from '../../src/domain/conversation-state';
 import { ScriptQuestion } from '../../src/domain/types';
+import { isNaturalClosingReply } from '../../src/domain/semantic-goals';
 
 const questions: ScriptQuestion[] = [
   {
@@ -95,6 +96,16 @@ describe('conversation state', () => {
     expect(state.resolvedGoalIds).toContain('keyword-seq-1');
     expect(state.unresolvedGoalIds).toContain('keyword-seq-2');
     expect(state.resolutionScore).toBe(50);
+    expect(state.shouldClose).toBe(false);
+  });
+
+  it('does not accept an agent closing phrase while core goals remain unresolved', () => {
+    const state = deriveConversationState(questions, [{
+      goalMatches: [{ goalId: 'g1', pointIds: ['p1'] }],
+      riskItems: [],
+    }], { currentSeq: 1, emotionValue: 20 });
+
+    expect(isNaturalClosingReply('好的，谢谢您。')).toBe(true);
     expect(state.shouldClose).toBe(false);
   });
 
