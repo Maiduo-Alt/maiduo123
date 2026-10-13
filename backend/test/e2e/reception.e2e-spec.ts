@@ -188,19 +188,17 @@ describe('在线模拟接待端到端链路', () => {
     expect(res.body.data.total).toBe(12); // 3 × 4
     const counts = Object.values(res.body.data.distribution as Record<string, number>);
     expect(counts.reduce((a, b) => a + b, 0)).toBe(12);
-    expect(res.body.data.preview[0].rounds).toBeGreaterThanOrEqual(6);
+    // 自然对话优先：不再为了满足最低轮数强行补到 6 轮。
+    expect(res.body.data.preview[0].rounds).toBeGreaterThanOrEqual(1);
     const created = await request(http).get(`/api/scripts/${res.body.data.preview[0].id}`).set(auth);
     expect(created.body.code).toBe(0);
     expect(created.body.data.questionSeq[0].semanticGoals[0].id).toBe('shipping-status');
     expect(created.body.data.questionSeq[0].goalPriority).toBe('primary');
     expect(created.body.data.questionSeq[0].primaryGoal).toBeTruthy();
-    expect(created.body.data.questionSeq[0].question).toContain('另外');
+    expect(created.body.data.questionSeq[0].sourceType).toBe('core');
+    expect(created.body.data.questionSeq[0].question).not.toContain('另外');
     expect(created.body.data.questionSeq.slice(1).every((question: any) => question.goalPriority !== 'primary')).toBe(true);
-    expect(created.body.data.questionSeq.some((question: any) =>
-      question.seq > 1 &&
-      (question.keyPoints || []).some((point: string) => point !== '有效回应') &&
-      (question.semanticGoals || []).some((goal: any) => goal.id.startsWith('auto-goal-'))
-    )).toBe(true);
+    expect(created.body.data.customerGoal).toBeTruthy();
   }, 60000);
 
   it('沟通风格占比校验：总和超过 100% 被拦截', async () => {
@@ -612,12 +610,84 @@ describe('在线模拟接待端到端链路', () => {
     expect(preview.body.code).toBe(0);
     const rounds = preview.body.data.questionSeq;
     expect(Array.isArray(rounds)).toBe(true);
-    expect(rounds.length).toBeGreaterThanOrEqual(6);
+    expect(rounds.length).toBeGreaterThan(0);
     expect(rounds[0]).toHaveProperty('question');
     expect(rounds[0].keyPoints.length).toBeGreaterThan(0);
+    expect(preview.body.data.customerGoal).toBeTruthy();
     // 方案 3.3：预览的提问序列要与接待抽取到的一致（轮数对得上）
     expect(rounds.length).toBe(script.rounds);
   });
+
+  it('回归：工艺细节场景不会为了凑轮数插入发货/优惠/竞品问题', async () => {
+    const adminToken = await login('admin', 'Admin@123');
+    const auth = { Authorization: `Bearer ${adminToken}` };
+    const suffix = String(Date.now());
+
+    const bg = await request(http)
+      .post('/api/backgrounds')
+      .set(auth)
+      .send({
+        name: `耐穿与打理成本-${suffix}`,
+        description: '关注耐穿、做工和后续打理成本',
+        category: '通用',
+      });
+    expect(bg.body.code).toBe(0);
+
+    const qa = await request(http)
+      .post('/api/contents')
+      .set(auth)
+      .send({
+        templateName: `咨询工艺细节-${suffix}`,
+        question: '是包边还是锁边？;走线整齐吗？;有内衬吗？',
+        keyPoints: [
+          ['工艺', '包边', '锁边'],
+          ['走线', '牢固'],
+          ['内衬'],
+        ],
+        acceptedAnswer: '说明工艺做法、走线水平和内衬情况，可提供细节实拍',
+        stage: 'presale',
+        category: '通用',
+      });
+    expect(qa.body.code).toBe(0);
+
+    const products = await request(http).get('/api/products?pageSize=1&status=1').set(auth);
+    const product = products.body.data.list[0];
+    expect(product).toBeTruthy();
+
+    const created = await request(http)
+      .post('/api/scripts')
+      .set(auth)
+      .send({
+        bgId: bg.body.data.id,
+        qaId: qa.body.data.id,
+        productIds: [product.id],
+        stage: 'presale',
+        autoSemanticGoals: true,
+        name: `售前-耐穿与打理成本-咨询工艺细节-${suffix}`,
+      });
+    expect(created.body.code).toBe(0);
+
+    const preview = await request(http).get(`/api/scripts/${created.body.data.id}/preview`).set(auth);
+    expect(preview.body.code).toBe(0);
+    expect(preview.body.data.questionSeq.map((q: any) => q.question)).toEqual([
+      '是包边还是锁边？',
+      '走线整齐吗？',
+      '有内衬吗？',
+    ]);
+    expect(preview.body.data.questionSeq.every((q: any) => q.sourceType === 'core')).toBe(true);
+    expect(preview.body.data.questionSeq[0].primaryGoal).toBe('工艺');
+    expect(preview.body.data.customerGoal).toContain('工艺');
+    expect(preview.body.data.roundsWarning).toContain('不强制补题');
+
+    const allText = preview.body.data.questionSeq.map((q: any) => q.question).join(' ');
+    expect(allText).not.toContain('多久能处理好');
+    expect(allText).not.toContain('有什么优势');
+    expect(allText).not.toContain('额外优惠');
+
+    await request(http).delete(`/api/scripts/${created.body.data.id}`).set(auth);
+    await request(http).post('/api/contents/batch-delete').set(auth).send({ ids: [qa.body.data.id] });
+    await request(http).post('/api/backgrounds/batch-delete').set(auth).send({ ids: [bg.body.data.id] });
+  }, 60000);
 
   it('方案 F4-05：商品列表支持关键词 / 分类 / 价格区间 / 状态筛选', async () => {
     const adminToken = await login('admin', 'Admin@123');
