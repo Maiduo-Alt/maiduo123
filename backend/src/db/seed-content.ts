@@ -716,7 +716,10 @@ export const STYLES: SeedStyle[] = [
   { code: 'skeptic', name: '多疑较真型', description: '对承诺存疑，要凭证、要书面确认', tone: '你说了算吗？能给我个截图或者保证吗？', emotion: 45, ratio: null, emotional: true },
 ];
 
-/** 售前追问：用于补足剧本轮数，偏向价格、时效与决策类追问。 */
+/**
+ * 历史售前通用追问库：保留用于旧数据识别/兼容，不再用于“补足剧本轮数”。
+ * 新剧本只能使用原始核心问题或明确同主题、满足触发条件的衍生问题。
+ */
 export const FOLLOW_UPS_PRESALE: SeedFollowUp[] = [
   { question: '那大概多久能处理好呢？', keyPoints: ['发货', '时间'] },
   { question: '我再看一下别家，你们有什么优势吗？', keyPoints: ['优势', '保障'] },
