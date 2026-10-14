@@ -220,6 +220,8 @@ export default function Reception() {
    * 直到用户手动点开任意会话（或开新局）再恢复自动选中。
    */
   const suppressAutoSelectRef = useRef(false);
+  /** 训练结束后只自动跳转一次接待明细，避免轮询反复触发。 */
+  const finishNavigatedRef = useRef(false);
   const [input, setInput] = useState('');
   const [phrases, setPhrases] = useState<any[]>([]);
   const [sending, setSending] = useState(false);
@@ -246,7 +248,6 @@ export default function Reception() {
   const [specProduct, setSpecProduct] = useState<any>(null);
   /** 右栏「会话搜索」页签的关键词（飞鸽右栏第三个页签） */
   const [messageSearch, setMessageSearch] = useState('');
-  const [result, setResult] = useState<any>(null);
   /** 深链：/reception?attemptId=1&tab=order 直接落在右栏某个页签（截图与分享用） */
   const [rightTab, setRightTab] = useState(['order', 'product', 'phrase'].includes(params.get('tab') || '') ? (params.get('tab') as string) : 'product');
   // 会话队列的排序与分组（方案 F1-04）
@@ -444,6 +445,15 @@ export default function Reception() {
     []
   );
 
+  // 客户 2026-10-14：模拟训练结束后（所有会话完结、系统自动结算）自动跳转接待明细页。
+  // 手动点「结束本次接待」时 finishAll 已先置位标记，这里不会再跳第二次。
+  useEffect(() => {
+    if (attempt?.status === 'finished' && !finishNavigatedRef.current) {
+      finishNavigatedRef.current = true;
+      navigate(`/records/${attempt.id}`);
+    }
+  }, [attempt, navigate]);
+
   useEffect(() => {
     api('/receptions/levels').then(setLevels);
     api<any>('/phrases').then((data) => setPhrases(data.list || []));
@@ -547,6 +557,7 @@ export default function Reception() {
       setParams({ attemptId: String(data.attemptId) });
       // 新一局恢复「自动选中第一个进线会话」的默认行为（上一局可能用 ESC 关过窗口）。
       suppressAutoSelectRef.current = false;
+      finishNavigatedRef.current = false;
       message.success(`已开始 ${level} ${source === 'task' ? '任务训练' : '接待'}，请准备`);
     } catch (e) {
       message.error((e as Error).message);
@@ -595,9 +606,10 @@ export default function Reception() {
   const finishAll = async () => {
     if (!attempt) return;
     try {
-      const data = await api<any>(`/receptions/${attempt.id}/finish`, { method: 'POST' });
-      setResult(data);
-      await loadSnapshot(attempt.id);
+      await api(`/receptions/${attempt.id}/finish`, { method: 'POST' });
+      // 客户 2026-10-14：训练结束后自动跳到接待明细页查看会话明细与评分报告
+      finishNavigatedRef.current = true;
+      navigate(`/records/${attempt.id}`);
     } catch (e) {
       message.error((e as Error).message);
     }
@@ -1854,67 +1866,6 @@ export default function Reception() {
           ]}
         />
       </div>
-
-      <Modal
-        open={!!result}
-        title="本次接待结果"
-        footer={[
-          <Button key="close" type="primary" onClick={() => setResult(null)}>
-            知道了
-          </Button>,
-        ]}
-        width={720}
-        onCancel={() => setResult(null)}
-      >
-        {result && (
-          <>
-            <Row gutter={16} style={{ marginBottom: 16 }}>
-              <Col span={8}>
-                <Statistic title="接待总分" value={result.totalScore} precision={1} suffix="分" />
-              </Col>
-              <Col span={8}>
-                <Statistic
-                  title="结论"
-                  value={result.conclusion === 'pass' ? '达标' : '未达标'}
-                  valueStyle={{ color: result.conclusion === 'pass' ? '#389e0d' : '#cf1322' }}
-                />
-              </Col>
-              <Col span={8}>
-                <Statistic title="会话数" value={result.sessions?.length || 0} />
-              </Col>
-            </Row>
-            <Table
-              size="small"
-              rowKey="id"
-              pagination={false}
-              dataSource={result.sessions || []}
-              columns={[
-                { title: '买家', dataIndex: 'buyerName' },
-                { title: '剧本', dataIndex: 'scriptName', render: (v: string) => v || '已删除剧本' },
-                { title: '响应时效', dataIndex: 'responseScore', render: (v) => `${v ?? '-'}` },
-                { title: '问题解决', dataIndex: 'solvingScore', render: (v) => `${v ?? '-'}` },
-                { title: '话术规范', dataIndex: 'wordingScore', render: (v) => `${v ?? '-'}` },
-                { title: '情绪安抚', dataIndex: 'emotionScore', render: (v) => `${v ?? '-'}` },
-                { title: '会话得分', dataIndex: 'totalScore', render: (v) => `${v ?? '-'}` },
-              ]}
-            />
-            <div style={{ marginTop: 16 }}>
-              <Button type="link" onClick={() => (window.location.href = `/records/${result.attemptId}`)}>
-                查看明细与逐条复盘
-              </Button>
-              <Button
-                type="link"
-                onClick={() => {
-                  setResult(null);
-                  setParams({});
-                }}
-              >
-                再来一次
-              </Button>
-            </div>
-          </>
-        )}
-      </Modal>
 
       {/* 会话备注（方案 3.1.5：对话区顶部提供备注入口） */}
       <Modal

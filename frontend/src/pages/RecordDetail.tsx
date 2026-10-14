@@ -29,7 +29,8 @@ export default function RecordDetail() {
   /** 方案 2.2：明细转案例属带教能力，客服不可用 */
   const canManage = profile?.roleCode === 'admin' || profile?.roleCode === 'leader';
   const [data, setData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<string>('report');
+  /** 下部「会话明细」当前选中的买家页签（批注是一个固定页签） */
+  const [activeBuyerTab, setActiveBuyerTab] = useState<string>('');
   const [annotation, setAnnotation] = useState('');
 
   const load = async () => {
@@ -152,42 +153,46 @@ export default function RecordDetail() {
           <Typography.Title level={5} style={{ margin: 0 }}>
             {attempt.attempt_no} · {attempt.level} 接待明细
           </Typography.Title>
-          {attempt.conclusion === 'pass' ? <Tag color="green">达标</Tag> : <Tag color="red">未达标</Tag>}
-          {canManage && (
-            <Button
-              size="small"
-              onClick={async () => {
-                try {
-                  const res = await api<any>('/cases/from-attempt', { method: 'POST', body: { attemptId: Number(id) } });
-                  message.success(`已推入案例收藏（${res.messageCount} 条消息），可在案例页补充标签`);
-                } catch (e) {
-                  message.error((e as Error).message);
-                }
-              }}
-            >
-              转为案例
-            </Button>
-          )}
-          {canManage && (
-            <Button
-              size="small"
-              type="primary"
-              onClick={async () => {
-                try {
-                  const res = await api<any>('/cases/from-attempt', {
-                    method: 'POST',
-                    body: { attemptId: Number(id), highlight: true },
-                  });
-                  message.success(`已标记为典型案例（${res.messageCount} 条消息），可在案例页按「典型案例」标签筛选`);
-                } catch (e) {
-                  message.error((e as Error).message);
-                }
-              }}
-            >
-              标记为典型案例
-            </Button>
-          )}
+        {attempt.conclusion === 'pass' ? <Tag color="green">达标</Tag> : <Tag color="red">未达标</Tag>}
+        {canManage && (
+          <Button
+            size="small"
+            onClick={async () => {
+              try {
+                const res = await api<any>('/cases/from-attempt', { method: 'POST', body: { attemptId: Number(id) } });
+                message.success(`已推入案例收藏（${res.messageCount} 条消息），可在案例页补充标签`);
+              } catch (e) {
+                message.error((e as Error).message);
+              }
+            }}
+          >
+            转为案例
+          </Button>
+        )}
+        {canManage && (
+          <Button
+            size="small"
+            type="primary"
+            onClick={async () => {
+              try {
+                const res = await api<any>('/cases/from-attempt', {
+                  method: 'POST',
+                  body: { attemptId: Number(id), highlight: true },
+                });
+                message.success(`已标记为典型案例（${res.messageCount} 条消息），可在案例页按「典型案例」标签筛选`);
+              } catch (e) {
+                message.error((e as Error).message);
+              }
+            }}
+          >
+            标记为典型案例
+          </Button>
+        )}
         </Space>
+      </Card>
+
+      {/* 客户 2026-10-14：接待明细分上下两部分——上「训练评分报告」，下「会话明细」 */}
+      <Card bordered={false} className="page-card" title="训练评分报告">
         <Row gutter={16}>
           <Col span={4}>
             <Statistic title="总分" value={totalScore ?? 0} precision={1} suffix="分" />
@@ -215,123 +220,107 @@ export default function RecordDetail() {
           format={() => `${totalScore ?? 0} 分`}
           strokeColor={(totalScore ?? 0) >= 80 ? '#52c41a' : '#faad14'}
         />
+        <Table style={{ marginTop: 16 }} rowKey="id" size="small" pagination={false} dataSource={sessions} columns={sessionColumns} />
+        <div style={{ marginTop: 16 }}>
+          <Typography.Title level={5}>失分明细</Typography.Title>
+          {sessions.flatMap((s: any) => (s.deductions || []).map((d: any) => ({ ...d, buyer: s.buyerName })))
+            .length ? (
+            <List
+              size="small"
+              dataSource={sessions.flatMap((s: any) =>
+                (s.deductions || []).map((d: any) => ({ ...d, buyer: s.buyerName }))
+              )}
+              renderItem={(item: any) => (
+                <List.Item>
+                  <Space>
+                    <Tag>{item.buyer}</Tag>
+                    <Tag color="orange">-{item.points} 分</Tag>
+                    <span>{item.reason}</span>
+                  </Space>
+                </List.Item>
+              )}
+            />
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本次没有失分项" />
+          )}
+        </div>
       </Card>
 
-      <Card bordered={false} className="page-card">
+      <Card bordered={false} className="page-card" title="会话明细">
         <Tabs
-          activeKey={activeTab}
-          onChange={setActiveTab}
+          type="card"
+          activeKey={activeBuyerTab || String(sessions[0]?.id ?? '')}
+          onChange={setActiveBuyerTab}
           items={[
-            {
-              key: 'report',
-              label: '评分报告',
+            ...sessions.map((s: any) => ({
+              key: String(s.id),
+              label: `${s.buyerName}（${s.totalScore ?? '-'} 分）`,
               children: (
                 <>
-                  <Table rowKey="id" size="small" pagination={false} dataSource={sessions} columns={sessionColumns} />
-                  <div style={{ marginTop: 16 }}>
-                    <Typography.Title level={5}>失分明细</Typography.Title>
-                    {sessions.flatMap((s: any) => (s.deductions || []).map((d: any) => ({ ...d, buyer: s.buyerName })))
-                      .length ? (
-                      <List
-                        size="small"
-                        dataSource={sessions.flatMap((s: any) =>
-                          (s.deductions || []).map((d: any) => ({ ...d, buyer: s.buyerName }))
-                        )}
-                        renderItem={(item: any) => (
-                          <List.Item>
-                            <Space>
-                              <Tag>{item.buyer}</Tag>
-                              <Tag color="orange">-{item.points} 分</Tag>
-                              <span>{item.reason}</span>
-                            </Space>
-                          </List.Item>
-                        )}
-                      />
-                    ) : (
-                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本次没有失分项" />
-                    )}
-                  </div>
+                  <Descriptions size="small" column={3} style={{ marginBottom: 12 }}>
+                    <Descriptions.Item label="剧本">{s.scriptName || '已删除剧本'}</Descriptions.Item>
+                    <Descriptions.Item label="买家风格">{s.styleName}</Descriptions.Item>
+                    <Descriptions.Item label="结束原因">{s.finishedReason || '-'}</Descriptions.Item>
+                    <Descriptions.Item label="客户核心目标" span={3}>
+                      {s.conversationState?.customerGoal || '旧记录未生成'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="最终阶段">
+                      {s.conversationState?.conversationStage || '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="客户意图">
+                      {s.conversationState?.customerIntent || '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="当前关注点">
+                      {s.conversationState?.currentSubtopic || '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="解决度">
+                      {s.conversationState?.resolutionScore !== undefined
+                        ? `${s.conversationState.resolutionScore}%`
+                        : '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="客户满意度">
+                      {s.conversationState?.satisfaction !== undefined
+                        ? `${s.conversationState.satisfaction}/100`
+                        : '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="购买意愿">
+                      {s.conversationState?.purchaseIntent !== undefined
+                        ? `${s.conversationState.purchaseIntent}/100`
+                        : '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="待解决顾虑" span={3}>
+                      {s.conversationState?.pendingConcern || '无'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="目标状态" span={3}>
+                      <Space size={4} wrap>
+                        <Tag color="green">已解决 {s.conversationState?.resolvedGoalIds?.length || 0}</Tag>
+                        <Tag color="orange">部分解决 {s.conversationState?.partialGoalIds?.length || 0}</Tag>
+                        <Tag>未解决 {s.conversationState?.unresolvedGoalIds?.length || 0}</Tag>
+                        {(s.skippedSeqs || []).length ? <Tag color="blue">自然跳过 {(s.skippedSeqs || []).length}</Tag> : null}
+                      </Space>
+                    </Descriptions.Item>
+                    <Descriptions.Item label={`业务动作（${actionsOfSession(s.id).length}）`} span={3}>
+                      {actionsOfSession(s.id).length ? (
+                        <Space size={4} wrap>
+                          {actionsOfSession(s.id).map((item) => (
+                            <Tag key={item.id} color="blue">
+                              {item.actionName}
+                            </Tag>
+                          ))}
+                        </Space>
+                      ) : (
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          这次接待没有点过平台侧业务动作
+                        </Typography.Text>
+                      )}
+                    </Descriptions.Item>
+                  </Descriptions>
+                  {renderConversation(s.id)}
                 </>
               ),
-            },
+            })),
             {
-              key: 'replay',
-              label: '会话回放',
-              children: (
-                <Tabs
-                  type="card"
-                  items={sessions.map((s: any) => ({
-                    key: String(s.id),
-                    label: `${s.buyerName}（${s.totalScore ?? '-'} 分）`,
-                    children: (
-                      <>
-                        <Descriptions size="small" column={3} style={{ marginBottom: 12 }}>
-                          <Descriptions.Item label="剧本">{s.scriptName || '已删除剧本'}</Descriptions.Item>
-                          <Descriptions.Item label="买家风格">{s.styleName}</Descriptions.Item>
-                          <Descriptions.Item label="结束原因">{s.finishedReason || '-'}</Descriptions.Item>
-                          <Descriptions.Item label="客户核心目标" span={3}>
-                            {s.conversationState?.customerGoal || '旧记录未生成'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="最终阶段">
-                            {s.conversationState?.conversationStage || '-'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="客户意图">
-                            {s.conversationState?.customerIntent || '-'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="当前关注点">
-                            {s.conversationState?.currentSubtopic || '-'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="解决度">
-                            {s.conversationState?.resolutionScore !== undefined
-                              ? `${s.conversationState.resolutionScore}%`
-                              : '-'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="客户满意度">
-                            {s.conversationState?.satisfaction !== undefined
-                              ? `${s.conversationState.satisfaction}/100`
-                              : '-'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="购买意愿">
-                            {s.conversationState?.purchaseIntent !== undefined
-                              ? `${s.conversationState.purchaseIntent}/100`
-                              : '-'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="待解决顾虑" span={3}>
-                            {s.conversationState?.pendingConcern || '无'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="目标状态" span={3}>
-                            <Space size={4} wrap>
-                              <Tag color="green">已解决 {s.conversationState?.resolvedGoalIds?.length || 0}</Tag>
-                              <Tag color="orange">部分解决 {s.conversationState?.partialGoalIds?.length || 0}</Tag>
-                              <Tag>未解决 {s.conversationState?.unresolvedGoalIds?.length || 0}</Tag>
-                              {(s.skippedSeqs || []).length ? <Tag color="blue">自然跳过 {(s.skippedSeqs || []).length}</Tag> : null}
-                            </Space>
-                          </Descriptions.Item>
-                          <Descriptions.Item label={`业务动作（${actionsOfSession(s.id).length}）`} span={3}>
-                            {actionsOfSession(s.id).length ? (
-                              <Space size={4} wrap>
-                                {actionsOfSession(s.id).map((item) => (
-                                  <Tag key={item.id} color="blue">
-                                    {item.actionName}
-                                  </Tag>
-                                ))}
-                              </Space>
-                            ) : (
-                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                                这次接待没有点过平台侧业务动作
-                              </Typography.Text>
-                            )}
-                          </Descriptions.Item>
-                        </Descriptions>
-                        {renderConversation(s.id)}
-                      </>
-                    ),
-                  }))}
-                />
-              ),
-            },
-            {
-              key: 'annotation',
+              key: 'annotations',
               label: `复盘批注（${annotations.length}）`,
               children: (
                 <>
