@@ -121,23 +121,23 @@ export function buildSimulatedOrder(seed: number, stage: OrderStage, now = Date.
   };
 
   /**
-   * 客户 2026-10-10：订单保障 / 金额 / 规格必须和商品库一致——
+   * 客户 2026-10-10 / 2026-10-14：订单保障 / 金额 / 规格必须和商品库一致——
    * 保障 = 商品《服务承诺》；规格 = 商品 SKU（规格名 / 尺码）；
-   * 金额 = 选中 SKU 价格（无 SKU 价回退商品售价）× 件数。
+   * 金额 = 接待页「咨询宝贝」展示的商品售价，件数固定 1 件（无售价才回退 SKU 价）。
    * 上面 rng 调用顺序保持不变（订单号随 seed 稳定），这里只做覆盖。
    */
   if (product) {
     order.services = Array.isArray(product.services) ? product.services.filter((s) => typeof s === 'string' && s.trim()) : [];
     const skus = Array.isArray(product.skus) ? product.skus.filter((s) => s && (s.name || s.size)) : [];
+    let unitPrice = toAmount(product.price);
     if (skus.length) {
       const sku = skus[Math.floor(rng() * skus.length)];
       order.spec = [sku.name, sku.size].filter(Boolean).join(' / ');
-      const unitPrice = toAmount(sku.price) ?? toAmount(product.price);
-      if (unitPrice != null) order.amount = Math.round(unitPrice * order.quantity * 100) / 100;
-    } else {
-      const unitPrice = toAmount(product.price);
-      if (unitPrice != null) order.amount = Math.round(unitPrice * order.quantity * 100) / 100;
+      unitPrice = unitPrice ?? toAmount(sku.price);
     }
+    if (unitPrice != null) order.amount = unitPrice;
+    // 订单就是正在咨询的这一件商品：1 件，金额与「咨询宝贝」面板价格严格一致。
+    order.quantity = 1;
   }
 
   if (stage === 'unshipped' || stage === 'shipped') {
