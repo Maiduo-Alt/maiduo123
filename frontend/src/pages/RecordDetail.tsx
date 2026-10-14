@@ -21,6 +21,7 @@ import {
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import { useAuth } from '../store/auth';
+import OrderCard from '../components/OrderCard';
 
 export default function RecordDetail() {
   const { id } = useParams();
@@ -256,8 +257,10 @@ export default function RecordDetail() {
               key: String(s.id),
               label: `${s.buyerName}（${s.totalScore ?? '-'} 分）`,
               children: (
-                <>
-                  <Descriptions size="small" column={3} style={{ marginBottom: 12 }}>
+                // 客户 2026-10-14：会话明细复刻在线接待的布局——左侧对话回放，右侧订单卡片
+                <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Descriptions size="small" column={3} style={{ marginBottom: 12 }}>
                     <Descriptions.Item label="剧本">{s.scriptName || '已删除剧本'}</Descriptions.Item>
                     <Descriptions.Item label="买家风格">{s.styleName}</Descriptions.Item>
                     <Descriptions.Item label="结束原因">{s.finishedReason || '-'}</Descriptions.Item>
@@ -316,7 +319,15 @@ export default function RecordDetail() {
                     </Descriptions.Item>
                   </Descriptions>
                   {renderConversation(s.id)}
-                </>
+                  </div>
+                  <div style={{ flex: 'none', width: 340 }}>
+                    {s.orderPayload ? (
+                      <OrderCard order={s.orderPayload} product={Array.isArray(s.products) ? s.products[0] : null} />
+                    ) : (
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本次会话没有订单" />
+                    )}
+                  </div>
+                </div>
               ),
             })),
             {
