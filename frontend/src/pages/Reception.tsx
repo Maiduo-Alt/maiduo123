@@ -214,6 +214,12 @@ export default function Reception() {
   const [sessions, setSessions] = useState<SessionDto[]>([]);
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  /**
+   * ESC 关闭当前回复窗口后，2 秒一轮的快照轮询会按「未选中」自动重选第一个进线会话，
+   * 看起来像 ESC 没反应。用这个 ref 记住「用户主动关闭」，轮询期间不再自动选中，
+   * 直到用户手动点开任意会话（或开新局）再恢复自动选中。
+   */
+  const suppressAutoSelectRef = useRef(false);
   const [input, setInput] = useState('');
   const [phrases, setPhrases] = useState<any[]>([]);
   const [sending, setSending] = useState(false);
@@ -381,6 +387,7 @@ export default function Reception() {
 
   /** 选中会话时清掉未读红点（方案 3.1.5）。 */
   const selectSession = useCallback((sessionId: number) => {
+    suppressAutoSelectRef.current = false;
     setActiveId(sessionId);
     setUnread((prev) => {
       if (!prev.has(sessionId)) return prev;
@@ -410,6 +417,8 @@ export default function Reception() {
       }
       if (event.key === 'Escape' && activeId !== null && !editing) {
         event.preventDefault();
+        // 标记「用户主动关闭」：否则 2 秒一轮的快照轮询会马上把会话又自动选中。
+        suppressAutoSelectRef.current = true;
         setActiveId(null);
         setInput('');
       }
@@ -425,8 +434,9 @@ export default function Reception() {
         setAttempt(data.attempt);
         setSessions(data.sessions);
         setMessages(data.messages);
-        // 客户 2026-10-03：待接入的买家不在「正在接待」里展示，默认选中的也应该是已进线的那个
-        setActiveId((prev) => prev ?? data.sessions.find((s: any) => s.state !== 'pending')?.sessionId ?? null);
+        // 客户 2026-10-03：待接入的买家不在「正在接待」里展示，默认选中的也应该是已进线的那个。
+        // ESC 主动关闭窗口后（suppressAutoSelectRef）轮询不再自动选中，直到用户手动点开会话。
+        setActiveId((prev) => prev ?? (suppressAutoSelectRef.current ? null : data.sessions.find((s: any) => s.state !== 'pending')?.sessionId ?? null));
       } catch (e) {
         if (!silent) message.error((e as Error).message);
       }
@@ -535,6 +545,8 @@ export default function Reception() {
         },
       });
       setParams({ attemptId: String(data.attemptId) });
+      // 新一局恢复「自动选中第一个进线会话」的默认行为（上一局可能用 ESC 关过窗口）。
+      suppressAutoSelectRef.current = false;
       message.success(`已开始 ${level} ${source === 'task' ? '任务训练' : '接待'}，请准备`);
     } catch (e) {
       message.error((e as Error).message);
