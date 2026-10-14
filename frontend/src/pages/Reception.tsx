@@ -390,13 +390,13 @@ export default function Reception() {
     });
   }, []);
 
-  /** 飞鸽式工作台快捷键：light+ / light- 切换买家回复窗口，ESC 关闭当前回复窗口。 */
+  /** 飞鸽式工作台快捷键：↑/↓ 或 light+ / light- 切换买家回复窗口，ESC 关闭当前回复窗口。 */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const editing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
-      const isNext = event.key === '+' || event.key === '=' || event.key === 'Light+' || event.code === 'NumpadAdd';
-      const isPrevious = event.key === '-' || event.key === '_' || event.key === 'Light-' || event.code === 'NumpadSubtract';
+      const isNext = event.key === '+' || event.key === '=' || event.key === 'Light+' || event.code === 'NumpadAdd' || event.key === 'ArrowDown';
+      const isPrevious = event.key === '-' || event.key === '_' || event.key === 'Light-' || event.code === 'NumpadSubtract' || event.key === 'ArrowUp';
       if (isNext || isPrevious) {
         if (editing) return;
         const openSessions = sessions.filter(isRunning);
@@ -1533,7 +1533,7 @@ export default function Reception() {
           <div className="reception-send-row">
             {/* 飞鸽：提示里带买家昵称，右下角还有字数计数 */}
             <span className="reception-input-hint">
-              发送给 {activeSession?.buyerName || '买家'}，Enter 发送，Ctrl + Enter 换行，light+ / light- 切换窗口，ESC 关闭窗口
+              发送给 {activeSession?.buyerName || '买家'}，Enter 发送，Ctrl + Enter 换行，↑ / ↓ 或 light+ / light- 切换窗口，ESC 关闭窗口
             </span>
             <span className="reception-input-count">
               {input.length}/{systemParams?.messageMaxLength ?? 800}
