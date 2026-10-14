@@ -1416,7 +1416,8 @@ export class ReceptionService implements OnModuleInit {
       [sessionId]
     );
     const styleEmotional = !!this.styleBehavior[session.style_code]?.emotional;
-    const buyerLeftAfterSingleQuestion = session.total_questions === 1 &&
+    // 买家只问到第一题就离开（剧本本身可能有 6 轮，不能用 total_questions 判断）。
+    const buyerLeftAfterSingleQuestion = session.current_seq === 1 &&
       messages.some((message) => message.sender === 'buyer') &&
       !messages.some((message) => message.sender === 'agent');
 

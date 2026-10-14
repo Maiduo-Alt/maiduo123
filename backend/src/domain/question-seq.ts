@@ -10,7 +10,7 @@ export interface QuestionSeqSource {
   transferIdxs?: number[];
 }
 
-function derivedQuestionFor(question: string, index: number): string {
+function derivedQuestionFor(question: string, index: number, used: Set<string>): string {
   const text = String(question || '');
   const topicTemplates: Array<[RegExp, string[]]> = [
     [/发货|出库|多久发/u, ['那一般什么时候可以发出呢？', '发出后大概多久能收到呢？']],
@@ -18,13 +18,23 @@ function derivedQuestionFor(question: string, index: number): string {
     [/尺码|尺寸|身高|体重|版型/u, ['那我这个身材应该怎么选尺码呢？', '如果尺码不合适，可以换吗？']],
     [/材质|面料|透气|厚度|成分/u, ['那穿起来会不会闷或不舒服呢？', '平时清洗和打理有什么要注意的吗？']],
     [/做工|走线|质量|瑕疵|损坏/u, ['如果收到后发现问题，售后怎么处理呢？', '这种情况可以退换或补发吗？']],
+    [/工艺|包边|锁边|内衬|领口|袖口|针脚|细节|耐穿/u, ['这种工艺日常耐穿吗，清洗打理要注意什么？', '如果做工细节有问题，售后可以处理吗？']],
     [/优惠|折扣|活动|便宜|优惠券/u, ['那现在下单能享受什么优惠呢？', '优惠可以和其他活动一起使用吗？']],
     [/退款|退货|换货|售后/u, ['那具体需要怎么提交售后申请呢？', '处理结果一般什么时候能出来呢？']],
     [/地址|订单|下单|支付|付款/u, ['那下单后还能修改订单信息吗？', '付款后大概什么时候可以安排发货呢？']],
   ];
   const matched = topicTemplates.find(([pattern]) => pattern.test(text))?.[1];
-  if (matched?.length) return matched[index % matched.length];
-  return ['那具体应该怎么处理呢？', '还有哪些需要我提前注意的吗？'][index % 2];
+  const candidates = matched?.length
+    ? matched
+    : ['那具体应该怎么处理呢？', '还有哪些需要我提前注意的吗？', '平时使用和保养有什么要注意的吗？'];
+  // 从 index 对应位置起找本轮还没用过的问法，避免多个不同父题兜底到同一句。
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[(index + i) % candidates.length];
+    if (!used.has(candidate)) return candidate;
+  }
+  // 该主题候选全部用过时，按父题主题生成一句唯一的兜底追问。
+  const topic = text.replace(/[？?！!，,。.、；;：:\s]/gu, '').slice(0, 10);
+  return `那关于「${topic}」具体要注意什么呢？`;
 }
 
 /**
@@ -60,12 +70,15 @@ export function buildQuestionSeq(qa: QuestionSeqSource, rounds: [number, number]
   const minRounds = Math.min(Math.max(1, rounds[0] || limited.length), maxRounds);
   const derived: ScriptQuestion[] = [];
   let derivedIndex = 0;
+  const usedQuestions = new Set(limited.map((q) => q.question));
   while (limited.length + derived.length < minRounds && limited.length) {
     const parent = limited[derivedIndex % limited.length];
     const duplicateIndex = derived.filter((item) => item.derivedFromSeq === parent.seq).length;
+    const derivedText = derivedQuestionFor(parent.question, duplicateIndex, usedQuestions);
+    usedQuestions.add(derivedText);
     derived.push({
       seq: limited.length + derived.length + 1,
-      question: derivedQuestionFor(parent.question, duplicateIndex),
+      question: derivedText,
       keyPoints: ['有效回应'],
       sourceType: 'derived',
       requiresContext: true,

@@ -671,17 +671,21 @@ describe('在线模拟接待端到端链路', () => {
 
     const preview = await request(http).get(`/api/scripts/${created.body.data.id}/preview`).set(auth);
     expect(preview.body.code).toBe(0);
-    expect(preview.body.data.questionSeq.map((q: any) => q.question)).toEqual([
+    const previewSeq = preview.body.data.questionSeq;
+    // 3 题工艺短场景按最低 6 轮补齐：前 3 条为原始 core 问题，后 3 条为工艺相关衍生追问。
+    expect(previewSeq).toHaveLength(6);
+    expect(previewSeq.slice(0, 3).map((q: any) => q.question)).toEqual([
       '是包边还是锁边？',
       '走线整齐吗？',
       '有内衬吗？',
     ]);
-    expect(preview.body.data.questionSeq.every((q: any) => q.sourceType === 'core')).toBe(true);
-    expect(preview.body.data.questionSeq[0].primaryGoal).toBe('工艺');
+    expect(previewSeq.slice(0, 3).every((q: any) => q.sourceType === 'core')).toBe(true);
+    expect(previewSeq.slice(3).every((q: any) => q.sourceType === 'derived')).toBe(true);
+    expect(previewSeq[0].primaryGoal).toBe('工艺');
     expect(preview.body.data.customerGoal).toBe('确认商品工艺质量和耐穿程度');
-    expect(preview.body.data.roundsWarning).toContain('不强制补题');
+    expect(preview.body.data.roundsWarning).toBeNull();
 
-    const allText = preview.body.data.questionSeq.map((q: any) => q.question).join(' ');
+    const allText = previewSeq.map((q: any) => q.question).join(' ');
     expect(allText).not.toContain('多久能处理好');
     expect(allText).not.toContain('有什么优势');
     expect(allText).not.toContain('额外优惠');

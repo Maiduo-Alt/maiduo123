@@ -26,15 +26,22 @@ describe('simulation flow regression: craft consultation', () => {
       },
     );
 
-    expect(generated).toHaveLength(3);
-    expect(generated.map((q) => q.question)).toEqual([
+    // buildQuestionSeq 对 3 题工艺短场景补齐到 6 轮：3 条 core + 3 条衍生追问。
+    expect(generated).toHaveLength(6);
+    expect(generated.slice(0, 3).map((q) => q.question)).toEqual([
       '是包边还是锁边？',
       '走线整齐吗？',
       '有内衬吗？',
     ]);
     expect(generated[0].customerGoal).toBe('确认商品工艺质量和耐穿程度');
     expect(generated[0].primaryGoal).toBe('工艺');
-    expect(generated.every((q) => q.sourceType === 'core')).toBe(true);
+    expect(generated.slice(0, 3).every((q) => q.sourceType === 'core')).toBe(true);
+
+    // 3 条衍生追问：全部与工艺主题相关、互不重复，且不再命中发货/优惠等跨主题兜底。
+    const derivedTexts = generated.slice(3).map((q) => q.question);
+    expect(generated.slice(3).every((q) => q.sourceType === 'derived')).toBe(true);
+    expect(new Set(derivedTexts).size).toBe(derivedTexts.length);
+    expect(derivedTexts.every((text) => /售后|清洗|打理|收到后|补发|退换/u.test(text))).toBe(true);
 
     const state = deriveConversationState(generated, [], {
       currentSeq: 0,
