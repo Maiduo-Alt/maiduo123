@@ -1,5 +1,6 @@
 import {
   buildSimulatedOrder,
+  inferQuantityFromTexts,
   isPresaleOrderStage,
   ORDER_STAGE_TEXT,
   orderStageForQuestion,
@@ -85,21 +86,21 @@ describe('模拟订单（客户 2026-10-03 三张参考图）', () => {
   });
 
   /** 客户 2026-10-10 / 2026-10-14：订单保障 / 金额 / 规格必须和商品库一致。 */
-  it('带商品生成订单：保障=商品服务承诺，金额=商品售价（1 件），规格=SKU 规格名/尺码', () => {
+  it('带商品生成订单：保障=商品服务承诺，金额=商品售价×件数，规格=SKU 规格名/尺码', () => {
     const product = {
-      price: 150.91,
+      price: 150,
       services: ['七天无理由', '运费险', '48小时发货'],
       skus: [
-        { name: '内搭+吊带+裙子', size: 'S', price: 150.91 },
-        { name: '内搭+吊带+裙子', size: 'XL', price: 150.91 },
+        { name: '内搭+吊带+裙子', size: 'S', price: 150 },
+        { name: '内搭+吊带+裙子', size: 'XL', price: 150 },
         { name: '内搭+吊带', size: 'M', price: 95 },
       ],
     };
     const order = buildSimulatedOrder(555, 'unshipped', now, product);
     expect(order.services).toEqual(['七天无理由', '运费险', '48小时发货']);
-    /* 金额必须等于「咨询宝贝」展示的商品售价，且固定 1 件（避免 SKU 价/件数造成两处对不上） */
+    /* 没提数量时默认 1 件，金额 = 「咨询宝贝」展示的商品售价 */
     expect(order.quantity).toBe(1);
-    expect(order.amount).toBeCloseTo(150.91, 2);
+    expect(order.amount).toBeCloseTo(150, 2);
     /* 规格仍取选中 SKU */
     const picked = product.skus.find((s) => order.spec.startsWith(s.name) && order.spec.endsWith(s.size));
     expect(picked).toBeTruthy();
@@ -111,11 +112,43 @@ describe('模拟订单（客户 2026-10-03 三张参考图）', () => {
     expect(again.services).toEqual(order.services);
   });
 
+  /** 客户 2026-10-14：买家说买几件，订单就是几件——金额 = 单价 × 件数。 */
+  it('件数跟对话逻辑走：两套 = 2 件 = 单价 × 2', () => {
+    const product = { price: 150, services: [], skus: [{ name: '套装', size: 'M', price: 150 }] };
+    const two = buildSimulatedOrder(560, 'unpaid', now, product, 2);
+    expect(two.quantity).toBe(2);
+    expect(two.amount).toBeCloseTo(300, 2);
+    const three = buildSimulatedOrder(560, 'unpaid', now, product, 3);
+    expect(three.quantity).toBe(3);
+    expect(three.amount).toBeCloseTo(450, 2);
+  });
+
   it('商品无售价时回退 SKU 价；无商品时保障为空数组', () => {
     const noProductPrice = buildSimulatedOrder(556, 'unpaid', now, { price: 0, services: ['七天无理由'], skus: [{ name: 'A款', size: 'M', price: 200 }] });
     expect(noProductPrice.amount).toBeCloseTo(200, 2);
     expect(noProductPrice.quantity).toBe(1);
     const noProduct = buildSimulatedOrder(557, 'unpaid', now);
     expect(noProduct.services).toEqual([]);
+  });
+});
+
+describe('从买家话术推断购买件数（客户 2026-10-14）', () => {
+  it('识别「买/要/来/拍 + 数量 + 量词」，中文数字与阿拉伯数字都支持', () => {
+    expect(inferQuantityFromTexts(['这个我想买两套，有优惠吗？'])).toBe(2);
+    expect(inferQuantityFromTexts(['那我拍2件吧'])).toBe(2);
+    expect(inferQuantityFromTexts(['给我来三件'])).toBe(3);
+    expect(inferQuantityFromTexts(['买五件能便宜多少'])).toBe(5);
+  });
+
+  it('多条话术按时间顺序取最后一次提到的数量', () => {
+    expect(inferQuantityFromTexts(['先买一件试试', '算了，我要两套'])).toBe(2);
+    expect(inferQuantityFromTexts(['我想买两套', '这件质量怎么样'])).toBe(2);
+  });
+
+  it('「这件/那套」等泛指不会被误判为数量；无购买意图返回 null', () => {
+    expect(inferQuantityFromTexts(['这件衣服会起球吗？'])).toBeNull();
+    expect(inferQuantityFromTexts(['那套搭配有现货吗？'])).toBeNull();
+    expect(inferQuantityFromTexts(['多少钱？', '包邮吗？'])).toBeNull();
+    expect(inferQuantityFromTexts([])).toBeNull();
   });
 });

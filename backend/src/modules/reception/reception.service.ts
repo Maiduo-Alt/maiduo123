@@ -28,7 +28,7 @@ import { weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
 import { judgeReply } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
-import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef } from '../../domain/order';
+import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef, inferQuantityFromTexts } from '../../domain/order';
 import {
   actionStageHint,
   businessActionResolvesQuestion,
@@ -513,7 +513,7 @@ export class ReceptionService implements OnModuleInit {
       );
       // 开局就按「第一个问题的订单状态」生成订单：售前=待支付/待发货，售后=已发货
       const firstStage: OrderStage = questions[0].orderStage || orderStageForQuestion(questions[0]);
-      const order = this.buildOrder(Number(row.id), firstStage, Date.parse(String(row.join_at)), product);
+      const order = this.buildOrder(Number(row.id), firstStage, Date.parse(String(row.join_at)), product, inferQuantityFromTexts(questions.map((q) => q.question)));
       await this.persistOrder(Number(row.id), order);
       const initialConversationState = deriveConversationState(questions, [], {
         currentSeq: 0,
@@ -561,8 +561,8 @@ export class ReceptionService implements OnModuleInit {
    * （下单 → 付款 → 承诺发货 → 发货/物流/签收），也就是"同一笔订单在推进"。
    * 时间锚点用会话进线时间：否则每次推问题都会把「下单时间」往后挪，看着像订单变了。
    */
-  private buildOrder(sessionId: number, stage: OrderStage, anchorMs = Date.now(), product?: OrderProductRef | null): SimulatedOrder {
-    return buildSimulatedOrder(sessionId * 7919 + 13, stage, anchorMs, product);
+  private buildOrder(sessionId: number, stage: OrderStage, anchorMs = Date.now(), product?: OrderProductRef | null, quantity?: number | null): SimulatedOrder {
+    return buildSimulatedOrder(sessionId * 7919 + 13, stage, anchorMs, product, quantity);
   }
 
   /** 把订单写回会话（单号/金额冗余在列上，完整快照放 JSONB）。 */
@@ -847,7 +847,12 @@ export class ReceptionService implements OnModuleInit {
      * 售前问题配「待支付 / 待发货」，售后问题配「已发货」——同一笔记订单随问题推进状态。
      */
     const orderStage: OrderStage = question.orderStage || orderStageForQuestion(question);
-    const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)), session.products?.[0] ?? null);
+    // 件数跟对话逻辑走：买家说过「买两套 / 来 2 件」等明确数量时，订单按该数量推进。
+    const buyerTexts = await this.db.many<{ content: string }>(
+      `SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id`,
+      [sessionId]
+    );
+    const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)), session.products?.[0] ?? null, inferQuantityFromTexts(buyerTexts.map((row) => row.content)));
     await this.persistOrder(sessionId, order);
     for (const text of texts) {
       await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [

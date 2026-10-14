@@ -87,10 +87,33 @@ const iso = (ms: number) => new Date(ms).toISOString();
 const HOUR = 3600 * 1000;
 
 /**
+ * 从买家话术里推断购买件数（客户 2026-10-14：订单件数要跟对话逻辑走）。
+ * 只认「买/拍/要/来/带/拿/订/购 + 数量 + 件/套/个…」这种明确购买意图，
+ * 避免「这件衣服怎么样」里的「这件」被误当成 1 件。
+ * 多条话术按时间顺序取最后一次提到的数量；没有命中返回 null。
+ */
+export function inferQuantityFromTexts(texts: string[]): number | null {
+  const numeral: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  const pattern = /(?:买|拍|要|来|带|拿|订|购)\s*([0-9]+|[一二两三四五六七八九十])\s*(?:件|套|个|条|双|份)/gu;
+  let quantity: number | null = null;
+  for (const text of texts) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(String(text || '')))) {
+      const raw = match[1];
+      const value = /^[0-9]+$/.test(raw) ? Number(raw) : numeral[raw];
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 20) quantity = value;
+    }
+  }
+  return quantity;
+}
+
+/**
  * 生成（或按新状态刷新）一笔模拟订单。
  * 同一个 seed 会得到同一个订单号与金额——同一局的订单在各状态间是"同一笔订单"在推进。
+ * quantity 传 null/undefined 时按默认口径（带商品 1 件，无商品保持旧的随机件数）。
  */
-export function buildSimulatedOrder(seed: number, stage: OrderStage, now = Date.now(), product?: OrderProductRef | null): SimulatedOrder {
+export function buildSimulatedOrder(seed: number, stage: OrderStage, now = Date.now(), product?: OrderProductRef | null, quantity?: number | null): SimulatedOrder {
   const rng = lcg(seed);
   const orderNo = `69${String(Math.floor(rng() * 9e15)).padStart(15, '0').slice(0, 15)}`;
   const amount = Math.round((rng() * 900 + 60) * 100) / 100;
@@ -123,7 +146,8 @@ export function buildSimulatedOrder(seed: number, stage: OrderStage, now = Date.
   /**
    * 客户 2026-10-10 / 2026-10-14：订单保障 / 金额 / 规格必须和商品库一致——
    * 保障 = 商品《服务承诺》；规格 = 商品 SKU（规格名 / 尺码）；
-   * 金额 = 接待页「咨询宝贝」展示的商品售价，件数固定 1 件（无售价才回退 SKU 价）。
+   * 金额 = 接待页「咨询宝贝」展示的商品售价 × 件数（无售价才回退 SKU 价）。
+   * 件数默认 1，买家在对话里说过「买两套 / 来 2 件」等明确数量时按对话口径。
    * 上面 rng 调用顺序保持不变（订单号随 seed 稳定），这里只做覆盖。
    */
   if (product) {
@@ -135,9 +159,12 @@ export function buildSimulatedOrder(seed: number, stage: OrderStage, now = Date.
       order.spec = [sku.name, sku.size].filter(Boolean).join(' / ');
       unitPrice = unitPrice ?? toAmount(sku.price);
     }
-    if (unitPrice != null) order.amount = unitPrice;
-    // 订单就是正在咨询的这一件商品：1 件，金额与「咨询宝贝」面板价格严格一致。
-    order.quantity = 1;
+    // 订单就是正在咨询的这个商品；件数跟对话逻辑走（默认 1 件）。
+    order.quantity =
+      typeof quantity === 'number' && Number.isFinite(quantity)
+        ? Math.max(1, Math.min(20, Math.floor(quantity)))
+        : 1;
+    if (unitPrice != null) order.amount = Math.round(unitPrice * order.quantity * 100) / 100;
   }
 
   if (stage === 'unshipped' || stage === 'shipped') {
