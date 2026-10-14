@@ -7,6 +7,7 @@ export type SessionState =
   | 'wait'
   | 'serving'
   | 'waiting_buyer'
+  | 'awaiting_agent_close'
   | 'timeout'
   | 'finished'
   | 'transferred'
@@ -166,6 +167,8 @@ export interface ScriptQuestion {
    * - optional：优惠/竞品/物流等仅在上下文合适时才可触发的可选问题。
    */
   sourceType?: 'core' | 'derived' | 'optional';
+  /** 衍生提问所依附的主问题轮次，用于保持对话主题连续。 */
+  derivedFromSeq?: number;
   /** 强依赖前文的问题不能作为开场，例如“那大概多久能处理好呢？”。 */
   requiresContext?: boolean;
   /**
@@ -295,6 +298,8 @@ export interface SessionScoreInput {
   messages: ScoreMessage[];
   transferredQuestionSeqs?: number[];
   skippedQuestionSeqs?: number[];
+  /** 单问题买家离场时，不把未回复轮次按 600 秒计入平均响应。 */
+  buyerLeftAfterSingleQuestion?: boolean;
   emotionFinal: number;
   hasEmotionScenario: boolean;
   params: SystemParams;

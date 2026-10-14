@@ -390,6 +390,34 @@ export default function Reception() {
     });
   }, []);
 
+  /** 飞鸽式工作台快捷键：light+ / light- 切换买家回复窗口，ESC 关闭当前回复窗口。 */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const editing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+      const isNext = event.key === '+' || event.key === '=' || event.key === 'Light+' || event.code === 'NumpadAdd';
+      const isPrevious = event.key === '-' || event.key === '_' || event.key === 'Light-' || event.code === 'NumpadSubtract';
+      if (isNext || isPrevious) {
+        if (editing) return;
+        const openSessions = sessions.filter(isRunning);
+        if (!openSessions.length) return;
+        const currentIndex = Math.max(0, openSessions.findIndex((session) => session.sessionId === activeId));
+        const offset = isNext ? 1 : -1;
+        const next = openSessions[(currentIndex + offset + openSessions.length) % openSessions.length];
+        event.preventDefault();
+        selectSession(next.sessionId);
+        return;
+      }
+      if (event.key === 'Escape' && activeId !== null && !editing) {
+        event.preventDefault();
+        setActiveId(null);
+        setInput('');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeId, isRunning, selectSession, sessions]);
+
   const loadSnapshot = useCallback(
     async (id: number, silent = true) => {
       try {
@@ -797,7 +825,7 @@ export default function Reception() {
                   允许难度 <b>{(task.levels || []).join(' / ')}</b>
                 </span>
                 <span>
-                  需达成 <b>{task.targetCount}</b> 次，当前 <b>{task.doneCount}</b> 次
+                  需通过 <b>{(task.levels || []).join(' / ')}</b>，当前 <b>{(task.passedLevels || task.myPassedLevels || []).join(' / ') || '暂无'}</b>
                 </span>
                 <span>
                   截止 <b>{dayjs(task.deadline).format('YYYY-MM-DD HH:mm')}</b>
@@ -1505,7 +1533,7 @@ export default function Reception() {
           <div className="reception-send-row">
             {/* 飞鸽：提示里带买家昵称，右下角还有字数计数 */}
             <span className="reception-input-hint">
-              发送给 {activeSession?.buyerName || '买家'}，使用 Enter 发送消息，使用 Ctrl + Enter 换行
+              发送给 {activeSession?.buyerName || '买家'}，Enter 发送，Ctrl + Enter 换行，light+ / light- 切换窗口，ESC 关闭窗口
             </span>
             <span className="reception-input-count">
               {input.length}/{systemParams?.messageMaxLength ?? 800}
@@ -1544,7 +1572,7 @@ export default function Reception() {
               <span className="task-card-name">{attempt.task.name}</span>
             </div>
             <div className="task-card-line">
-              需完成 <b>{attempt.task.targetCount}</b> 次，当前 <b>{attempt.task.doneCount}</b> 次
+              需通过 <b>{(attempt.task.levels || []).join(' / ')}</b>，当前 <b>{(attempt.task.passedLevels || []).join(' / ') || '暂无'}</b>
             </div>
             {(attempt.task.targets || []).map((target: any, index: number) => (
               <div className="task-card-line" key={index}>

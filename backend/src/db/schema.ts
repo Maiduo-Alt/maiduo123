@@ -284,8 +284,11 @@ CREATE TABLE IF NOT EXISTS task_assignees (
   task_id       INTEGER NOT NULL,
   account_id    INTEGER NOT NULL,
   done_count    INTEGER NOT NULL DEFAULT 0,
+  passed_levels JSONB NOT NULL DEFAULT '[]'::jsonb,
   status        VARCHAR(16) NOT NULL DEFAULT 'pending'
 );
+
+ALTER TABLE task_assignees ADD COLUMN IF NOT EXISTS passed_levels JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS cases (
   id            SERIAL PRIMARY KEY,

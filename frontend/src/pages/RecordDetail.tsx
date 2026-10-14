@@ -74,6 +74,7 @@ export default function RecordDetail() {
     },
     { title: '超时', dataIndex: 'timeoutCount', width: 70 },
     { title: '情绪值', dataIndex: 'emotionValue', width: 80 },
+    { title: '平均响应', dataIndex: 'avgResponseSec', width: 100, render: (v) => (v === null || v === undefined ? '-' : `${v} 秒`) },
     { title: '响应时效', dataIndex: 'responseScore', width: 90, render: (v) => v ?? '-' },
     { title: '问题解决', dataIndex: 'solvingScore', width: 90, render: (v) => v ?? '-' },
     { title: '话术规范', dataIndex: 'wordingScore', width: 90, render: (v) => v ?? '-' },

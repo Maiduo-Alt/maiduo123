@@ -26,10 +26,11 @@ function scoreResponse(
   messages: ScoreMessage[],
   questions: ScriptQuestion[],
   params: SystemParams,
-  skippedQuestionSeqs: number[] = []
+  skippedQuestionSeqs: number[] = [],
+  buyerLeftAfterSingleQuestion = false
 ): { score: number; metrics: SessionScore['metrics']; deductions: Deduction[] } {
   const deductions: Deduction[] = [];
-  const rounds = computeResponseRounds(messages, questions, params, skippedQuestionSeqs);
+  const rounds = computeResponseRounds(messages, questions, params, skippedQuestionSeqs, { buyerLeftAfterSingleQuestion });
   const firstResponseSec = rounds.firstResponseSec;
   const avgResponseSec = rounds.avgResponseSec;
   const timeoutCount = rounds.timeoutCount;
@@ -239,7 +240,13 @@ function scoreEmotion(input: SessionScoreInput): { score: number; deductions: De
 /** 计算单个会话的四维得分。 */
 export function scoreSession(input: SessionScoreInput): SessionScore {
   const { params } = input;
-  const response = scoreResponse(input.messages, input.questions, params, input.skippedQuestionSeqs || []);
+  const response = scoreResponse(
+    input.messages,
+    input.questions,
+    params,
+    input.skippedQuestionSeqs || [],
+    !!input.buyerLeftAfterSingleQuestion,
+  );
   const solving = scoreSolving(input);
   const wording = scoreWording(input.messages, params);
   const emotion = scoreEmotion(input);

@@ -10,6 +10,17 @@ interface TargetInput {
   threshold: number;
 }
 
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 @Injectable()
 export class TasksService {
   constructor(private readonly db: DbService) {}
@@ -81,8 +92,8 @@ export class TasksService {
       [user.id]
     );
     const mineSet = new Set(mine.map((row) => Number(row.task_id)));
-    const myProgressRows = await this.db.many<{ task_id: number; done_count: number; status: string }>(
-      `SELECT task_id, done_count, status FROM task_assignees WHERE account_id = $1`,
+    const myProgressRows = await this.db.many<{ task_id: number; done_count: number; passed_levels: unknown; status: string }>(
+      `SELECT task_id, done_count, passed_levels, status FROM task_assignees WHERE account_id = $1`,
       [user.id]
     );
     const myProgressMap = new Map(myProgressRows.map((row) => [Number(row.task_id), row]));
@@ -94,6 +105,7 @@ export class TasksService {
       // 当前账号自己的完成次数：客服在《我的任务》里看的是「我完成几次 / 需完成几次」，
       // 而上面的 doneCount 是「已完成人数」——两个口径混在一列会出现「需完成 3 / 进度 0/1」。
       myDoneCount: Number(myProgressMap.get(Number(row.id))?.done_count || 0),
+      myPassedLevels: stringArray(myProgressMap.get(Number(row.id))?.passed_levels),
       myStatus: myProgressMap.get(Number(row.id))?.status || null,
     }));
   }
@@ -106,8 +118,8 @@ export class TasksService {
   async reminders(user: AuthUser, withinHours = 24) {
     const cutoff = new Date(Date.now() + withinHours * 3600 * 1000).toISOString();
     const rows = await this.db.many<any>(
-      `SELECT t.id, t.task_no AS "taskNo", t.name, t.deadline, t.target_count AS "targetCount",
-              ta.done_count AS "doneCount"
+      `SELECT t.id, t.task_no AS "taskNo", t.name, t.levels, t.deadline,
+              ta.done_count AS "doneCount", ta.passed_levels AS "passedLevels"
        FROM tasks t
        JOIN task_assignees ta ON ta.task_id = t.id AND ta.account_id = $1
        WHERE t.status = 'running' AND ta.status <> 'done' AND t.deadline <= $2
@@ -125,8 +137,9 @@ export class TasksService {
           taskNo: row.taskNo,
           name: row.name,
           deadline: row.deadline,
-          targetCount: Number(row.targetCount || 0),
+          levels: stringArray(row.levels),
           doneCount: Number(row.doneCount || 0),
+          passedLevels: stringArray(row.passedLevels),
           hoursLeft,
           overdue: hoursLeft < 0,
         };
@@ -136,7 +149,7 @@ export class TasksService {
 
   async create(
     user: AuthUser,
-    body: { name: string; levels: string[]; startAt: string; deadline: string; targetCount: number; targets: TargetInput[]; assignees: number[]; scopeType?: string; scopeValue?: any }
+    body: { name: string; levels: string[]; startAt: string; deadline: string; targetCount?: number; targets: TargetInput[]; assignees: number[]; scopeType?: string; scopeValue?: any }
   ) {
     if (!body.name) throw new BizError(ERR.PARAM, '任务名称不能为空');
     if (!body.levels?.length) throw new BizError(ERR.PARAM, '请选择难度档位');
@@ -153,7 +166,7 @@ export class TasksService {
         JSON.stringify(body.scopeValue || {}),
         body.startAt || new Date().toISOString(),
         body.deadline,
-        body.targetCount || 1,
+        body.levels.length,
         user.id,
       ]
     );
@@ -184,7 +197,10 @@ export class TasksService {
        FROM sessions s WHERE s.attempt_id = $1`,
       [attemptId]
     );
-    const details = targets.map((t) => {
+    const effectiveTargets = targets.length
+      ? targets
+      : [{ metric: 'total_score', operator: 'gte', threshold: String((attempt.param_snapshot as any)?.passLine ?? 80) }];
+    const details = effectiveTargets.map((t) => {
       let actual = 0;
       if (t.metric === 'total_score') actual = Number(attempt.total_score || 0);
       else if (t.metric === 'first_response') actual = Number(metrics.firstResponse || 0);
@@ -195,14 +211,21 @@ export class TasksService {
     });
     const passed = details.every((d) => d.passed);
     if (passed) {
-      await this.db.query(
-        `UPDATE task_assignees SET done_count = done_count + 1,
-                                   status = CASE WHEN done_count + 1 >= (SELECT target_count FROM tasks WHERE id = $2) THEN 'done' ELSE 'doing' END
-         WHERE task_id = $2 AND account_id = $1`,
-        [attempt.account_id, attempt.task_id]
+      const task = await this.db.one<{ levels: unknown }>(`SELECT levels FROM tasks WHERE id = $1`, [attempt.task_id]);
+      const assignee = await this.db.one<{ passed_levels: unknown }>(
+        `SELECT passed_levels FROM task_assignees WHERE task_id = $1 AND account_id = $2`,
+        [attempt.task_id, attempt.account_id]
       );
-      // 方案 F6-08：所有下发的客服都达到「完成次数」要求后，任务本身就是「已完成」。
-      // 之前只把客服标成 done，任务状态一直停在 running，只能等截止扫描来关。
+      const requiredLevels = stringArray(task?.levels);
+      const passedLevels = stringArray(assignee?.passed_levels);
+      const nextPassedLevels = [...new Set([...passedLevels, String(attempt.level)])].filter((level) => requiredLevels.includes(level));
+      const assigneeDone = requiredLevels.length > 0 && requiredLevels.every((level) => nextPassedLevels.includes(level));
+      await this.db.query(
+        `UPDATE task_assignees SET done_count = $3, passed_levels = $4::jsonb, status = $5
+         WHERE task_id = $1 AND account_id = $2`,
+        [attempt.task_id, attempt.account_id, nextPassedLevels.length, JSON.stringify(nextPassedLevels), assigneeDone ? 'done' : 'doing']
+      );
+      // 任务完成口径：每位客服都完成任务指定的 L1-L4 档位后，任务自动完成。
       await this.db.query(
         `UPDATE tasks SET status = 'finished'
          WHERE id = $1 AND status = 'running'
@@ -217,7 +240,7 @@ export class TasksService {
     const task = await this.db.one(`SELECT * FROM tasks WHERE id = $1`, [taskId]);
     if (!task) throw new BizError(ERR.NOT_FOUND, '任务不存在');
     const assignees = await this.db.many<any>(
-      `SELECT ta.account_id AS "accountId", ac.display_name AS "accountName", ta.done_count AS "doneCount",
+      `SELECT ta.account_id AS "accountId", ac.display_name AS "accountName", ta.done_count AS "doneCount", ta.passed_levels AS "passedLevels",
               ta.status, avg(a.total_score) AS "avgScoreRaw",
               COALESCE(max(a.total_score),0) AS "bestScore",
               count(a.id)::int AS "attemptCount"

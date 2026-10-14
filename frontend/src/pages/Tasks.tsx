@@ -144,7 +144,6 @@ export default function Tasks() {
         body: {
           name: values.name,
           levels: values.levels,
-          targetCount: values.targetCount,
           startAt: new Date().toISOString(),
           deadline: values.deadline.toISOString(),
           assignees: values.assignees,
@@ -230,14 +229,12 @@ export default function Tasks() {
                 </Tag>
               )),
           },
-          { title: '需完成', dataIndex: 'targetCount', width: 80 },
+          { title: '需通过档位', dataIndex: 'levels', width: 100, render: (v: string[]) => `${(v || []).length} 个` },
           {
-            // 客服看到的是「我的进度（我完成几次 / 需完成几次）」；
-            // 带教看到的是「完成人数（已达标人数 / 参与人数）」——两个口径不能混在一列。
             title: canManage ? '完成人数' : '我的进度',
             width: 110,
             render: (_, row: any) =>
-              canManage ? `${row.doneCount}/${row.assigneeCount} 人` : `${row.myDoneCount ?? 0}/${row.targetCount} 次`,
+              canManage ? `${row.doneCount}/${row.assigneeCount} 人` : `${(row.myPassedLevels || []).length}/${(row.levels || []).length} 档`,
           },
           { title: '截止时间', dataIndex: 'deadline', width: 180, render: (v) => new Date(v).toLocaleString('zh-CN') },
           {
@@ -270,7 +267,7 @@ export default function Tasks() {
       />
 
       <Modal open={createOpen} title="新建训练任务" onCancel={() => setCreateOpen(false)} onOk={create} width={640} destroyOnClose>
-        <Form form={form} layout="vertical" initialValues={{ levels: ['L2'], targetCount: 3, scoreThreshold: 85 }}>
+        <Form form={form} layout="vertical" initialValues={{ levels: ['L1', 'L2', 'L3', 'L4'], scoreThreshold: 85 }}>
           <Form.Item name="name" label="任务名称" rules={[{ required: true, message: '请输入任务名称' }]}>
             <Input placeholder="例如：报价类场景强化训练" />
           </Form.Item>
@@ -286,11 +283,8 @@ export default function Tasks() {
             />
           </Form.Item>
           <Space size={16}>
-            <Form.Item name="scoreThreshold" label="达标总分（≥）">
+            <Form.Item name="scoreThreshold" label="单档位达标总分（≥）">
               <InputNumber min={0} max={100} style={{ width: 160 }} />
-            </Form.Item>
-            <Form.Item name="targetCount" label="需达成次数">
-              <InputNumber min={1} style={{ width: 160 }} />
             </Form.Item>
             <Form.Item name="deadline" label="截止时间" rules={[{ required: true, message: '请选择截止时间' }]}>
               <DatePicker showTime defaultValue={dayjs().add(7, 'day')} />
@@ -414,7 +408,7 @@ export default function Tasks() {
                 description={(report.failedAssignees || [])
                   .map(
                     (row: any) =>
-                      `${row.accountName}（已完成 ${row.doneCount} 次，最高 ${Number(row.bestScore || 0).toFixed(1)} 分）`
+                      `${row.accountName}（已通过 ${row.doneCount} 个档位，最高 ${Number(row.bestScore || 0).toFixed(1)} 分）`
                   )
                   .join('；')}
               />
@@ -428,7 +422,7 @@ export default function Tasks() {
             dataSource={report.assignees}
             columns={[
               { title: '客服', dataIndex: 'accountName' },
-              { title: '已完成次数', dataIndex: 'doneCount' },
+              { title: '已通过档位', dataIndex: 'doneCount' },
               { title: '接待次数', dataIndex: 'attemptCount' },
               { title: '平均分', dataIndex: 'avgScore', render: (v) => Number(v || 0).toFixed(1) },
               { title: '最高分', dataIndex: 'bestScore', render: (v) => Number(v || 0).toFixed(1) },

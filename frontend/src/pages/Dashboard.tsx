@@ -90,7 +90,7 @@ export default function Dashboard() {
               {reminders
                 .map(
                   (item) =>
-                    `${item.name}（还差 ${Math.max(0, item.targetCount - item.doneCount)} 次，${
+                    `${item.name}（还差 ${(item.levels || []).filter((level: string) => !(item.passedLevels || []).includes(level)).join('、') || '0 个档位'}，${
                       item.overdue ? '已过期' : `还剩 ${item.hoursLeft} 小时`
                     }）`
                 )
@@ -125,7 +125,7 @@ export default function Dashboard() {
               {
                 title: '进度',
                 width: 120,
-                render: (_, row: any) => `${row.doneCount || 0} / ${row.targetCount} 次`,
+                render: (_, row: any) => `${(row.passedLevels || []).length} / ${(row.levels || []).length} 档`,
               },
               {
                 title: '截止时间',

@@ -10,6 +10,23 @@ export interface QuestionSeqSource {
   transferIdxs?: number[];
 }
 
+function derivedQuestionFor(question: string, index: number): string {
+  const text = String(question || '');
+  const topicTemplates: Array<[RegExp, string[]]> = [
+    [/发货|出库|多久发/u, ['那一般什么时候可以发出呢？', '发出后大概多久能收到呢？']],
+    [/物流|快递|配送|到货|签收/u, ['那物流大概几天能到呢？', '如果物流停滞，可以帮我跟进吗？']],
+    [/尺码|尺寸|身高|体重|版型/u, ['那我这个身材应该怎么选尺码呢？', '如果尺码不合适，可以换吗？']],
+    [/材质|面料|透气|厚度|成分/u, ['那穿起来会不会闷或不舒服呢？', '平时清洗和打理有什么要注意的吗？']],
+    [/做工|走线|质量|瑕疵|损坏/u, ['如果收到后发现问题，售后怎么处理呢？', '这种情况可以退换或补发吗？']],
+    [/优惠|折扣|活动|便宜|优惠券/u, ['那现在下单能享受什么优惠呢？', '优惠可以和其他活动一起使用吗？']],
+    [/退款|退货|换货|售后/u, ['那具体需要怎么提交售后申请呢？', '处理结果一般什么时候能出来呢？']],
+    [/地址|订单|下单|支付|付款/u, ['那下单后还能修改订单信息吗？', '付款后大概什么时候可以安排发货呢？']],
+  ];
+  const matched = topicTemplates.find(([pattern]) => pattern.test(text))?.[1];
+  if (matched?.length) return matched[index % matched.length];
+  return ['那具体应该怎么处理呢？', '还有哪些需要我提前注意的吗？'][index % 2];
+}
+
 /**
  * 由一条买家咨询内容构建剧本题干序列（方案 4.5 兜底规则）。
  *
@@ -17,8 +34,8 @@ export interface QuestionSeqSource {
  * 1. 问题按 question_list 顺序展开，要点与问题一一对应；
  *    缺失要点时退化为「有效回应」，避免该轮无法得分。
  * 2. transferIdxs 标记的问题需要转接主管才算处理好（判定见 domain/scoring.ts）。
- * 3. 不再为了满足最低轮数注入跨主题的“通用追问”；原始咨询有几条自然问题就保留几条。
- *    轮数下限仅作为后台提示，不再驱动自动补题；超过上限仍截断。
+ * 3. 原始咨询问题不足最低轮数时，只围绕已有问题补充带来源标记的衍生追问；
+ *    不注入跨主题通用问题。超过上限仍截断。
  *
  * 这样可以避免“工艺细节”场景被自动插入“发货/优惠/竞品比较”等无关问题。
  */
@@ -39,8 +56,28 @@ export function buildQuestionSeq(qa: QuestionSeqSource, rounds: [number, number]
     needTransfer: transferIdxs.has(i),
     stage: questionStage,
   }));
-  // 每个问题带上它对应的订单状态（售前=发货前、售后=发货后），推送端据此生成/推进订单
-  return seq.slice(0, maxRounds).map((item) => ({ ...item, orderStage: orderStageForQuestion(item) }));
+  const limited = seq.slice(0, maxRounds);
+  const minRounds = Math.min(Math.max(1, rounds[0] || limited.length), maxRounds);
+  const derived: ScriptQuestion[] = [];
+  let derivedIndex = 0;
+  while (limited.length + derived.length < minRounds && limited.length) {
+    const parent = limited[derivedIndex % limited.length];
+    const duplicateIndex = derived.filter((item) => item.derivedFromSeq === parent.seq).length;
+    derived.push({
+      seq: limited.length + derived.length + 1,
+      question: derivedQuestionFor(parent.question, duplicateIndex),
+      keyPoints: ['有效回应'],
+      sourceType: 'derived',
+      requiresContext: true,
+      derivedFromSeq: parent.seq,
+      goalPriority: 'secondary',
+      stage: parent.stage,
+      orderStage: orderStageForQuestion(parent),
+    });
+    derivedIndex += 1;
+  }
+  // 原始问题保持顺序，衍生问题追加在后面，并带上来源轮次供运行时保持关联主题。
+  return [...limited, ...derived].map((item) => ({ ...item, orderStage: orderStageForQuestion(item) }));
 }
 
 

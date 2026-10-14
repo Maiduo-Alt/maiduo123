@@ -51,6 +51,12 @@ describe('响应时长按轮次建模（抖店官方口径）', () => {
     expect(result.firstResponseSec).toBeNull();
   });
 
+  it('单问题买家离场时不把未回复轮次按 600 秒计入', () => {
+    const result = computeResponseRounds([buyer(1)], [questions[0]], params, [], { buyerLeftAfterSingleQuestion: true });
+    expect(result.totalRounds).toBe(0);
+    expect(result.avgResponseSec).toBeNull();
+  });
+
   it('没有提问序列时退化为消息里出现过的轮次号', () => {
     const result = computeResponseRounds([buyer(1), reply(1, 30), buyer(2), reply(2, 30)], [], params);
     expect(result.totalRounds).toBe(2);

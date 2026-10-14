@@ -49,7 +49,8 @@ export function computeResponseRounds(
   messages: ScoreMessage[],
   questions: ScriptQuestion[],
   params: SystemParams,
-  skippedQuestionSeqs: number[] = []
+  skippedQuestionSeqs: number[] = [],
+  options: { buyerLeftAfterSingleQuestion?: boolean } = {}
 ): ResponseRoundsResult {
   const agentMessages = messages.filter((m) => m.sender === 'agent');
   const timed = agentMessages.filter((m) => typeof m.responseSec === 'number' && (m.responseSec as number) >= 0);
@@ -58,6 +59,10 @@ export function computeResponseRounds(
   const seqs = questions.length
     ? questions.map((q) => q.seq).filter((seq) => !skippedQuestionSeqs.includes(seq))
     : [...new Set(agentMessages.map((m) => m.questionSeq).filter((v): v is number => typeof v === 'number'))];
+
+  if (options.buyerLeftAfterSingleQuestion && questions.length === 1 && !timed.some((message) => message.questionSeq === questions[0].seq)) {
+    seqs.splice(0, seqs.length);
+  }
 
   const rounds: RoundTiming[] = seqs.map((seq) => {
     // 该轮的第一条「有响应时长」的客服消息 = 该轮首条有效回复

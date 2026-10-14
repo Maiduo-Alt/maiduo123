@@ -726,7 +726,7 @@ export class ReceptionService implements OnModuleInit {
       const closingState = await this.persistConversationState(session);
       // 客服说“谢谢/先这样”只能作为收尾信号，不能覆盖仍未解决的客户核心目标。
       // 核心问题尚未解决时，买家继续围绕未解决目标推进，而不是被客服单方面结束会话。
-      if (closingState.shouldClose) {
+      if (closingState.shouldClose && session.current_seq >= Math.min(6, session.total_questions)) {
         await this.closeWithBuyerMessage(session, closingState, 'early');
         return;
       }
@@ -743,7 +743,7 @@ export class ReceptionService implements OnModuleInit {
     let conversationState = await this.persistConversationState(session, evaluations);
 
     // 客户核心目标已经解决、整体覆盖度足够时，不再为了“把题问完”继续机械推进。
-    if (session.current_seq > 0 && conversationState.shouldClose) {
+    if (session.current_seq >= Math.min(6, session.total_questions) && conversationState.shouldClose) {
       await this.closeWithBuyerMessage(session, conversationState, 'normal');
       return;
     }
@@ -1416,6 +1416,9 @@ export class ReceptionService implements OnModuleInit {
       [sessionId]
     );
     const styleEmotional = !!this.styleBehavior[session.style_code]?.emotional;
+    const buyerLeftAfterSingleQuestion = session.total_questions === 1 &&
+      messages.some((message) => message.sender === 'buyer') &&
+      !messages.some((message) => message.sender === 'agent');
 
     const result = scoreSession({
       questions: session.questions.filter((q) => q.seq <= session.total_questions),
@@ -1432,6 +1435,7 @@ export class ReceptionService implements OnModuleInit {
       })),
       transferredQuestionSeqs: session.transferred_seqs || [],
       skippedQuestionSeqs: session.skipped_seqs || [],
+      buyerLeftAfterSingleQuestion,
       emotionFinal: session.emotion_value,
       hasEmotionScenario: styleEmotional,
       params,
@@ -1607,7 +1611,7 @@ export class ReceptionService implements OnModuleInit {
         ])
       : [];
     const taskProgress = task
-      ? await this.db.one<any>(`SELECT done_count AS "doneCount", status FROM task_assignees WHERE task_id = $1 AND account_id = $2`, [
+      ? await this.db.one<any>(`SELECT done_count AS "doneCount", passed_levels AS "passedLevels", status FROM task_assignees WHERE task_id = $1 AND account_id = $2`, [
           task.id,
           accountId,
         ])
@@ -1627,6 +1631,7 @@ export class ReceptionService implements OnModuleInit {
               ...task,
               targets: taskTargets.map((t) => ({ ...t, threshold: Number(t.threshold) })),
               doneCount: Number(taskProgress?.doneCount ?? 0),
+              passedLevels: Array.isArray(taskProgress?.passedLevels) ? taskProgress.passedLevels : [],
             }
           : null,
       },

@@ -9,25 +9,29 @@ const qa = (stage: 'presale' | 'aftersale', questions: string[]) => ({
 });
 
 describe('问题序列：问题级接待阶段（客户 2026-10-03）', () => {
-  it('保留原始自然问题数，不再为了最低轮数注入跨主题追问', () => {
+  it('不足最低轮数时补充与原问题关联的衍生追问', () => {
     const presale = buildQuestionSeq(qa('presale', ['怎么下单？']), [6, 10]);
     const aftersale = buildQuestionSeq(qa('aftersale', ['怎么退货？']), [6, 10]);
 
-    expect(presale).toHaveLength(1);
-    expect(aftersale).toHaveLength(1);
+    expect(presale).toHaveLength(6);
+    expect(aftersale).toHaveLength(6);
     expect(presale[0]).toEqual(expect.objectContaining({ question: '怎么下单？', stage: 'presale', sourceType: 'core' }));
     expect(aftersale[0]).toEqual(expect.objectContaining({ question: '怎么退货？', stage: 'aftersale', sourceType: 'core' }));
+    expect(presale.slice(1).every((question) => question.sourceType === 'derived')).toBe(true);
+    expect(presale.slice(1).every((question) => question.derivedFromSeq === 1)).toBe(true);
   });
 
-  it('工艺类短场景不会被补入发货、竞品或优惠问题', () => {
+  it('工艺类短场景只补充工艺相关的衍生问题', () => {
     const seq = buildQuestionSeq({
       question_list: ['是包边还是锁边？', '走线整齐吗？', '有内衬吗？'],
       key_points: [['工艺', '走线'], ['包边', '锁边'], ['内衬']],
       stage: 'presale',
     }, [6, 10]);
 
-    expect(seq.map((q) => q.question)).toEqual(['是包边还是锁边？', '走线整齐吗？', '有内衬吗？']);
-    expect(seq.every((q) => q.sourceType === 'core')).toBe(true);
+    expect(seq).toHaveLength(6);
+    expect(seq.slice(0, 3).every((q) => q.sourceType === 'core')).toBe(true);
+    expect(seq.slice(3).every((q) => q.sourceType === 'derived')).toBe(true);
+    expect(seq.slice(3).every((q) => /售后|清洗|打理|收到后|补发|退换/u.test(q.question))).toBe(true);
   });
 
   it('问题数超过上限时按上限截断，且序号连续', () => {
