@@ -249,6 +249,7 @@ export default function Records() {
           { title: '难度', dataIndex: 'level', width: 80 },
           { title: '来源', dataIndex: 'source', width: 100, render: (v) => (v === 'task' ? '任务训练' : '模拟训练') },
           { title: '会话数', dataIndex: 'sessionCount', width: 80 },
+          { title: '平均响应时间', dataIndex: 'avgResponseSec', width: 120, render: (v: number | null) => v == null ? '—' : `${v} 秒` },
           {
             title: '接待时长',
             dataIndex: 'durationSec',

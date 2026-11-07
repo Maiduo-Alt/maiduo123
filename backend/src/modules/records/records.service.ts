@@ -4,6 +4,8 @@ import { BizError, ERR } from '../../common/errors';
 import { normalizePage, pageResult, PageQuery } from '../../common/pagination';
 import { AuthUser } from '../../common/decorators';
 import { buildXlsx } from '../../common/xlsx-writer';
+import { computeResponseRounds } from '../../domain/response-rounds';
+import { DEFAULT_PARAMS } from '../../domain/types';
 
 @Injectable()
 export class RecordsService {
@@ -331,8 +333,41 @@ export class RecordsService {
     // 会话统计单独聚合（避免相关子查询在不同数据库方言下的差异）
     const attemptIds = rows.map((r) => r.id);
     const statsMap = new Map<number, { sessionCount: number; earlyCount: number; timeoutCount: number; invalidCount: number }>();
+    const responseMap = new Map<number, { sum: number; rounds: number }>();
     if (attemptIds.length) {
       const placeholders = attemptIds.map((_, i) => `$${i + 1}`).join(',');
+      const responseSessions = await this.db.many<any>(
+        `SELECT id, attempt_id, total_questions, current_seq, questions, skipped_seqs FROM sessions WHERE attempt_id IN (${placeholders})`,
+        attemptIds
+      );
+      const responseMessages = await this.db.many<any>(
+        `SELECT m.session_id, m.sender, m.content, m.seq, m.response_sec, m.is_timeout, m.rule_result
+         FROM messages m JOIN sessions s ON s.id = m.session_id
+         WHERE s.attempt_id IN (${placeholders}) ORDER BY m.id`,
+        attemptIds
+      );
+      const messagesBySession = new Map<number, any[]>();
+      for (const message of responseMessages) {
+        const id = Number(message.session_id);
+        const list = messagesBySession.get(id) || [];
+        list.push(message);
+        messagesBySession.set(id, list);
+      }
+      for (const session of responseSessions) {
+        const messages = messagesBySession.get(Number(session.id)) || [];
+        const questions = (session.questions || []).filter((q: any) => q.seq <= session.total_questions);
+        const buyerLeftAfterSingleQuestion = Number(session.current_seq) === 1 &&
+          messages.some((m: any) => m.sender === 'buyer') && !messages.some((m: any) => m.sender === 'agent');
+        const timing = computeResponseRounds(
+          messages.map((m: any) => ({ sender: m.sender, content: m.content,
+            questionSeq: m.rule_result?.questionSeq ?? m.seq, responseSec: m.response_sec, isTimeout: m.is_timeout })),
+          questions, DEFAULT_PARAMS, session.skipped_seqs || [], { buyerLeftAfterSingleQuestion }
+        );
+        const current = responseMap.get(Number(session.attempt_id)) || { sum: 0, rounds: 0 };
+        current.sum += timing.rounds.reduce((sum, round) => sum + round.countedSec, 0);
+        current.rounds += timing.totalRounds;
+        responseMap.set(Number(session.attempt_id), current);
+      }
       const stats = await this.db.many<any>(
         `SELECT attempt_id, count(*)::int AS "sessionCount",
                 sum(CASE WHEN finished_reason = 'early' THEN 1 ELSE 0 END)::int AS "earlyCount",
@@ -366,6 +401,9 @@ export class RecordsService {
       return {
         ...row,
         ...stat,
+        avgResponseSec: responseMap.get(Number(row.id))?.rounds
+          ? Math.round(responseMap.get(Number(row.id))!.sum / responseMap.get(Number(row.id))!.rounds * 10) / 10
+          : null,
         durationSec: Math.max(
           0,
           Math.round((new Date(row.finishedAt || Date.now()).getTime() - new Date(row.startedAt).getTime()) / 1000)
