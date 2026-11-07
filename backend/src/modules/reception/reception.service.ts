@@ -1467,8 +1467,8 @@ export class ReceptionService implements OnModuleInit {
         ]
       );
       await client.query(
-        `UPDATE sessions SET state = $2, finished_reason = $3, finished_at = now(), close_deadline_at = NULL, score = $4 WHERE id = $1`,
-        [sessionId, aborted ? 'aborted' : 'finished', reason, finalScore]
+        `UPDATE sessions SET state = $2, finished_reason = $3, finished_at = now(), close_deadline_at = NULL, score = $4, avg_response_sec = $5 WHERE id = $1`,
+        [sessionId, aborted ? 'aborted' : 'finished', reason, finalScore, result.metrics.avgResponseSec]
       );
     });
 

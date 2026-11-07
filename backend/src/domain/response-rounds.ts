@@ -60,7 +60,7 @@ export function computeResponseRounds(
     ? questions.map((q) => q.seq).filter((seq) => !skippedQuestionSeqs.includes(seq))
     : [...new Set(agentMessages.map((m) => m.questionSeq).filter((v): v is number => typeof v === 'number'))];
 
-  if (options.buyerLeftAfterSingleQuestion && questions.length === 1 && !timed.some((message) => message.questionSeq === questions[0].seq)) {
+  if (options.buyerLeftAfterSingleQuestion && timed.length === 0) {
     seqs.splice(0, seqs.length);
   }
 

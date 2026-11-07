@@ -57,6 +57,18 @@ describe('响应时长按轮次建模（抖店官方口径）', () => {
     expect(result.avgResponseSec).toBeNull();
   });
 
+  it('多题剧本第一题离场时不计未出现的轮次', () => {
+    const result = computeResponseRounds([buyer(1)], questions, params, [], { buyerLeftAfterSingleQuestion: true });
+    expect(result.totalRounds).toBe(0);
+    expect(result.avgResponseSec).toBeNull();
+  });
+
+  it('正常未回复的多题会话仍按 600 秒计算', () => {
+    const result = computeResponseRounds([buyer(1)], questions, params);
+    expect(result.totalRounds).toBe(4);
+    expect(result.avgResponseSec).toBe(600);
+  });
+
   it('没有提问序列时退化为消息里出现过的轮次号', () => {
     const result = computeResponseRounds([buyer(1), reply(1, 30), buyer(2), reply(2, 30)], [], params);
     expect(result.totalRounds).toBe(2);

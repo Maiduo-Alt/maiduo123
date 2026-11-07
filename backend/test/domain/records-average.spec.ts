@@ -10,7 +10,7 @@ describe('接待列表平均响应时间', () => {
         .mockResolvedValueOnce([
           { id: 1, attempt_id: 10, total_questions: 3, current_seq: 3, questions: questions(3), skipped_seqs: [] },
           { id: 2, attempt_id: 10, total_questions: 1, current_seq: 1, questions: questions(1), skipped_seqs: [] },
-          { id: 3, attempt_id: 10, total_questions: 1, current_seq: 1, questions: questions(1), skipped_seqs: [] },
+          { id: 3, attempt_id: 10, total_questions: 6, current_seq: 1, questions: questions(6), skipped_seqs: [] },
         ])
         .mockResolvedValueOnce([
           { session_id: 1, sender: 'agent', seq: 1, response_sec: 1 },
