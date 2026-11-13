@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { DbService } from '../../src/db/db.service';
+import { ReceptionService } from '../../src/modules/reception/reception.service';
 import { AllExceptionsFilter } from '../../src/common/all-exceptions.filter';
 import { ResponseInterceptor } from '../../src/common/response.interceptor';
 import { createTestDb } from '../util/test-db';
@@ -51,6 +52,34 @@ describe('在线模拟接待端到端链路', () => {
     }
     throw new Error('等待条件超时');
   }
+
+  it('旧单题剧本至少推送三轮，再进入客服整理阶段', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source) VALUES ($1, $2, 'L1', 'free') RETURNING id`,
+      ['AT-min-round-regression', 1],
+    );
+    const questions = [{ seq: 1, question: '这件衣服是什么面料？', keyPoints: ['面料'], stage: 'presale' }];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions)
+       VALUES ($1, $2, $3, 'serving', 1, 1, $4::jsonb) RETURNING id`,
+      [attempt.id, 1, '测试买家', JSON.stringify(questions)],
+    );
+    const reception = app.get(ReceptionService);
+    await reception.pushNextQuestion(session.id);
+    let row = await sharedDb.one<any>(`SELECT current_seq, total_questions, state, questions FROM sessions WHERE id = $1`, [session.id]);
+    expect(row.current_seq).toBe(2);
+    expect(row.state).toBe('serving');
+    await reception.pushNextQuestion(session.id);
+    row = await sharedDb.one<any>(`SELECT current_seq, total_questions, state, questions FROM sessions WHERE id = $1`, [session.id]);
+    expect(row.current_seq).toBe(3);
+    expect(row.questions).toHaveLength(3);
+    expect(row.questions[1].question).not.toBe(row.questions[2].question);
+    await reception.pushNextQuestion(session.id);
+    row = await sharedDb.one<any>(`SELECT current_seq, state FROM sessions WHERE id = $1`, [session.id]);
+    expect(row.state).toBe('awaiting_agent_close');
+    await reception.pushNextQuestion(session.id);
+    expect((await sharedDb.one<any>(`SELECT state FROM sessions WHERE id = $1`, [session.id])).state).toBe('awaiting_agent_close');
+  }, 60000);
 
   it('登录与鉴权：未登录访问被拦截，错误密码被拒绝', async () => {
     const unauthorized = await request(http).get('/api/products');

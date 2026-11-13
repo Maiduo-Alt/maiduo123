@@ -1,4 +1,4 @@
-import { buildQuestionSeq, mixQuestionSeq, normalizeLegacyQuestionSeq } from '../../src/domain/question-seq';
+import { buildQuestionSeq, createMinimumRoundQuestion, mixQuestionSeq, normalizeLegacyQuestionSeq } from '../../src/domain/question-seq';
 import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../src/db/seed-content';
 
 /** 构造一条最小的买家咨询内容。 */
@@ -9,6 +9,15 @@ const qa = (stage: 'presale' | 'aftersale', questions: string[]) => ({
 });
 
 describe('问题序列：问题级接待阶段（客户 2026-10-03）', () => {
+  it('为历史单题剧本生成同主题且不重复的补充问题', () => {
+    const parent = { seq: 1, question: '这件衣服是什么面料？', keyPoints: ['面料'], stage: 'presale' as const };
+    const first = createMinimumRoundQuestion([parent], parent);
+    const second = createMinimumRoundQuestion([parent, first], parent);
+    expect([first.seq, second.seq]).toEqual([2, 3]);
+    expect(first.question).not.toBe(second.question);
+    expect(first.derivedFromSeq).toBe(1);
+    expect(second.stage).toBe('presale');
+  });
   it('不足最低轮数时补充与原问题关联的衍生追问', () => {
     const presale = buildQuestionSeq(qa('presale', ['怎么下单？']), [6, 10]);
     const aftersale = buildQuestionSeq(qa('aftersale', ['怎么退货？']), [6, 10]);

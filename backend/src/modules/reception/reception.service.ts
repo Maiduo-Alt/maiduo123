@@ -38,7 +38,7 @@ import {
 import { isLevelAllowedByTask, isScriptInTaskScope } from '../../domain/task-scope';
 import { isProductCompatibleWithQuestions } from '../../domain/product-consistency';
 import { conversationTopic, evaluateSemanticReply, getGoalProgress, isNaturalClosingReply, selectNextQuestion } from '../../domain/semantic-goals';
-import { mixQuestionSeq, normalizeLegacyQuestionSeq } from '../../domain/question-seq';
+import { createMinimumRoundQuestion, mixQuestionSeq, normalizeLegacyQuestionSeq } from '../../domain/question-seq';
 import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/seed-content';
 import { buildKeywordQuestionProgress, deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
@@ -717,7 +717,11 @@ export class ReceptionService implements OnModuleInit {
 
   async pushNextQuestion(sessionId: number): Promise<void> {
     let session = await this.loadSession(sessionId);
-    if (!session || ['finished', 'transferred', 'aborted', 'pending'].includes(session.state)) return;
+    if (!session || ['finished', 'transferred', 'aborted', 'pending', 'awaiting_agent_close'].includes(session.state)) return;
+    // 题号可能因跳题而增加，必须按实际推送过的轮次计算。
+    const askedRounds = session.questions.filter((q) =>
+      q.seq <= session.current_seq && !(session.skipped_seqs || []).includes(q.seq)
+    ).length;
     const recentAgent = await this.db.one<{ content: string }>(
       `SELECT content FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id DESC LIMIT 1`,
       [sessionId]
@@ -726,7 +730,7 @@ export class ReceptionService implements OnModuleInit {
       const closingState = await this.persistConversationState(session);
       // 客服说“谢谢/先这样”只能作为收尾信号，不能覆盖仍未解决的客户核心目标。
       // 核心问题尚未解决时，买家继续围绕未解决目标推进，而不是被客服单方面结束会话。
-      if (closingState.shouldClose && session.current_seq >= Math.min(6, session.total_questions)) {
+      if (closingState.shouldClose && askedRounds >= 3 && session.current_seq >= Math.min(6, session.total_questions)) {
         await this.closeWithBuyerMessage(session, closingState, 'early');
         return;
       }
@@ -743,7 +747,7 @@ export class ReceptionService implements OnModuleInit {
     let conversationState = await this.persistConversationState(session, evaluations);
 
     // 客户核心目标已经解决、整体覆盖度足够时，不再为了“把题问完”继续机械推进。
-    if (session.current_seq >= Math.min(6, session.total_questions) && conversationState.shouldClose) {
+    if (askedRounds >= 3 && session.current_seq >= Math.min(6, session.total_questions) && conversationState.shouldClose) {
       await this.closeWithBuyerMessage(session, conversationState, 'normal');
       return;
     }
@@ -764,6 +768,16 @@ export class ReceptionService implements OnModuleInit {
         hasOrder: !!session.order_no,
       },
     );
+    if (next.nextSeq === null && askedRounds < 3 && previousQuestion) {
+      const parent = session.questions.find((q) => q.seq === previousQuestion.derivedFromSeq) || previousQuestion;
+      const fallback = createMinimumRoundQuestion(session.questions, parent);
+      session.questions = [...session.questions, fallback];
+      session.total_questions = fallback.seq;
+      await this.db.query(`UPDATE sessions SET questions = $2::jsonb, total_questions = $3 WHERE id = $1`, [
+        sessionId, JSON.stringify(session.questions), session.total_questions,
+      ]);
+      next.nextSeq = fallback.seq;
+    }
     const nextSeq = next.nextSeq ?? session.total_questions + 1;
     if (next.skippedSeqs.length !== (session.skipped_seqs || []).length) {
       await this.db.query(`UPDATE sessions SET current_seq = $2, skipped_seqs = $3::jsonb WHERE id = $1`, [

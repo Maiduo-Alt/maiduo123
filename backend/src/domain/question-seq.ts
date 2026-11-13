@@ -37,6 +37,23 @@ function derivedQuestionFor(question: string, index: number, used: Set<string>):
   return `那关于「${topic}」具体要注意什么呢？`;
 }
 
+/** 为短剧本补充同主题问题，供会话在不足最低轮次时使用。 */
+export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: ScriptQuestion): ScriptQuestion {
+  const used = new Set(questions.map((question) => question.question));
+  const count = questions.filter((question) => question.derivedFromSeq === parent.seq).length;
+  return {
+    seq: Math.max(0, ...questions.map((question) => question.seq)) + 1,
+    question: derivedQuestionFor(parent.question, count, used),
+    keyPoints: ['有效回应'],
+    sourceType: 'derived',
+    requiresContext: true,
+    derivedFromSeq: parent.seq,
+    goalPriority: 'secondary',
+    stage: parent.stage,
+    orderStage: orderStageForQuestion(parent),
+  };
+}
+
 /**
  * 由一条买家咨询内容构建剧本题干序列（方案 4.5 兜底规则）。
  *
