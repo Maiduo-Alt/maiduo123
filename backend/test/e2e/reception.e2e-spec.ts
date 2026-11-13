@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { DbService } from '../../src/db/db.service';
 import { ReceptionService } from '../../src/modules/reception/reception.service';
+import { DEFAULT_PARAMS } from '../../src/domain/types';
 import { AllExceptionsFilter } from '../../src/common/all-exceptions.filter';
 import { ResponseInterceptor } from '../../src/common/response.interceptor';
 import { createTestDb } from '../util/test-db';
@@ -55,8 +56,8 @@ describe('在线模拟接待端到端链路', () => {
 
   it('旧单题剧本至少推送三轮，再进入客服整理阶段', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
-      `INSERT INTO attempts (attempt_no, account_id, level, source) VALUES ($1, $2, 'L1', 'free') RETURNING id`,
-      ['AT-min-round-regression', 1],
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, $2, 'L1', 'free', $3::jsonb) RETURNING id`,
+      ['AT-min-round-regression', 1, JSON.stringify(DEFAULT_PARAMS)],
     );
     const questions = [{ seq: 1, question: '这件衣服是什么面料？', keyPoints: ['面料'], stage: 'presale' }];
     const session = await sharedDb.one<{ id: number }>(
@@ -79,6 +80,7 @@ describe('在线模拟接待端到端链路', () => {
     expect(row.state).toBe('awaiting_agent_close');
     await reception.pushNextQuestion(session.id);
     expect((await sharedDb.one<any>(`SELECT state FROM sessions WHERE id = $1`, [session.id])).state).toBe('awaiting_agent_close');
+    await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
   }, 60000);
 
   it('登录与鉴权：未登录访问被拦截，错误密码被拒绝', async () => {
