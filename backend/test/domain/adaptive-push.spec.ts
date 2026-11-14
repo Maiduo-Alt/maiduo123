@@ -1,4 +1,4 @@
-import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, MAX_FOLLOWUPS } from '../../src/domain/adaptive-push';
+import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, selectWashFollowUp, MAX_FOLLOWUPS } from '../../src/domain/adaptive-push';
 
 describe('decidePush：自适应推送决策', () => {
   it('命中任意要点 → 推进下一题', () => {
@@ -53,6 +53,31 @@ describe('followUpEmotionDelta：追问带来的情绪变化', () => {
   it('第 1 次 -4，第 2 次 -7', () => {
     expect(followUpEmotionDelta(0)).toBe(-4);
     expect(followUpEmotionDelta(1)).toBe(-7);
+  });
+});
+
+describe('selectWashFollowUp：洗护问题沿用相关追问，替换旧剧本里的偏题素材', () => {
+  it('机洗问题遇到面料模板时围绕洗涤追问，两次关注点不同', () => {
+    const first = selectWashFollowUp('这款连衣裙可以机洗吗？', '我主要想确认面料成分和穿着感受，可以具体说一下吗？', 0);
+    const second = selectWashFollowUp('这款连衣裙可以机洗吗？', '如果贴身穿，透气性和舒适度怎么样？', 1);
+    expect(first).toContain('机洗');
+    expect(second).toContain('清洗');
+    expect(first).not.toBe(second);
+    expect(first).not.toContain('面料');
+    expect(second).not.toContain('透气');
+  });
+
+  it('保留运营设置的相关洗护追问', () => {
+    expect(selectWashFollowUp('这件衣服能机洗吗？', '机洗时要注意水温吗？', 0)).toBeNull();
+    for (const concern of ['掉色', '缩水', '变形']) {
+      expect(selectWashFollowUp('这件衣服能机洗吗？', `会不会${concern}？`, 1)).toBeNull();
+    }
+  });
+
+  it('其他主题不改变，缺少模板时给洗护问题生成可用追问', () => {
+    expect(selectWashFollowUp('这款衣服是什么面料？', '面料会扎吗？', 0)).toBeNull();
+    expect(selectWashFollowUp('清洗这件商品要注意什么？', undefined, 0)).toContain('清洗');
+    expect(selectWashFollowUp('可以手洗吗？', undefined, 1)).toContain('手洗');
   });
 });
 

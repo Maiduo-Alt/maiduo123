@@ -42,7 +42,7 @@ import { createMinimumRoundQuestion, mixQuestionSeq, normalizeLegacyQuestionSeq 
 import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/seed-content';
 import { buildKeywordQuestionProgress, deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
-import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta } from '../../domain/adaptive-push';
+import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, selectWashFollowUp } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
 
 interface SessionRow {
@@ -1001,13 +1001,18 @@ export class ReceptionService implements OnModuleInit {
 
     // 客服需要买家提供身材数据时，让买家明确回应，而不是反复追问“穿多大”。
     const latestReply = judgedReplies[judgedReplies.length - 1]?.content || '';
-    if (!resolved && followUps < (maxFollowUps ?? 2) && /尺码|码数|穿什么码|穿多大|版型/u.test(question.question) &&
+    if (followUps < (maxFollowUps ?? 2) && /尺码|码数|穿什么码|穿多大|版型/u.test(question.question) &&
         /(?:提供|告诉|告知|测量|量一下).{0,24}(?:身高|体重|腰围|臀围|腰臀围)/u.test(latestReply)) {
       const buyerMessages = await this.db.many<{ content: string }>(
         `SELECT content FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'buyer' ORDER BY id`,
         [sessionId, session.current_seq],
       );
-      const response = '我的腰臀围暂时不清楚，可以先根据身高体重推荐尺码吗？';
+      const buyerText = buyerMessages.map((message) => message.content).join(' ');
+      const hasMeasurements = /\d{2,3}\s*[/／]\s*\d{2,3}/u.test(buyerText) ||
+        (/身高\s*\d{2,3}/u.test(buyerText) && /体重\s*\d{2,3}/u.test(buyerText));
+      const response = hasMeasurements
+        ? '我的腰臀围暂时不清楚，可以先根据身高体重推荐尺码吗？'
+        : '我的身高体重和腰臀围暂时都不清楚，可以先告诉我怎么看尺码表吗？';
       if (buyerMessages.some((message) => message.content === response)) {
         await this.pushNextQuestion(sessionId);
       } else {
@@ -1024,7 +1029,8 @@ export class ReceptionService implements OnModuleInit {
           .filter((point: any) => missing.has(point.id))
           .map((point: any) => point.label);
       });
-      await this.pushMissingPointFollowUp(sessionId, session, question, missingLabels, followUps);
+      const washFollowUp = selectWashFollowUp(question.question, missingLabels.join('、'), followUps);
+      await this.pushMissingPointFollowUp(sessionId, session, question, missingLabels, followUps, washFollowUp ?? undefined);
       return;
     }
 
@@ -1082,7 +1088,8 @@ export class ReceptionService implements OnModuleInit {
     question: ScriptQuestion,
     round: number
   ): Promise<void> {
-    const planned = question.conversationPlan?.followUpTemplates?.[round];
+    const configured = question.conversationPlan?.followUpTemplates?.[round];
+    const planned = selectWashFollowUp(question.question, configured, round) ?? configured;
     const text = planned
       ? ((this.styleBehavior[session.style_code] || this.styleBehavior.friendly).transform(planned)[0] || planned)
       : buildFollowUpText(session.style_code, question.question, round);

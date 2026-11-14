@@ -81,6 +81,23 @@ export function buildFollowUpText(styleCode: string, question: string, round: nu
   return text.replace('{q}', String(question || '').trim());
 }
 
+/** 旧剧本可能把洗护问题错误套用面料追问；仅替换与洗护无关的模板。 */
+export function selectWashFollowUp(question: string, planned: string | undefined, round: number): string | null {
+  const washTopic = /机洗|手洗|干洗|水洗|洗涤|洗护|清洗|洗衣|洗标|水温|洗几次|洗一次|洗过|洗后|洗完/u;
+  if (!washTopic.test(question) || (planned && /洗|水温|晾晒|烘干|掉色|褪色|缩水|变形|起球|漂白|浸泡|熨烫/u.test(planned))) {
+    return null;
+  }
+  const method = question.match(/机洗|手洗|干洗/u)?.[0];
+  if (method) {
+    return round === 0
+      ? `我主要想确认这件商品能不能${method}，您可以帮我核实吗？`
+      : `如果不适合${method}，这件商品应该怎么清洗呢？`;
+  }
+  return round === 0
+    ? '我想确认这件商品的清洗方法，能帮我核实一下吗？'
+    : '清洗这件商品时有哪些需要注意的地方？';
+}
+
 /**
  * 针对“部分完成”的自然追问：只问尚未解释清楚的语义点，不复读整道题。
  */

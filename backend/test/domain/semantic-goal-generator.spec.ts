@@ -88,6 +88,23 @@ describe('generateSemanticGoals', () => {
 
 
 describe('conversation plan topic consistency', () => {
+  it('洗护问题生成洗护追问而不是面料追问，即使主目标是缩水', () => {
+    const [generated] = generateSemanticGoals([
+      { seq: 1, question: '这件衣服机洗几次会不会缩水？', keyPoints: ['缩水', '洗涤'], sourceType: 'core' },
+    ]);
+    expect(generated.customerGoal).toBe('确认商品洗涤方式和洗护注意事项');
+    expect(generated.conversationPlan?.followUpTemplates[0]).toContain('清洗');
+    expect(generated.conversationPlan?.followUpTemplates[1]).toContain('晾晒');
+    expect(generated.conversationPlan?.followUpTemplates.join('')).not.toContain('面料成分');
+  });
+
+  it('材质问题继续使用材质话术', () => {
+    const [generated] = generateSemanticGoals([
+      { seq: 1, question: '这件衣服是什么面料？', keyPoints: ['面料'], sourceType: 'core' },
+    ]);
+    expect(generated.conversationPlan?.followUpTemplates[0]).toContain('面料');
+  });
+
   it('secondary questions use their own topic instead of inheriting the primary topic', () => {
     const generated = generateSemanticGoals([
       { seq: 1, question: '是包边还是锁边？', keyPoints: ['工艺', '走线'], sourceType: 'core' },

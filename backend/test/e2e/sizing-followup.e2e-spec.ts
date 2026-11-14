@@ -51,4 +51,26 @@ describe('尺码场景追问', () => {
     const second = await db.many<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id`, [session.id]);
     expect(second.filter((message) => message.content.includes('腰臀围暂时不清楚'))).toHaveLength(1);
   }, 60000);
+
+  it('客服索要身材资料时，即使回复判定通过，买家也先说明没有资料', async () => {
+    const attempt = await db.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ('AT-sizing-fallback', 1, 'L1', 'free', $1::jsonb) RETURNING id`,
+      [JSON.stringify(DEFAULT_PARAMS)],
+    );
+    const question = { seq: 1, question: '那我这个身材应该怎么选尺码呢？', keyPoints: ['有效回应'], stage: 'presale' };
+    const session = await db.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb) RETURNING id`,
+      [attempt.id, JSON.stringify([question])],
+    );
+    await db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1, 'buyer', $2, 1)`, [session.id, question.question]);
+    await db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1, 'agent', $2, 1, $3::jsonb)`,
+      [session.id, '亲，麻烦提供身高体重和腰臀围，我帮您结合尺码表推荐。', JSON.stringify({ judge: { pass: true, signal: 'fallback' } })]);
+    await app.get(ReceptionService).advanceAfterReply(session.id);
+    const messages = await db.many<{ content: string }>(
+      `SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id`, [session.id],
+    );
+    expect(messages[messages.length - 1].content).toBe('我的身高体重和腰臀围暂时都不清楚，可以先告诉我怎么看尺码表吗？');
+  }, 60000);
 });

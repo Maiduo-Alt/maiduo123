@@ -18,6 +18,27 @@ describe('问题序列：问题级接待阶段（客户 2026-10-03）', () => {
     expect(first.derivedFromSeq).toBe(1);
     expect(second.stage).toBe('presale');
   });
+  it('搭配单题的运行时补题分别询问外套配色和休闲鞋子', () => {
+    const parent = { seq: 1, question: '这条连衣裙搭配什么外套和鞋子好看', keyPoints: ['搭配'], stage: 'presale' as const };
+    const first = createMinimumRoundQuestion([parent], parent);
+    const second = createMinimumRoundQuestion([parent, first], parent);
+    expect(first.question).toMatch(/外套.*颜色|颜色.*外套/u);
+    expect(second.question).toMatch(/休闲.*鞋子/u);
+    expect(first.question).not.toBe(second.question);
+    expect([first.derivedFromSeq, second.derivedFromSeq]).toEqual([1, 1]);
+  });
+  it('搭配短剧本补到六轮时使用不同的具体关注点', () => {
+    const questions = buildQuestionSeq(qa('presale', ['这条连衣裙搭配什么外套和鞋子好看']), [6, 10]);
+    const generated = questions.slice(1).map((question) => question.question);
+    expect(generated).toHaveLength(5);
+    expect(new Set(generated).size).toBe(5);
+    expect(generated.every((question) => !/还有哪些需要注意|可以再帮我确认/u.test(question))).toBe(true);
+    expect(generated.join(' ')).toMatch(/颜色.*休闲.*长度.*包包.*鞋跟/u);
+  });
+  it('手机配件搭配不会触发服饰搭配的补题', () => {
+    const questions = buildQuestionSeq(qa('presale', ['这款手机搭配什么耳机比较好']), [3, 3]);
+    expect(questions.slice(1).every((question) => !/外套|鞋子|鞋跟|包包/u.test(question.question))).toBe(true);
+  });
   it('实拍和洗护的补题明确指出要询问的内容', () => {
     const photo = { seq: 1, question: '有没有买家秀或者实拍视频可以看', keyPoints: ['实拍'], stage: 'presale' as const };
     const wash = { seq: 1, question: '要不要干洗', keyPoints: ['干洗'], stage: 'presale' as const };
@@ -142,6 +163,42 @@ describe('问题序列：售前 / 售后按比例混合（客户 2026-10-03）',
 
 
 describe('旧剧本兼容：通用补题降级', () => {
+  it('只修正有父题来源且命中旧自动兜底话术的搭配补题', () => {
+    const parentText = '这条连衣裙搭配什么外套和鞋子好看';
+    const oldFirst = `关于“${parentText}”，还有哪些需要注意的呢？`;
+    const oldSecond = `关于“${parentText}”，可以再帮我确认一下吗？`;
+    const questions = normalizeLegacyQuestionSeq([
+      { seq: 1, question: parentText, keyPoints: ['搭配'], sourceType: 'core' },
+      { seq: 2, question: oldFirst, keyPoints: ['有效回应'], sourceType: 'derived', derivedFromSeq: 1,
+        baseQuestion: oldFirst, conversationPlan: { topic: '搭配', priority: 'secondary', depth: 'normal', promptTemplates: [oldFirst], followUpTemplates: [], maxFollowUps: 1 } },
+      { seq: 3, question: oldSecond, keyPoints: ['有效回应'], sourceType: 'derived', derivedFromSeq: 1 },
+      { seq: 4, question: oldFirst, keyPoints: ['搭配'], sourceType: 'core' },
+      { seq: 5, question: '可以推荐适合的外套吗？', keyPoints: ['外套'], sourceType: 'derived', derivedFromSeq: 1 },
+      { seq: 6, question: oldSecond, keyPoints: ['有效回应'], sourceType: 'derived', derivedFromSeq: 99 },
+      { seq: 7, question: oldSecond, keyPoints: ['有效回应'], sourceType: 'derived', derivedFromSeq: 1,
+        baseQuestion: '人工指定的原问题', conversationPlan: { topic: '搭配', priority: 'secondary', depth: 'normal', promptTemplates: ['人工指定的提问'], followUpTemplates: [], maxFollowUps: 1 } },
+    ]);
+    expect(questions[1].question).toMatch(/颜色.*外套/u);
+    expect(questions[1].baseQuestion).toBe(questions[1].question);
+    expect(questions[1].conversationPlan?.promptTemplates[0]).toBe(questions[1].question);
+    expect(questions[2].question).toMatch(/休闲.*鞋子/u);
+    expect(questions[3].question).toBe(oldFirst);
+    expect(questions[4].question).toBe('可以推荐适合的外套吗？');
+    expect(questions[5].question).toBe(oldSecond);
+    expect(questions[6].baseQuestion).toBe('人工指定的原问题');
+    expect(questions[6].conversationPlan?.promptTemplates[0]).toBe('人工指定的提问');
+  });
+
+  it('未知主题的旧自动兜底题保留，避免替换成另一条空泛话术', () => {
+    const parentText = '这款手机搭配什么耳机比较好';
+    const oldFirst = `关于“${parentText}”，还有哪些需要注意的呢？`;
+    const result = normalizeLegacyQuestionSeq([
+      { seq: 1, question: parentText, keyPoints: ['搭配'], sourceType: 'core' },
+      { seq: 2, question: oldFirst, keyPoints: ['有效回应'], sourceType: 'derived', derivedFromSeq: 1 },
+    ]);
+    expect(result[1].question).toBe(oldFirst);
+  });
+
   it('把旧版自动生成的通用补题降级为 optional，且取消错误主目标', () => {
     const normalized = normalizeLegacyQuestionSeq([
       {

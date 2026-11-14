@@ -1,6 +1,8 @@
 import { KEY_POINT_ALIASES } from './key-point-aliases';
 import { ConversationPlan, ScriptQuestion } from './types';
 
+const WASH_TOPIC = /机洗|手洗|干洗|水洗|洗涤|洗护|清洗|洗衣|洗标|水温|洗几次|洗一次|洗过|洗后|洗完/u;
+
 /**
  * Create editable semantic goals from the question and its existing coaching key points.
  * Each generated round remains reviewable/editable in the script preview before training.
@@ -110,6 +112,10 @@ export function inferGeneratedCustomerGoal(
   if (/工艺|做工|走线|缝线|包边|锁边|内衬|耐穿|开线|脱线/u.test(text)) {
     return '确认商品工艺质量和耐穿程度';
   }
+  const primaryQuestion = questions.find((question) => (question.keyPoints || []).includes(primaryPoint));
+  if (WASH_TOPIC.test(`${primaryPoint} ${primaryQuestion?.question || ''}`)) {
+    return '确认商品洗涤方式和洗护注意事项';
+  }
   if (/材质|面料|透气|厚度|起球|掉色|缩水|洗涤|打理/u.test(text)) {
     return '确认商品材质、穿着感受和打理成本';
   }
@@ -133,6 +139,11 @@ const TOPIC_TEMPLATES: Array<{
   prompts: string[];
   followUps: string[];
 }> = [
+  {
+    pattern: WASH_TOPIC,
+    prompts: ['这件商品应该怎么清洗？', '清洗时有哪些需要注意的地方？'],
+    followUps: ['我想确认这件商品的清洗方式，可以帮我核实一下吗？', '清洗后需要怎样晾晒和护理呢？'],
+  },
   {
     pattern: /工艺|做工|走线|缝线|包边|锁边|内衬|耐穿|开线|脱线/u,
     prompts: ['这款做工细节怎么样？', '这种做工平时穿洗会不会容易开线？'],
@@ -161,7 +172,7 @@ const TOPIC_TEMPLATES: Array<{
 ];
 
 export function buildConversationPlan(question: string, topic: string, primary: boolean): ConversationPlan {
-  const catalog = TOPIC_TEMPLATES.find((item) => item.pattern.test(topic));
+  const catalog = TOPIC_TEMPLATES.find((item) => item.pattern.test(WASH_TOPIC.test(question) ? question : topic));
   const base = String(question || '').trim();
   const prompts = [base || catalog?.prompts[0] || `我想了解一下${topic}，可以介绍一下吗？`];
   // The main goal gets one approved detail prompt after its source question.
