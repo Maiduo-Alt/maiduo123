@@ -142,3 +142,59 @@ describe('会话级平均响应（写库用）与轮次口径一致', () => {
     expect(weightedAvgResponseSec([20, 40], 0)).toBe(30);
   });
 });
+
+describe('新版响应计时按买家问题和追问划分', () => {
+  const start = (seq: number, responseRoundType: 'opener' | 'question' = 'question'): ScoreMessage => ({
+    ...buyer(seq), responseRoundStart: true, responseRoundType,
+  });
+  const options = { responseTimingVersion: 2 };
+
+  it('开场只计首次响应，同一问题的追问分别计入平均值', () => {
+    const result = computeResponseRounds([
+      start(1, 'opener'), buyer(1), { ...reply(1, 4), openerTiming: true },
+      start(1), buyer(1), reply(1, 20), reply(1, null),
+      start(1), reply(1, 40),
+    ], [questions[0]], params, [], options);
+    expect(result.firstResponseSec).toBe(4);
+    expect(result.rounds).toEqual([
+      { seq: 1, answered: true, countedSec: 20 },
+      { seq: 1, answered: true, countedSec: 40 },
+    ]);
+    expect(result.avgResponseSec).toBe(30);
+  });
+
+  it('未有效回复的追问记 600 秒，连续买家消息和结束语不额外计轮次', () => {
+    const result = computeResponseRounds([
+      start(1), buyer(1), reply(1, 10),
+      start(1), buyer(1), reply(1, null),
+      { sender: 'buyer', content: '好的，谢谢', questionSeq: 1 },
+    ], [questions[0]], params, [], options);
+    expect(result.totalRounds).toBe(2);
+    expect(result.answeredRounds).toBe(1);
+    expect(result.avgResponseSec).toBe(305);
+  });
+
+  it('无效回复之后的首条有效回复计时，同一事件客服连发不重复计数', () => {
+    const result = computeResponseRounds([
+      start(1), reply(1, null), reply(1, 50), reply(1, 80),
+    ], [questions[0]], params, [], options);
+    expect(result.rounds).toEqual([{ seq: 1, answered: true, countedSec: 50 }]);
+    expect(result.replyRatePct).toBe(100);
+  });
+
+  it('单问题买家离场且无回复时仍不计平均响应', () => {
+    const result = computeResponseRounds([start(1)], [questions[0]], params, [], {
+      ...options, buyerLeftAfterSingleQuestion: true,
+    });
+    expect(result.totalRounds).toBe(0);
+    expect(result.avgResponseSec).toBeNull();
+  });
+
+  it('无新版选项时沿用旧轮次口径', () => {
+    const result = computeResponseRounds([
+      start(1), reply(1, 20), start(1), reply(1, 40),
+    ], [questions[0]], params);
+    expect(result.totalRounds).toBe(1);
+    expect(result.avgResponseSec).toBe(20);
+  });
+});

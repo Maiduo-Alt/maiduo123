@@ -30,7 +30,10 @@ function scoreResponse(
   buyerLeftAfterSingleQuestion = false
 ): { score: number; metrics: SessionScore['metrics']; deductions: Deduction[] } {
   const deductions: Deduction[] = [];
-  const rounds = computeResponseRounds(messages, questions, params, skippedQuestionSeqs, { buyerLeftAfterSingleQuestion });
+  const rounds = computeResponseRounds(messages, questions, params, skippedQuestionSeqs, {
+    buyerLeftAfterSingleQuestion,
+    responseTimingVersion: params.responseTimingVersion,
+  });
   const firstResponseSec = rounds.firstResponseSec;
   const avgResponseSec = rounds.avgResponseSec;
   const timeoutCount = rounds.timeoutCount;

@@ -25,4 +25,36 @@ describe('接待列表平均响应时间', () => {
     const result = await service.list({ id: 1, username: 'a', displayName: 'a', roleCode: 'admin', groupId: null }, {});
     expect(result.list[0].avgResponseSec).toBe(151.5);
   });
+
+  it('新接待的追问单独计时，旧接待仍按原轮次汇总', async () => {
+    const question = [{ seq: 1, question: '问题', keyPoints: [] }];
+    const db: any = {
+      one: jest.fn().mockResolvedValue({ count: '2' }),
+      many: jest.fn()
+        .mockResolvedValueOnce([
+          { id: 10, startedAt: '2026-01-01', finishedAt: '2026-01-01' },
+          { id: 11, startedAt: '2026-01-01', finishedAt: '2026-01-01' },
+        ])
+        .mockResolvedValueOnce([
+          { id: 1, attempt_id: 10, total_questions: 1, current_seq: 1, questions: question, skipped_seqs: [], param_snapshot: {} },
+          { id: 2, attempt_id: 11, total_questions: 1, current_seq: 1, questions: question, skipped_seqs: [], param_snapshot: { responseTimingVersion: 2 } },
+        ])
+        .mockResolvedValueOnce([
+          { session_id: 1, sender: 'buyer', seq: 1, content: '问题' },
+          { session_id: 1, sender: 'agent', seq: 1, response_sec: 10 },
+          { session_id: 1, sender: 'buyer', seq: 1, content: '追问' },
+          { session_id: 1, sender: 'agent', seq: 1, response_sec: 30 },
+          { session_id: 2, sender: 'buyer', seq: 1, content: '问题', rule_result: { responseRoundStart: true, responseRoundType: 'question' } },
+          { session_id: 2, sender: 'agent', seq: 1, response_sec: 10 },
+          { session_id: 2, sender: 'buyer', seq: 1, content: '追问', rule_result: { responseRoundStart: true, responseRoundType: 'question' } },
+          { session_id: 2, sender: 'agent', seq: 1, response_sec: 30 },
+          { session_id: 2, sender: 'buyer', seq: 1, content: '谢谢，再见' },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+    };
+    const service = new RecordsService(db);
+    const result = await service.list({ id: 1, username: 'a', displayName: 'a', roleCode: 'admin', groupId: null }, {});
+    expect(result.list.map((row) => row.avgResponseSec)).toEqual([10, 20]);
+  });
 });

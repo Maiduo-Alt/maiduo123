@@ -108,6 +108,70 @@ describe('在线模拟接待端到端链路', () => {
     expect(result.sessions[0].metrics.avgResponseSec).toBe(reply.responseSec);
   }, 60000);
 
+  it('新接待将同一问题的买家追问单独计时，客服连发不重复计时', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-followup-timing', JSON.stringify({ ...DEFAULT_PARAMS, timeoutSec: 2, responseTimingVersion: 2 })],
+    );
+    const question = { seq: 1, question: '这款是什么面料？', keyPoints: ['面料'], stage: 'presale' };
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, $3) RETURNING id`,
+      [attempt.id, JSON.stringify([question]), new Date(Date.now() - 8000).toISOString()],
+    );
+    await sharedDb.query(
+      `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1, 'buyer', $2, 1, $3::jsonb)`,
+      [session.id, question.question, JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' })],
+    );
+    const reception = app.get(ReceptionService);
+    await (reception as any).scanTimeout();
+    const first = await reception.sendMessage(1, attempt.id, session.id, '亲，这款面料需要帮您核实一下。');
+    await (reception as any).pushFollowUp(session.id, await (reception as any).loadSession(session.id), question, 0);
+    await sharedDb.query(`UPDATE sessions SET last_buyer_at = $2 WHERE id = $1`,
+      [session.id, new Date(Date.now() - 12000).toISOString()]);
+    await (reception as any).scanTimeout();
+    const followup = await reception.sendMessage(1, attempt.id, session.id, '亲，这款面料是纯棉的。');
+    const extra = await reception.sendMessage(1, attempt.id, session.id, '感谢您的咨询。');
+    expect(first.responseSec).toBeGreaterThanOrEqual(7);
+    expect(followup.responseSec).toBeGreaterThanOrEqual(11);
+    expect(extra.responseSec).toBeNull();
+    await reception.finishSession(1, attempt.id, session.id);
+    const result = await reception.attemptResult(attempt.id);
+    expect(result.sessions[0].metrics.avgResponseSec).toBe(Math.round((first.responseSec + followup.responseSec) / 2));
+    expect(result.sessions[0].metrics.timeoutCount).toBe(2);
+    expect(result.sessions[0].timeoutCount).toBe(2);
+  }, 60000);
+
+  it('新接待的情绪升级消息等待客服回复并单独计时', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-escalation-timing', JSON.stringify({ ...DEFAULT_PARAMS, responseTimingVersion: 2 })],
+    );
+    const question = { seq: 1, question: '这款是什么面料？', keyPoints: ['面料'], stage: 'presale' };
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at, emotion_value)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, $3, 79) RETURNING id`,
+      [attempt.id, JSON.stringify([question]), new Date(Date.now() - 3000).toISOString()],
+    );
+    await sharedDb.query(
+      `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1, 'buyer', $2, 1, $3::jsonb)`,
+      [session.id, question.question, JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' })],
+    );
+    const reception = app.get(ReceptionService);
+    await reception.sendMessage(1, attempt.id, session.id, '不知道，你自己看吧');
+    const afterEscalation = await sharedDb.one<{ state: string }>(`SELECT state FROM sessions WHERE id = $1`, [session.id]);
+    expect(afterEscalation.state).toBe('serving');
+    await sharedDb.query(`UPDATE sessions SET last_buyer_at = $2 WHERE id = $1`,
+      [session.id, new Date(Date.now() - 7000).toISOString()]);
+    const reply = await reception.sendMessage(1, attempt.id, session.id, '很抱歉给您带来不便，我帮您处理。');
+    expect(reply.responseSec).toBeGreaterThanOrEqual(6);
+    await reception.finishSession(1, attempt.id, session.id);
+    const result = await reception.attemptResult(attempt.id);
+    expect(result.sessions[0].metrics.avgResponseSec).toBeGreaterThanOrEqual(4);
+  }, 60000);
+
   it('洗标待核实回复不判敷衍，也不提前完成语义目标', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)

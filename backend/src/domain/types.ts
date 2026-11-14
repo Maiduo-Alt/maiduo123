@@ -21,6 +21,8 @@ export interface ScoreWeights {
 }
 
 export interface SystemParams {
+  /** 新接待按买家实际提问和追问分别统计响应；旧快照沿用旧口径。 */
+  responseTimingVersion?: 2;
   firstResponseLimitSec: number;
   avgResponseLimitSec: number;
   replyRateLimitPct: number;
@@ -293,6 +295,9 @@ export interface ScoreMessage {
   judgeSignal?: string | null;
   /** 新会话的开场回应只用于首响，不算正式问题轮次的响应。 */
   openerTiming?: boolean;
+  /** 买家消息开启一次需要回复的计时事项。 */
+  responseRoundStart?: boolean;
+  responseRoundType?: 'opener' | 'question';
 }
 
 export interface SessionScoreInput {

@@ -337,7 +337,8 @@ export class RecordsService {
     if (attemptIds.length) {
       const placeholders = attemptIds.map((_, i) => `$${i + 1}`).join(',');
       const responseSessions = await this.db.many<any>(
-        `SELECT id, attempt_id, total_questions, current_seq, questions, skipped_seqs FROM sessions WHERE attempt_id IN (${placeholders})`,
+        `SELECT s.id, s.attempt_id, s.total_questions, s.current_seq, s.questions, s.skipped_seqs, a.param_snapshot
+         FROM sessions s JOIN attempts a ON a.id = s.attempt_id WHERE s.attempt_id IN (${placeholders})`,
         attemptIds
       );
       const responseMessages = await this.db.many<any>(
@@ -361,8 +362,13 @@ export class RecordsService {
         const timing = computeResponseRounds(
           messages.map((m: any) => ({ sender: m.sender, content: m.content,
             questionSeq: m.rule_result?.questionSeq ?? m.seq, responseSec: m.response_sec, isTimeout: m.is_timeout,
-            openerTiming: m.rule_result?.openerTiming === true })),
-          questions, DEFAULT_PARAMS, session.skipped_seqs || [], { buyerLeftAfterSingleQuestion }
+            openerTiming: m.rule_result?.openerTiming === true,
+            responseRoundStart: m.rule_result?.responseRoundStart === true,
+            responseRoundType: m.rule_result?.responseRoundType })),
+          questions, DEFAULT_PARAMS, session.skipped_seqs || [], {
+            buyerLeftAfterSingleQuestion,
+            responseTimingVersion: session.param_snapshot?.responseTimingVersion,
+          }
         );
         const current = responseMap.get(Number(session.attempt_id)) || { sum: 0, rounds: 0 };
         current.sum += timing.rounds.reduce((sum, round) => sum + round.countedSec, 0);

@@ -24,7 +24,7 @@ import { updateEmotion } from '../../domain/emotion';
 import { createRng } from '../../domain/rng';
 import { allocateStyles, normalizeRatios } from '../../domain/style-ratio';
 import { shouldAbortAsDisconnected } from '../../domain/disconnect';
-import { weightedAvgResponseSec } from '../../domain/response-rounds';
+import { computeResponseRounds, weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
 import { isPendingVerification, judgeReply } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
@@ -274,6 +274,7 @@ export class ReceptionService implements OnModuleInit {
       throw new BizError(ERR.FORBIDDEN, '只有管理员/主管可以指定本局的接待人数');
     }
     const effectiveParams = cloneParams(params);
+    effectiveParams.responseTimingVersion = 2;
     if (override.concurrentCount !== undefined) {
       const value = Number(override.concurrentCount);
       if (!Number.isFinite(value) || value < 1 || value > 4) {
@@ -792,14 +793,22 @@ export class ReceptionService implements OnModuleInit {
         nextSeq - 1,
         JSON.stringify(next.skippedSeqs),
       ]);
-      const countedRounds = await this.db.many<{ sec: number | string }>(
-        `SELECT min(response_sec) AS sec FROM messages
-         WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL
-           AND COALESCE(rule_result->>'openerTiming', 'false') <> 'true' GROUP BY seq`,
-        [sessionId]
+      const attempt = await this.db.one<{ param_snapshot: SystemParams }>(
+        `SELECT param_snapshot FROM attempts WHERE id = $1`, [session.attempt_id],
       );
-      const activeRoundCount = session.total_questions - next.skippedSeqs.length;
-      const avgResponseSec = weightedAvgResponseSec(countedRounds.map((row) => Number(row.sec)), activeRoundCount);
+      let avgResponseSec: number | null;
+      if (attempt.param_snapshot?.responseTimingVersion === 2) {
+        avgResponseSec = await this.responseEventAverage({ ...session, skipped_seqs: next.skippedSeqs }, attempt.param_snapshot);
+      } else {
+        const countedRounds = await this.db.many<{ sec: number | string }>(
+          `SELECT min(response_sec) AS sec FROM messages
+           WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL
+             AND COALESCE(rule_result->>'openerTiming', 'false') <> 'true' GROUP BY seq`,
+          [sessionId]
+        );
+        const activeRoundCount = session.total_questions - next.skippedSeqs.length;
+        avgResponseSec = weightedAvgResponseSec(countedRounds.map((row) => Number(row.sec)), activeRoundCount);
+      }
       await this.db.query(`UPDATE sessions SET avg_response_sec = $2 WHERE id = $1`, [sessionId, avgResponseSec]);
       session = { ...session, current_seq: nextSeq - 1, skipped_seqs: next.skippedSeqs };
       conversationState = await this.persistConversationState(session, evaluations, {
@@ -825,10 +834,11 @@ export class ReceptionService implements OnModuleInit {
     if (nextSeq === 1 && !session.opener_pending) {
       const opener = this.openerFor(session);
       if (opener.kind !== 'direct') {
-        for (const text of opener.texts) {
-          await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,1)`, [
+        for (const [index, text] of opener.texts.entries()) {
+          await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`, [
             sessionId,
             text,
+            JSON.stringify(index === 0 ? { responseRoundStart: true, responseRoundType: 'opener' } : {}),
           ]);
         }
         await this.db.query(
@@ -876,11 +886,12 @@ export class ReceptionService implements OnModuleInit {
     );
     const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)), session.products?.[0] ?? null, inferQuantityFromTexts(buyerTexts.map((row) => row.content)));
     await this.persistOrder(sessionId, order);
-    for (const text of texts) {
-      await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+    for (const [index, text] of texts.entries()) {
+      await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
         sessionId,
         text,
         nextSeq,
+        JSON.stringify(index === 0 ? { responseRoundStart: true, responseRoundType: 'question' } : {}),
       ]);
     }
     await this.db.query(
@@ -1036,10 +1047,11 @@ export class ReceptionService implements OnModuleInit {
     response?: string,
   ): Promise<void> {
     const text = response || buildMissingPointFollowUpText(session.style_code, missingLabels, round);
-    await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+    await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
       sessionId,
       text,
       session.current_seq,
+      JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' }),
     ]);
     const emotionValue = Math.max(0, session.emotion_value + followUpEmotionDelta(round));
     await this.db.query(
@@ -1074,10 +1086,11 @@ export class ReceptionService implements OnModuleInit {
     const text = planned
       ? ((this.styleBehavior[session.style_code] || this.styleBehavior.friendly).transform(planned)[0] || planned)
       : buildFollowUpText(session.style_code, question.question, round);
-    await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+    await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
       sessionId,
       text,
       session.current_seq,
+      JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' }),
     ]);
     const emotionValue = Math.max(0, session.emotion_value + followUpEmotionDelta(round));
     await this.db.query(
@@ -1182,8 +1195,11 @@ export class ReceptionService implements OnModuleInit {
     // 注意 last_buyer_at 在客服回复时**不刷新**，所以本轮稍后的第一条有效回复天然按
     // 「买家发消息 → 该条回复」计时，正好满足官方「回退到首条有效回复」的要求。
     // 被判无效的回复同样不计时，把这一轮留给后面的有效回复（始终没有则按 600 秒）。
-    const alreadyCounted = historyRows.some((m) => m.sender === 'agent' && m.seq === insertSeq &&
-      m.response_sec !== null && (openerStage ? m.rule_result?.judge?.signal === 'opener' : m.rule_result?.judge?.signal !== 'opener'));
+    const eventStart = historyRows.map((m) => m.sender === 'buyer' && m.rule_result?.responseRoundStart === true).lastIndexOf(true);
+    const alreadyCounted = params.responseTimingVersion === 2
+      ? eventStart < 0 || historyRows.slice(eventStart + 1).some((m) => m.sender === 'agent' && m.response_sec !== null)
+      : historyRows.some((m) => m.sender === 'agent' && m.seq === insertSeq &&
+          m.response_sec !== null && (openerStage ? m.rule_result?.judge?.signal === 'opener' : m.rule_result?.judge?.signal !== 'opener'));
     const responseSec =
       !alreadyCounted && !invalidReason && lastBuyerAt ? Math.max(0, Math.round((now - lastBuyerAt) / 1000)) : null;
     const isTimeout = responseSec !== null && responseSec > Math.round(params.timeoutSec * tolerance);
@@ -1268,17 +1284,22 @@ export class ReceptionService implements OnModuleInit {
     );
 
     // 平均响应按官方口径：Σ轮次时长 ÷ 轮次总数，未回复/无有效回复的轮次记 600 秒
-    const roundRows = await this.db.many<{ sec: number | string }>(
-      `SELECT min(response_sec) AS sec FROM messages
-       WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL
-         AND COALESCE(rule_result->>'openerTiming', 'false') <> 'true' GROUP BY seq`,
-      [sessionId]
-    );
     const maxResponseSec = Math.max(session.max_response_sec || 0, responseSec || 0);
-    const avgResponseSec = weightedAvgResponseSec(
-      roundRows.map((r) => Number(r.sec)),
-      session.total_questions - (session.skipped_seqs || []).length
-    );
+    let avgResponseSec: number | null;
+    if (params.responseTimingVersion === 2) {
+      avgResponseSec = await this.responseEventAverage(session, params);
+    } else {
+      const roundRows = await this.db.many<{ sec: number | string }>(
+        `SELECT min(response_sec) AS sec FROM messages
+         WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL
+           AND COALESCE(rule_result->>'openerTiming', 'false') <> 'true' GROUP BY seq`,
+        [sessionId]
+      );
+      avgResponseSec = weightedAvgResponseSec(
+        roundRows.map((r) => Number(r.sec)),
+        session.total_questions - (session.skipped_seqs || []).length
+      );
+    }
     const closeDeadline = inAgentCloseWindow
       ? new Date(Date.now() + this.agentCloseWindowMs(attempt.level)).toISOString()
       : null;
@@ -1317,6 +1338,7 @@ export class ReceptionService implements OnModuleInit {
     });
 
     // 方案 3.7.4 / 9.2 场景四：情绪值达到升级阈值后，买家在同一轮追加一条升级追问（每轮只追加一次）
+    let waitingForEscalationReply = false;
     if (emotion.escalated) {
       const escalation = '你们这样处理我实在接受不了，我要投诉你们！';
       const already = await this.db.one<{ count: string }>(
@@ -1324,11 +1346,17 @@ export class ReceptionService implements OnModuleInit {
         [sessionId, session.current_seq, escalation]
       );
       if (Number(already?.count || 0) === 0) {
-        await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+        waitingForEscalationReply = params.responseTimingVersion === 2 && !inAgentCloseWindow;
+        await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
           sessionId,
           escalation,
           session.current_seq,
+          JSON.stringify(waitingForEscalationReply ? { responseRoundStart: true, responseRoundType: 'question' } : {}),
         ]);
+        if (waitingForEscalationReply) {
+          this.scheduler.cancel(`next:${sessionId}`);
+          await this.db.query(`UPDATE sessions SET state = 'serving', last_buyer_at = now() WHERE id = $1`, [sessionId]);
+        }
         this.gateway.emitToUser(accountId, 'buyer.message', {
           attemptId: attempt.id,
           sessionId,
@@ -1343,7 +1371,7 @@ export class ReceptionService implements OnModuleInit {
 
     if (inAgentCloseWindow) {
       this.scheduleAgentClose(sessionId, Date.parse(closeDeadline!));
-    } else {
+    } else if (!waitingForEscalationReply) {
       const rng = createRng(now + sessionId);
       const thinkDelay = 3000 + Math.round(rng() * 4000);
       // 2026-10-11 自适应推送：不再无条件推下一题，先看本轮回复是否答到要点
@@ -1453,6 +1481,24 @@ export class ReceptionService implements OnModuleInit {
 
   /* ---------------- 评分与收尾 ---------------- */
 
+  private async responseEventAverage(session: SessionRow, params: SystemParams): Promise<number | null> {
+    const messages = await this.db.many<any>(
+      `SELECT sender, content, seq, response_sec, is_timeout, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
+      [session.id],
+    );
+    const timing = computeResponseRounds(messages.map((m) => ({
+      sender: m.sender,
+      content: m.content,
+      questionSeq: m.rule_result?.questionSeq ?? m.seq,
+      responseSec: m.response_sec,
+      isTimeout: m.is_timeout,
+      openerTiming: m.rule_result?.openerTiming === true,
+      responseRoundStart: m.rule_result?.responseRoundStart === true,
+      responseRoundType: m.rule_result?.responseRoundType,
+    })), session.questions, params, session.skipped_seqs || [], { responseTimingVersion: 2 });
+    return timing.avgResponseSec === null ? null : Math.round(timing.avgResponseSec);
+  }
+
   async completeSession(sessionId: number, reason: 'normal' | 'early' | 'transferred' | 'aborted' | 'manual' | 'auto_timeout'): Promise<void> {
     this.scheduler.cancel(`close:${sessionId}`);
     const session = await this.loadSession(sessionId);
@@ -1487,6 +1533,8 @@ export class ReceptionService implements OnModuleInit {
         riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
         judgeSignal: m.rule_result?.judge?.signal ?? null,
         openerTiming: m.rule_result?.openerTiming === true,
+        responseRoundStart: m.rule_result?.responseRoundStart === true,
+        responseRoundType: m.rule_result?.responseRoundType,
       })),
       transferredQuestionSeqs: session.transferred_seqs || [],
       skippedQuestionSeqs: session.skipped_seqs || [],
@@ -1880,11 +1928,22 @@ export class ReceptionService implements OnModuleInit {
       const limitMs = params.timeoutSec * tolerance * 1000;
       const elapsed = Date.now() - new Date(row.last_buyer_at).getTime();
       if (elapsed <= limitMs) continue;
-      const already = await this.db.one<{ count: string }>(
-        `SELECT count(*)::text AS count FROM messages
-         WHERE session_id = $1 AND is_timeout = true AND seq = (SELECT current_seq FROM sessions WHERE id = $1)`,
-        [row.id]
-      );
+      const event = params.responseTimingVersion === 2
+        ? await this.db.one<{ id: number }>(
+            `SELECT id FROM messages WHERE session_id = $1 AND sender = 'buyer'
+             AND rule_result->>'responseRoundStart' = 'true' ORDER BY id DESC LIMIT 1`, [row.id],
+          )
+        : null;
+      const already = event
+        ? await this.db.one<{ count: string }>(
+            `SELECT count(*)::text AS count FROM messages WHERE session_id = $1 AND is_timeout = true AND id >= $2`,
+            [row.id, event.id],
+          )
+        : await this.db.one<{ count: string }>(
+            `SELECT count(*)::text AS count FROM messages
+             WHERE session_id = $1 AND is_timeout = true AND seq = (SELECT current_seq FROM sessions WHERE id = $1)`,
+            [row.id],
+          );
       if (Number(already.count) > 0) continue;
       const current = await this.loadSession(row.id);
       await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, is_timeout) VALUES ($1,'system',$2,$3,true)`, [

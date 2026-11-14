@@ -6,9 +6,8 @@
  * 后续有有效回复则本轮记「用户发消息到首条有效回复」的时长，仍无有效回复则记 600 秒。
  *
  * 落到本系统（单次接待、不切时间窗）：
- * 1. 一轮 = 一个提问轮次（questions 里的一个 seq）。轮次总数既做分母，也决定未回复轮次要补多少个 600 秒。
- * 2. 轮次时长 = 该轮买家消息 → 该轮**首条有效回复**；服务端只在首条有效回复上写 response_sec，
- *    所以这里直接取该轮「有 response_sec 的客服消息」，同一轮客服连发多条不会重复计。
+ * 1. 旧版一轮对应一个剧本问题；新版一轮对应一次实际推送的问题或追问。
+ * 2. 轮次时长 = 该轮买家消息 → 该轮**首条有效回复**；同一轮客服连发多条不会重复计。
  * 3. 没有有效回复的轮次（含完全未回复、回复被判无效且之后也没有有效回复）记 UNREPLIED_SECONDS。
  *
  * 该模块是纯函数：不依赖数据库、时间或随机数，输入消息 + 提问序列 + 参数即可复算。
@@ -50,7 +49,7 @@ export function computeResponseRounds(
   questions: ScriptQuestion[],
   params: SystemParams,
   skippedQuestionSeqs: number[] = [],
-  options: { buyerLeftAfterSingleQuestion?: boolean } = {}
+  options: { buyerLeftAfterSingleQuestion?: boolean; responseTimingVersion?: number } = {}
 ): ResponseRoundsResult {
   const agentMessages = messages.filter((m) => m.sender === 'agent');
   const timed = agentMessages.filter((m) => typeof m.responseSec === 'number' && (m.responseSec as number) >= 0);
@@ -65,15 +64,34 @@ export function computeResponseRounds(
     seqs.splice(0, seqs.length);
   }
 
-  const rounds: RoundTiming[] = seqs.map((seq) => {
-    // 该轮的第一条「有响应时长」的客服消息 = 该轮首条有效回复
-    const hit = questionTimed.find((m) => m.questionSeq === seq);
-    return {
-      seq,
-      answered: !!hit,
-      countedSec: hit ? Math.round(hit.responseSec as number) : UNREPLIED_SECONDS,
-    };
-  });
+  let rounds: RoundTiming[];
+  if (options.responseTimingVersion === 2) {
+    rounds = [];
+    let currentRound: RoundTiming | null = null;
+    for (const message of messages) {
+      if (message.sender === 'buyer' && message.responseRoundStart) {
+        currentRound = message.responseRoundType === 'question'
+          ? { seq: message.questionSeq ?? 0, answered: false, countedSec: UNREPLIED_SECONDS }
+          : null;
+        if (currentRound) rounds.push(currentRound);
+      } else if (currentRound && !currentRound.answered && message.sender === 'agent' &&
+          typeof message.responseSec === 'number' && message.responseSec >= 0) {
+        currentRound.answered = true;
+        currentRound.countedSec = Math.round(message.responseSec);
+      }
+    }
+    if (options.buyerLeftAfterSingleQuestion && timed.length === 0) rounds = [];
+  } else {
+    rounds = seqs.map((seq) => {
+      // 旧版该轮的第一条「有响应时长」的客服消息 = 该轮首条有效回复
+      const hit = questionTimed.find((m) => m.questionSeq === seq);
+      return {
+        seq,
+        answered: !!hit,
+        countedSec: hit ? Math.round(hit.responseSec as number) : UNREPLIED_SECONDS,
+      };
+    });
+  }
 
   const totalRounds = rounds.length;
   const answeredRounds = rounds.filter((r) => r.answered).length;
@@ -81,9 +99,9 @@ export function computeResponseRounds(
 
   // 首次响应：按消息顺序的第一条有效回复（与轮次无关，方案 4.2 口径）
   const firstResponseSec = timed.length ? Math.round(timed[0].responseSec as number) : null;
-  const replyRatePct = questionTimed.length
-    ? (questionTimed.filter((m) => (m.responseSec as number) <= params.timeoutSec).length / questionTimed.length) * 100
-    : 0;
+  const replyRatePct = options.responseTimingVersion === 2
+    ? (answeredRounds ? (rounds.filter((r) => r.answered && r.countedSec <= params.timeoutSec).length / answeredRounds) * 100 : 0)
+    : (questionTimed.length ? (questionTimed.filter((m) => (m.responseSec as number) <= params.timeoutSec).length / questionTimed.length) * 100 : 0);
 
   // 同一次待回复可能既有系统超时提示，又有标记超时的客服回复；只计一次。
   // 开场和首题可能共用 seq，因此以买家新提问与客服回复划分待回复事件。
