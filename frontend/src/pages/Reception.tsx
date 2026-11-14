@@ -214,10 +214,14 @@ export default function Reception() {
   const [sessions, setSessions] = useState<SessionDto[]>([]);
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const seenBuyerSessionsRef = useRef(new Set<number>());
+  const inputRef = useRef('');
+  const replyInputRef = useRef<any>(null);
+  const autoFocusSessionRef = useRef<number | null>(null);
   /**
    * ESC 关闭当前回复窗口后，2 秒一轮的快照轮询会按「未选中」自动重选第一个进线会话，
    * 看起来像 ESC 没反应。用这个 ref 记住「用户主动关闭」，轮询期间不再自动选中，
-   * 直到用户手动点开任意会话（或开新局）再恢复自动选中。
+   * 直到用户手动点开会话，或新的买家进线时再恢复自动选中。
    */
   const suppressAutoSelectRef = useRef(false);
   /** 训练结束后只自动跳转一次接待明细，避免轮询反复触发。 */
@@ -271,6 +275,17 @@ export default function Reception() {
 
   const activeSession = useMemo(() => sessions.find((s) => s.sessionId === activeId) || null, [sessions, activeId]);
   const activeMessages = useMemo(() => messages.filter((m) => m.sessionId === activeId), [messages, activeId]);
+
+  useEffect(() => {
+    inputRef.current = input;
+  }, [input]);
+
+  useEffect(() => {
+    if (!activeSession || autoFocusSessionRef.current !== activeSession.sessionId) return;
+    autoFocusSessionRef.current = null;
+    const raf = requestAnimationFrame(() => replyInputRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
+  }, [activeSession]);
 
   /**
    * 消息自动跟随滚动（2026-10-11）：新消息到达时若用户停留在底部附近，自动滚到底；
@@ -389,6 +404,7 @@ export default function Reception() {
   /** 选中会话时清掉未读红点（方案 3.1.5）。 */
   const selectSession = useCallback((sessionId: number) => {
     suppressAutoSelectRef.current = false;
+    activeIdRef.current = sessionId;
     setActiveId(sessionId);
     setUnread((prev) => {
       if (!prev.has(sessionId)) return prev;
@@ -428,6 +444,17 @@ export default function Reception() {
         setAttempt(data.attempt);
         setSessions(data.sessions);
         setMessages(data.messages);
+        const newBuyer = data.messages.find((m: MessageDto) => m.sender === 'buyer' &&
+          !seenBuyerSessionsRef.current.has(m.sessionId) &&
+          data.sessions.some((s: SessionDto) => s.sessionId === m.sessionId && ['serving', 'timeout'].includes(s.state)));
+        data.messages.forEach((m: MessageDto) => {
+          if (m.sender === 'buyer') seenBuyerSessionsRef.current.add(m.sessionId);
+        });
+        if (newBuyer && !inputRef.current.trim()) {
+          autoFocusSessionRef.current = newBuyer.sessionId;
+          setQueueTab('serving');
+          selectSession(newBuyer.sessionId);
+        }
         // 客户 2026-10-03：待接入的买家不在「正在接待」里展示，默认选中的也应该是已进线的那个。
         // ESC 主动关闭窗口后（suppressAutoSelectRef）轮询不再自动选中，直到用户手动点开会话。
         setActiveId((prev) => prev ?? (suppressAutoSelectRef.current ? null : data.sessions.find((s: any) => s.state !== 'pending')?.sessionId ?? null));
@@ -435,7 +462,7 @@ export default function Reception() {
         if (!silent) message.error((e as Error).message);
       }
     },
-    []
+    [selectSession]
   );
 
   // 客户 2026-10-14：模拟训练结束后（所有会话完结、系统自动结算）自动跳转接待明细页。
@@ -488,6 +515,14 @@ export default function Reception() {
       // 方案 3.1.5：买家消息到达且不在当前会话时，队列项显示未读红点并播放轻提示音
       if (event === 'buyer.message' && payload?.sessionId) {
         const sessionId = Number(payload.sessionId);
+        if (payload.attemptId && Number(payload.attemptId) !== attemptIdFromUrl) return;
+        const isNewBuyer = !seenBuyerSessionsRef.current.has(sessionId);
+        seenBuyerSessionsRef.current.add(sessionId);
+        if (isNewBuyer && !inputRef.current.trim()) {
+          autoFocusSessionRef.current = sessionId;
+          setQueueTab('serving');
+          selectSession(sessionId);
+        }
         if (sessionId !== activeIdRef.current) {
           setUnread((prev) => (prev.has(sessionId) ? prev : new Set(prev).add(sessionId)));
           beep(false);
@@ -522,7 +557,7 @@ export default function Reception() {
       disconnect();
       window.clearInterval(poll);
     };
-  }, [attemptIdFromUrl, loadSnapshot, beep]);
+  }, [attemptIdFromUrl, loadSnapshot, beep, selectSession]);
 
   useEffect(() => {
     if (!attemptIdFromUrl) return;
@@ -548,6 +583,7 @@ export default function Reception() {
         },
       });
       setParams({ attemptId: String(data.attemptId) });
+      seenBuyerSessionsRef.current.clear();
       // 新一局恢复「自动选中第一个进线会话」的默认行为（上一局可能用 ESC 关过窗口）。
       suppressAutoSelectRef.current = false;
       finishNavigatedRef.current = false;
@@ -591,6 +627,7 @@ export default function Reception() {
     try {
       await api(`/receptions/${attempt.id}/sessions/${activeSession.sessionId}/finish`, { method: 'POST' });
       suppressAutoSelectRef.current = true;
+      activeIdRef.current = null;
       setActiveId(null);
       setInput('');
       await loadSnapshot(attempt.id);
@@ -1551,8 +1588,9 @@ export default function Reception() {
             </div>
           </div>
           <Input.TextArea
+            ref={replyInputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => { inputRef.current = e.target.value; setInput(e.target.value); }}
             placeholder="请输入回复内容…"
             autoSize={{ minRows: 2, maxRows: 5 }}
             disabled={!running || !activeSession}
