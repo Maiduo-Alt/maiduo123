@@ -54,6 +54,19 @@ describe('评分引擎（方案 4.3）', () => {
     expect(result.deductions.some((d) => d.dimension === 'response')).toBe(true);
   });
 
+  it('同一次等待的超时提示和迟到回复只扣一次，首次响应扣分仍独立', () => {
+    const messages = buildMessages();
+    messages.splice(1, 0, { sender: 'system', content: '等待超时', questionSeq: 1, isTimeout: true });
+    messages[2].responseSec = 43;
+    messages[2].isTimeout = true;
+    const result = scoreSession({ questions, messages, emotionFinal: 10, hasEmotionScenario: false, params });
+    const timeoutDeduction = result.deductions.find((d) => d.reason.includes('超时未回复'));
+    expect(result.metrics.timeoutCount).toBe(1);
+    expect(timeoutDeduction?.reason).toContain('1 次');
+    expect(timeoutDeduction?.points).toBe(params.timeoutPenalty);
+    expect(result.deductions.some((d) => d.reason.includes('首次响应'))).toBe(true);
+  });
+
   it('每次超时未回复额外扣 3 分且维度不低于 0', () => {
     const messages = buildMessages();
     messages[3].isTimeout = true;

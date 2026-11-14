@@ -85,6 +85,23 @@ export function computeResponseRounds(
     ? (questionTimed.filter((m) => (m.responseSec as number) <= params.timeoutSec).length / questionTimed.length) * 100
     : 0;
 
+  // 同一次待回复可能既有系统超时提示，又有标记超时的客服回复；只计一次。
+  // 开场和首题可能共用 seq，因此以买家新提问与客服回复划分待回复事件。
+  let timeoutCount = 0;
+  let timeoutCounted = false;
+  let agentReplied = false;
+  for (const message of messages) {
+    if (message.sender === 'buyer' && agentReplied) {
+      timeoutCounted = false;
+      agentReplied = false;
+    }
+    if (message.isTimeout && !timeoutCounted) {
+      timeoutCount++;
+      timeoutCounted = true;
+    }
+    if (message.sender === 'agent') agentReplied = true;
+  }
+
   return {
     rounds,
     totalRounds,
@@ -92,7 +109,7 @@ export function computeResponseRounds(
     firstResponseSec,
     avgResponseSec: totalRounds ? sum / totalRounds : null,
     replyRatePct,
-    timeoutCount: messages.filter((m) => m.isTimeout).length,
+    timeoutCount,
   };
 }
 

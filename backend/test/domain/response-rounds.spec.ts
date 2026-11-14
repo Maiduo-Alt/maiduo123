@@ -99,6 +99,38 @@ describe('响应时长按轮次建模（抖店官方口径）', () => {
     expect(result.totalRounds).toBe(2);
     expect(result.avgResponseSec).toBe(21);
   });
+
+  it('系统超时提示和同一次迟到回复只计一次', () => {
+    const result = computeResponseRounds([
+      buyer(1),
+      { sender: 'system', content: '等待超时', questionSeq: 1, isTimeout: true },
+      { ...reply(1, 43), isTimeout: true },
+    ], [questions[0]], params);
+    expect(result.timeoutCount).toBe(1);
+  });
+
+  it('未回复的超时和没有系统提示的迟到回复都能计数', () => {
+    const unanswered = computeResponseRounds([
+      buyer(1),
+      { sender: 'system', content: '等待超时', questionSeq: 1, isTimeout: true },
+    ], [questions[0]], params);
+    const lateReply = computeResponseRounds([buyer(1), { ...reply(1, 43), isTimeout: true }], [questions[0]], params);
+    expect(unanswered.timeoutCount).toBe(1);
+    expect(lateReply.timeoutCount).toBe(1);
+    expect(computeResponseRounds([buyer(1), reply(1, 10)], [questions[0]], params).timeoutCount).toBe(0);
+  });
+
+  it('开场和首题共用序号时，各自超时仍分别计数', () => {
+    const result = computeResponseRounds([
+      buyer(1),
+      { sender: 'system', content: '开场等待超时', questionSeq: 0, isTimeout: true },
+      { ...reply(1, 43), openerTiming: true, isTimeout: true },
+      buyer(1),
+      { sender: 'system', content: '首题等待超时', questionSeq: 1, isTimeout: true },
+      { ...reply(1, 45), isTimeout: true },
+    ], [questions[0]], params);
+    expect(result.timeoutCount).toBe(2);
+  });
 });
 
 describe('会话级平均响应（写库用）与轮次口径一致', () => {

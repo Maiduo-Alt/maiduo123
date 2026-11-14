@@ -668,12 +668,20 @@ describe('在线模拟接待端到端链路', () => {
     );
     expect(Number(timeoutMessage!.count)).toBeGreaterThan(0);
 
+    // 同一次超时既有系统提示，又有迟到回复标记，最终只能扣一次。
+    const lateReply = await request(http)
+      .post(`/api/receptions/${attemptId}/sessions/${sessionId}/messages`)
+      .set(auth)
+      .send({ content: '亲您好，我在的，请问有什么可以帮您？' });
+    expect(lateReply.body.code).toBe(0);
+    expect(lateReply.body.data.isTimeout).toBe(true);
+
     const finished = await request(http).post(`/api/receptions/${attemptId}/finish`).set(auth);
     expect(finished.body.code).toBe(0);
 
     // 评分落库时应包含超时次数与响应维度扣分
     const score = await sharedDb.one<any>(`SELECT metrics, deductions FROM scores WHERE session_id = $1`, [sessionId]);
-    expect(Number(score.metrics.timeoutCount)).toBeGreaterThan(0);
+    expect(Number(score.metrics.timeoutCount)).toBe(1);
     expect(JSON.stringify(score.deductions)).toContain('超时');
 
     await request(http).put('/api/settings').set(adminAuth).send({ timeoutSec: 180, levelJoinDelaySec: [10, 30] });
