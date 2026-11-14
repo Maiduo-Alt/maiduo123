@@ -62,6 +62,7 @@ import { useAuth } from '../store/auth';
 import OrderCard from '../components/OrderCard';
 import ProductSpecModal from '../components/ProductSpecModal';
 import ProductPreviewDrawer from '../components/ProductPreviewDrawer';
+import { projectSessionTimer } from './receptionClock';
 import dayjs from 'dayjs';
 
 interface SessionDto {
@@ -85,6 +86,7 @@ interface SessionDto {
   closeDeadlineAt?: string | null;
   /** 会话接入时间，用于对话区首条咨询商品卡的时间戳 */
   joinAt?: string;
+  lastBuyerAt?: string | null;
 }
 
 interface MessageDto {
@@ -211,7 +213,10 @@ export default function Reception() {
   /** 进行中的接待：离开页面回来后能继续，而不是只能等断线宽限期（方案 F1-13） */
   const [runningAttempt, setRunningAttempt] = useState<any>(null);
   const [attempt, setAttempt] = useState<any>(null);
-  const [sessions, setSessions] = useState<SessionDto[]>([]);
+  const [serverSessions, setSessions] = useState<SessionDto[]>([]);
+  const serverClockRef = useRef<{ serverMs: number; receivedAt: number } | null>(null);
+  const [serverNow, setServerNow] = useState<number | null>(null);
+  const sessions = useMemo(() => serverSessions.map((session) => projectSessionTimer(session, serverNow)), [serverSessions, serverNow]);
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const seenBuyerSessionsRef = useRef(new Set<number>());
@@ -415,6 +420,26 @@ export default function Reception() {
     });
   }, []);
 
+  const updateServerClock = useCallback((serverTime?: string) => {
+    if (!serverTime) return true;
+    const serverMs = Date.parse(serverTime);
+    if (serverClockRef.current && serverMs < serverClockRef.current.serverMs) return false;
+    serverClockRef.current = { serverMs, receivedAt: performance.now() };
+    setServerNow(serverMs);
+    return true;
+  }, []);
+
+  useEffect(() => {
+    serverClockRef.current = null;
+    setServerNow(null);
+    if (!attemptIdFromUrl) return;
+    const timer = window.setInterval(() => {
+      const anchor = serverClockRef.current;
+      if (anchor) setServerNow(anchor.serverMs + performance.now() - anchor.receivedAt);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [attemptIdFromUrl]);
+
   /** 飞鸽式工作台快捷键：↑/↓ 或 light+ / light- 切换买家回复窗口。 */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -443,7 +468,7 @@ export default function Reception() {
       try {
         const data = await api<any>(`/receptions/${id}/snapshot`);
         setAttempt(data.attempt);
-        setSessions(data.sessions);
+        if (updateServerClock(data.serverTime)) setSessions(data.sessions);
         setMessages(data.messages);
         const newBuyer = data.messages.find((m: MessageDto) => m.sender === 'buyer' &&
           !seenBuyerSessionsRef.current.has(m.sessionId) &&
@@ -472,7 +497,7 @@ export default function Reception() {
         if (!silent) message.error((e as Error).message);
       }
     },
-    [selectSession]
+    [selectSession, updateServerClock]
   );
 
   // 客户 2026-10-14：模拟训练结束后（所有会话完结、系统自动结算）自动跳转接待明细页。
@@ -541,6 +566,7 @@ export default function Reception() {
       // 计时以服务端 timer.tick 为准（方案 5.5）：只更新各会话的等待与剩余秒数，
       // 其余事件（买家消息、评分结束等）再回源拉取快照。
       if (event === 'timer.tick' && Array.isArray(payload?.sessions)) {
+        if (Number(payload.attemptId) !== attemptIdFromUrl || !updateServerClock(payload.serverTime)) return;
         const byId = new Map<number, any>(payload.sessions.map((s: any) => [s.sessionId, s]));
         setSessions((prev) =>
           prev.map((s) => {
@@ -554,6 +580,8 @@ export default function Reception() {
                   closeRemainSec: next.closeRemainSec ?? s.closeRemainSec,
                   timerMode: next.timerMode ?? s.timerMode,
                   state: next.state ?? s.state,
+                  lastBuyerAt: 'lastBuyerAt' in next ? next.lastBuyerAt : s.lastBuyerAt,
+                  closeDeadlineAt: 'closeDeadlineAt' in next ? next.closeDeadlineAt : s.closeDeadlineAt,
                 }
               : s;
           })
@@ -567,7 +595,7 @@ export default function Reception() {
       disconnect();
       window.clearInterval(poll);
     };
-  }, [attemptIdFromUrl, loadSnapshot, beep, selectSession]);
+  }, [attemptIdFromUrl, loadSnapshot, beep, selectSession, updateServerClock]);
 
   useEffect(() => {
     if (!attemptIdFromUrl) return;

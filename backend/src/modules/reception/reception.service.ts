@@ -1728,6 +1728,7 @@ export class ReceptionService implements OnModuleInit {
       : null;
 
     return {
+      serverTime: new Date(now).toISOString(),
       attempt: {
         id: attempt.id,
         attemptNo: attempt.attempt_no,
@@ -1900,6 +1901,8 @@ export class ReceptionService implements OnModuleInit {
       entry.sessions.push({
         sessionId: row.id,
         state: row.state,
+        lastBuyerAt: row.last_buyer_at,
+        closeDeadlineAt: row.close_deadline_at,
         waitedSec,
         timeoutLimitSec: limit,
         remainSec: closeRemainSec ?? Math.max(0, limit - waitedSec),
@@ -2087,6 +2090,7 @@ export class ReceptionService implements OnModuleInit {
       conversationState: s.conversation_state || {},
       score: s.score === null ? null : Number(s.score),
       joinAt: s.join_at,
+      lastBuyerAt: s.last_buyer_at,
       closeDeadlineAt: s.close_deadline_at,
     };
   }
