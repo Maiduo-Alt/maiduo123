@@ -215,6 +215,7 @@ export default function Reception() {
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const seenBuyerSessionsRef = useRef(new Set<number>());
+  const lastClosedSessionRef = useRef<number | null>(null);
   const inputRef = useRef('');
   const replyInputRef = useRef<any>(null);
   const autoFocusSessionRef = useRef<number | null>(null);
@@ -454,6 +455,15 @@ export default function Reception() {
           autoFocusSessionRef.current = newBuyer.sessionId;
           setQueueTab('serving');
           selectSession(newBuyer.sessionId);
+        } else if (!activeIdRef.current && suppressAutoSelectRef.current && !inputRef.current.trim()) {
+          const waiting = data.sessions.find((s: SessionDto) => s.sessionId !== lastClosedSessionRef.current &&
+            ['serving', 'timeout'].includes(s.state) &&
+            data.messages.some((m: MessageDto) => m.sender === 'buyer' && m.sessionId === s.sessionId));
+          if (waiting) {
+            autoFocusSessionRef.current = waiting.sessionId;
+            setQueueTab('serving');
+            selectSession(waiting.sessionId);
+          }
         }
         // 客户 2026-10-03：待接入的买家不在「正在接待」里展示，默认选中的也应该是已进线的那个。
         // ESC 主动关闭窗口后（suppressAutoSelectRef）轮询不再自动选中，直到用户手动点开会话。
@@ -584,6 +594,7 @@ export default function Reception() {
       });
       setParams({ attemptId: String(data.attemptId) });
       seenBuyerSessionsRef.current.clear();
+      lastClosedSessionRef.current = null;
       // 新一局恢复「自动选中第一个进线会话」的默认行为（上一局可能用 ESC 关过窗口）。
       suppressAutoSelectRef.current = false;
       finishNavigatedRef.current = false;
@@ -625,11 +636,16 @@ export default function Reception() {
   const finishSession = useCallback(async () => {
     if (!attempt || attempt.status !== 'running' || !activeSession || !isRunning(activeSession)) return;
     try {
-      await api(`/receptions/${attempt.id}/sessions/${activeSession.sessionId}/finish`, { method: 'POST' });
-      suppressAutoSelectRef.current = true;
-      activeIdRef.current = null;
-      setActiveId(null);
-      setInput('');
+      const closedId = activeSession.sessionId;
+      await api(`/receptions/${attempt.id}/sessions/${closedId}/finish`, { method: 'POST' });
+      lastClosedSessionRef.current = closedId;
+      if (activeIdRef.current === closedId) {
+        suppressAutoSelectRef.current = true;
+        activeIdRef.current = null;
+        setActiveId(null);
+        inputRef.current = '';
+        setInput('');
+      }
       await loadSnapshot(attempt.id);
     } catch (e) {
       message.error((e as Error).message);
