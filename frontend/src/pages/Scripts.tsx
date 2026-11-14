@@ -90,7 +90,11 @@ export default function Scripts() {
   const createWay = Form.useWatch('createWay', form);
   const ruleMode = Form.useWatch('ruleMode', form);
   const productIds = Form.useWatch('productIds', form) as number[] | undefined;
+  const qaIds = Form.useWatch('qaIds', form) as number[] | undefined;
   const selectedProducts = (options.products || []).filter((p) => (productIds || []).includes(p.id));
+  const shortContents = (options.contents || []).filter((content) =>
+    (qaIds || []).includes(content.id) && Array.isArray(content.questionList) && content.questionList.length < 3
+  );
   /**
    * 客户 2026-10-10：新建剧本改为**三段式向导**——基础设置 → 剧本信息 → 剧本内容，
    * 每一步只填少量字段，点「下一步」时只校验本步字段，避免一屏十几个控件的眼花缭乱。
@@ -822,6 +826,15 @@ export default function Scripts() {
                 optionFilterProp="label"
               />
             </Form.Item>
+            {shortContents.length > 0 && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message={`${shortContents.length} 条咨询内容不足 3 个原始问题`}
+                description="系统可能自动补充同主题问题。建议先在咨询内容中补充具体问题，或生成后打开剧本预览，检查补充的问题是否合适。"
+              />
+            )}
             {ruleMode === 'semantic' && (
               <Alert
                 type="info"
@@ -858,6 +871,16 @@ export default function Scripts() {
               买家接受方案：{detail.acceptedAnswer || '未填写'}
             </Typography.Paragraph>
             <Button style={{ marginBottom: 12 }} onClick={() => void openGoalConfig()}>配置语义目标</Button>
+            {(detail.questionSeq || []).some((q: any) => q.sourceType === 'derived' &&
+              /^关于“.+”，(?:还有哪些需要注意的呢|可以再帮我确认一下吗)？$/u.test(q.question)) && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="部分自动补充的问题较笼统"
+                description="建议在对应咨询内容中补充具体问题，再重新生成剧本，以便买家的提问更贴合场景。"
+              />
+            )}
             <Timeline
               items={(detail.questionSeq || []).map((q: any) => ({
                 color: 'blue',
