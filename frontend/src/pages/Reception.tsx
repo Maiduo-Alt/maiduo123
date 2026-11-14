@@ -398,7 +398,7 @@ export default function Reception() {
     });
   }, []);
 
-  /** 飞鸽式工作台快捷键：↑/↓ 或 light+ / light- 切换买家回复窗口，ESC 关闭当前回复窗口。 */
+  /** 飞鸽式工作台快捷键：↑/↓ 或 light+ / light- 切换买家回复窗口。 */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -415,13 +415,6 @@ export default function Reception() {
         event.preventDefault();
         selectSession(next.sessionId);
         return;
-      }
-      if (event.key === 'Escape' && activeId !== null && !editing) {
-        event.preventDefault();
-        // 标记「用户主动关闭」：否则 2 秒一轮的快照轮询会马上把会话又自动选中。
-        suppressAutoSelectRef.current = true;
-        setActiveId(null);
-        setInput('');
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -593,15 +586,29 @@ export default function Reception() {
     }
   };
 
-  const finishSession = async () => {
-    if (!attempt || !activeSession) return;
+  const finishSession = useCallback(async () => {
+    if (!attempt || attempt.status !== 'running' || !activeSession || !isRunning(activeSession)) return;
     try {
       await api(`/receptions/${attempt.id}/sessions/${activeSession.sessionId}/finish`, { method: 'POST' });
+      suppressAutoSelectRef.current = true;
+      setActiveId(null);
+      setInput('');
       await loadSnapshot(attempt.id);
     } catch (e) {
       message.error((e as Error).message);
     }
-  };
+  }, [attempt, activeSession, isRunning, loadSnapshot]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing || event.repeat || specOpen || previewOpen || remarkOpen ||
+          attempt?.status !== 'running' || !activeSession || !isRunning(activeSession)) return;
+      event.preventDefault();
+      void finishSession();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [attempt, activeSession, isRunning, finishSession, specOpen, previewOpen, remarkOpen]);
 
   const finishAll = async () => {
     if (!attempt) return;
@@ -1013,6 +1020,9 @@ export default function Reception() {
             任务 <b>{attempt?.task?.name || (attempt?.source === 'task' ? '任务训练' : '模拟训练')}</b>
           </span>
           <span className="titlebar-no">{attempt?.attemptNo}</span>
+          <Button danger size="small" disabled={!running} onClick={finishAll}>
+            结束本次接待
+          </Button>
         </div>
       </div>
 
@@ -1175,8 +1185,8 @@ export default function Reception() {
           ))}
         </div>
         <div className="reception-left-footer">
-          <Button danger block disabled={!running} onClick={finishAll}>
-            结束本次接待并生成评分
+          <Button block disabled={!running || !activeSession || !isRunning(activeSession)} onClick={finishSession}>
+            关闭当前会话（Esc）
           </Button>
         </div>
       </div>
@@ -1557,7 +1567,7 @@ export default function Reception() {
           <div className="reception-send-row">
             {/* 飞鸽：提示里带买家昵称，右下角还有字数计数 */}
             <span className="reception-input-hint">
-              发送给 {activeSession?.buyerName || '买家'}，Enter 发送，Ctrl + Enter 换行，↑ / ↓ 或 light+ / light- 切换窗口，ESC 关闭窗口
+              发送给 {activeSession?.buyerName || '买家'}，Enter 发送，Ctrl + Enter 换行，↑ / ↓ 或 light+ / light- 切换窗口，ESC 关闭当前会话
             </span>
             <span className="reception-input-count">
               {input.length}/{systemParams?.messageMaxLength ?? 800}
