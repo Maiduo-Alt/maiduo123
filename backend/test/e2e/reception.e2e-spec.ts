@@ -193,6 +193,27 @@ describe('在线模拟接待端到端链路', () => {
     await reception.finishSession(1, attempt.id, session.id);
   }, 60000);
 
+  it('询问是否有内衬的待核实回复不提前完成语义目标', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-pending-lining', JSON.stringify(DEFAULT_PARAMS)],
+    );
+    const questions = [{ seq: 1, question: '有内衬吗？', keyPoints: ['内衬'], stage: 'presale',
+      semanticGoals: [{ id: 'lining', name: '说明是否有内衬', requiredPoints: [{ id: 'has-lining', label: '内衬', matchAny: ['内衬'] }] }] }];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, $3) RETURNING id`,
+      [attempt.id, JSON.stringify(questions), new Date().toISOString()],
+    );
+    const reception = app.get(ReceptionService);
+    const reply = await reception.sendMessage(1, attempt.id, session.id, '我帮您确认有没有内衬。');
+    expect(reply.ruleResult.judge.signal).toBe('hedge');
+    expect(reply.ruleResult.hitPoints).toEqual([]);
+    expect(reply.ruleResult.goalProgress[0].status).toBe('untriggered');
+    await reception.finishSession(1, attempt.id, session.id);
+  }, 60000);
+
   it.each([['L1', 300], ['L2', 30], ['L3', 30], ['L4', 30]])(
     '%s 整理阶段按难度设置和重置倒计时',
     async (level, expectedSeconds) => {

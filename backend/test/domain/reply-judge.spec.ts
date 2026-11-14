@@ -71,6 +71,27 @@ describe('打太极放行', () => {
       .toEqual({ pass: true, signal: 'key-point' });
     expect(isPendingVerification('我帮您核实是否可以机洗，这款不能机洗。')).toBe(false);
   });
+
+  it.each([
+    ['有内衬吗？', '内衬', '我帮您确认有没有内衬'],
+    ['是包边还是锁边？', '包边', '我帮您确认是不是包边'],
+    ['有没有实拍视频？', '实拍', '我帮您查一下是否有实拍'],
+    ['能机洗吗？', '机洗', '是否可以机洗，我查询后回复您'],
+  ])('核实中的回复不能因为包含要点提前完成：%s', (question, keyPoint, reply) => {
+    expect(isPendingVerification(reply)).toBe(true);
+    expect(judgeReply({ question, keyPoints: [keyPoint], buyerText: question, reply }))
+      .toEqual({ pass: false, signal: 'hedge' });
+  });
+
+  it.each([
+    ['有内衬吗？', '内衬', '我核实是否有内衬，这款没有内衬。'],
+    ['有内衬吗？', '内衬', '我帮您确认有没有内衬，这款有内衬。'],
+    ['是包边还是锁边？', '包边', '我帮您确认是不是包边，这款是包边的。'],
+    ['有没有实拍视频？', '实拍', '我帮您查一下是否有实拍，可以提供实拍视频。'],
+  ])('核实后已明确给出的答案仍参与判定：%s', (question, keyPoint, reply) => {
+    expect(isPendingVerification(reply)).toBe(false);
+    expect(judgeReply({ question, keyPoints: [keyPoint], buyerText: question, reply }).pass).toBe(true);
+  });
 });
 
 describe('表态与问题类型兼容', () => {
