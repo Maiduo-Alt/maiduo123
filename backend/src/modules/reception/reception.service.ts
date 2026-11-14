@@ -490,13 +490,13 @@ export class ReceptionService implements OnModuleInit {
               effectiveParams.levelJoinDelaySec[0] +
                 rng() * (effectiveParams.levelJoinDelaySec[1] - effectiveParams.levelJoinDelaySec[0])
             );
-      const joinAt = new Date(Date.now() + joinDelaySec * 1000);
+      const joinAt = new Date();
       // C5：超出同时在线人数的先按「待接入」建好，等有位置再进线
       const initialState = i < activeSlots ? 'wait' : 'pending';
       const row = await this.db.one<SessionRow>(
         `INSERT INTO sessions (attempt_id, script_id, product_id, buyer_name, style_code, state, total_questions,
-                               questions, products, order_no, order_amount, order_status, join_at, emotion_value)
-         VALUES ($1,$2,$3,$4,$5,$14,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13) RETURNING *`,
+                               questions, products, order_no, order_amount, order_status, join_at, emotion_value, last_buyer_at)
+         VALUES ($1,$2,$3,$4,$5,$14,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$15) RETURNING *`,
         [
           attempt.id,
           script.id,
@@ -513,6 +513,7 @@ export class ReceptionService implements OnModuleInit {
           joinAt.toISOString(),
           styleRow?.emotion_base ?? 20,
           initialState,
+          initialState === 'wait' ? joinAt.toISOString() : null,
         ]
       );
       // 开局就按「第一个问题的订单状态」生成订单：售前=待支付/待发货，售后=已发货
@@ -715,7 +716,7 @@ export class ReceptionService implements OnModuleInit {
         [attemptId]
       );
       if (!next) return;
-      await this.db.query(`UPDATE sessions SET state = 'wait', join_at = now() WHERE id = $1`, [next.id]);
+      await this.db.query(`UPDATE sessions SET state = 'wait', join_at = now(), last_buyer_at = now() WHERE id = $1`, [next.id]);
       // 新买家「走进来」到发出第一条问题之间留几秒（赤兔火眼实测 1～6 秒），避免突兀地秒进
       const joinDelay = 1500 + Math.round(Math.random() * 3000);
       this.scheduler.schedule(`join:${next.id}`, joinDelay, () => this.pushNextQuestion(next.id));
@@ -831,7 +832,7 @@ export class ReceptionService implements OnModuleInit {
      * 已进入开场白阶段（opener_pending=true）的会话走正常抛题分支并清除标记——
      * 不能把 opener_pending 清掉再调本函数，否则这里会再次判定为需要开场，无限重复发问候。
      */
-    if (nextSeq === 1 && !session.opener_pending) {
+    if (nextSeq === 1 && !session.opener_pending && !session.first_reply_at) {
       const opener = this.openerFor(session);
       if (opener.kind !== 'direct') {
         for (const [index, text] of opener.texts.entries()) {
@@ -842,7 +843,7 @@ export class ReceptionService implements OnModuleInit {
           ]);
         }
         await this.db.query(
-          `UPDATE sessions SET state = 'serving', last_buyer_at = now(), opener_pending = true WHERE id = $1`,
+          `UPDATE sessions SET state = 'serving', last_buyer_at = COALESCE(last_buyer_at, now()), opener_pending = true WHERE id = $1`,
           [sessionId]
         );
         const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
@@ -895,8 +896,8 @@ export class ReceptionService implements OnModuleInit {
       ]);
     }
     await this.db.query(
-      `UPDATE sessions SET current_seq = $2, state = 'serving', last_buyer_at = now(), follow_ups = 0, opener_pending = false WHERE id = $1`,
-      [sessionId, nextSeq]
+      `UPDATE sessions SET current_seq = $2, state = 'serving', last_buyer_at = $3, follow_ups = 0, opener_pending = false WHERE id = $1`,
+      [sessionId, nextSeq, session.current_seq === 0 && !session.first_reply_at && session.last_buyer_at ? session.last_buyer_at : new Date().toISOString()]
     );
     const updated = await this.loadSession(sessionId);
     const pushedConversationState = await this.persistConversationState(updated, evaluations, {
@@ -1167,7 +1168,7 @@ export class ReceptionService implements OnModuleInit {
     }
     const hitAny = hitPoints.length > 0 || semanticEvaluation.goalMatches.length > 0;
     // 开场白阶段（买家只发了问候/链接）：任何回应都算有效招呼，不参与要点/情绪扣分
-    const openerStage = !!session.opener_pending;
+    const openerStage = !!session.opener_pending || session.current_seq === 0;
     // 开场回应归入 seq 1（与随后的题目同轮），避免产生 seq 0 的回复轮次干扰计分
     const insertSeq = openerStage ? 1 : session.current_seq;
 
@@ -1204,7 +1205,7 @@ export class ReceptionService implements OnModuleInit {
     // 被判无效的回复同样不计时，把这一轮留给后面的有效回复（始终没有则按 600 秒）。
     const eventStart = historyRows.map((m) => m.sender === 'buyer' && m.rule_result?.responseRoundStart === true).lastIndexOf(true);
     const alreadyCounted = params.responseTimingVersion === 2
-      ? eventStart < 0 || historyRows.slice(eventStart + 1).some((m) => m.sender === 'agent' && m.response_sec !== null)
+      ? (eventStart < 0 && session.current_seq !== 0) || historyRows.slice(eventStart + 1).some((m) => m.sender === 'agent' && m.response_sec !== null)
       : historyRows.some((m) => m.sender === 'agent' && m.seq === insertSeq &&
           m.response_sec !== null && (openerStage ? m.rule_result?.judge?.signal === 'opener' : m.rule_result?.judge?.signal !== 'opener'));
     const responseSec =
@@ -1379,6 +1380,7 @@ export class ReceptionService implements OnModuleInit {
     if (inAgentCloseWindow) {
       this.scheduleAgentClose(sessionId, Date.parse(closeDeadline!));
     } else if (!waitingForEscalationReply) {
+      if (session.current_seq === 0 && !session.opener_pending) this.scheduler.cancel(`join:${sessionId}`);
       const rng = createRng(now + sessionId);
       const thinkDelay = 3000 + Math.round(rng() * 4000);
       // 2026-10-11 自适应推送：不再无条件推下一题，先看本轮回复是否答到要点
@@ -1927,7 +1929,7 @@ export class ReceptionService implements OnModuleInit {
     await this.abortDisconnectedAttempts();
     await this.broadcastTimerTick();
     const rows = await this.db.many<any>(
-      `SELECT s.id, s.attempt_id, s.last_buyer_at, s.state, a.level, a.account_id, a.param_snapshot
+      `SELECT s.id, s.attempt_id, s.last_buyer_at, s.first_reply_at, s.state, a.level, a.account_id, a.param_snapshot
        FROM sessions s JOIN attempts a ON a.id = s.attempt_id
        WHERE a.status = 'running' AND s.state IN ('serving','wait','timeout')`
     );
@@ -1938,13 +1940,17 @@ export class ReceptionService implements OnModuleInit {
       const limitMs = params.timeoutSec * tolerance * 1000;
       const elapsed = Date.now() - new Date(row.last_buyer_at).getTime();
       if (elapsed <= limitMs) continue;
-      const event = params.responseTimingVersion === 2
+      const event = params.responseTimingVersion === 2 && row.first_reply_at
         ? await this.db.one<{ id: number }>(
             `SELECT id FROM messages WHERE session_id = $1 AND sender = 'buyer'
              AND rule_result->>'responseRoundStart' = 'true' ORDER BY id DESC LIMIT 1`, [row.id],
           )
         : null;
-      const already = event
+      const already = !row.first_reply_at
+        ? await this.db.one<{ count: string }>(
+            `SELECT count(*)::text AS count FROM messages WHERE session_id = $1 AND is_timeout = true`, [row.id],
+          )
+        : event
         ? await this.db.one<{ count: string }>(
             `SELECT count(*)::text AS count FROM messages WHERE session_id = $1 AND is_timeout = true AND id >= $2`,
             [row.id, event.id],

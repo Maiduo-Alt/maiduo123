@@ -108,6 +108,63 @@ describe('在线模拟接待端到端链路', () => {
     expect(result.sessions[0].metrics.avgResponseSec).toBe(reply.responseSec);
   }, 60000);
 
+  it('并发买家显示在当前会话时分别计时，首条消息前回复也记录首次响应', async () => {
+    const token = await login('admin', 'Admin@123');
+    const start = await request(http).post('/api/receptions').set({ Authorization: `Bearer ${token}` })
+      .send({ level: 'L2', source: 'free', totalCount: 2, concurrentCount: 2 });
+    expect(start.body.code).toBe(0);
+    const attemptId = start.body.data.attemptId;
+    const reception = app.get(ReceptionService);
+    try {
+      await sleep(1500);
+      const snapshot = await reception.snapshot(1, attemptId);
+      expect(snapshot.sessions).toHaveLength(2);
+      expect(snapshot.sessions.every((session: any) => session.waitedSec >= 1)).toBe(true);
+      const waiting = snapshot.sessions.find((session: any) => session.state === 'wait');
+      expect(waiting).toBeDefined();
+      expect(snapshot.messages.some((message: any) => message.sessionId === waiting.sessionId && message.sender === 'buyer')).toBe(false);
+      const reply = await reception.sendMessage(1, attemptId, waiting.sessionId, '亲您好，我在的，请问有什么可以帮您？');
+      expect(reply.responseSec).toBeGreaterThanOrEqual(1);
+      expect(reply.ruleResult.judge.signal).toBe('opener');
+      await reception.advanceAfterReply(waiting.sessionId);
+      const after = await reception.snapshot(1, attemptId);
+      expect(after.sessions.find((session: any) => session.sessionId === waiting.sessionId).seq).toBe(1);
+    } finally {
+      await reception.finishAttempt(1, attemptId);
+    }
+  }, 60000);
+
+  it('首条买家消息不会重置已进线等待时间，也不会重复记录超时', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-join-timeout', JSON.stringify({ ...DEFAULT_PARAMS, timeoutSec: 1, responseTimingVersion: 2 })],
+    );
+    const questions = [{ seq: 1, question: '这款是什么面料？', keyPoints: ['面料'], stage: 'presale' }];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '计时买家', 'wait', 0, 1, $2::jsonb, $3) RETURNING id`,
+      [attempt.id, JSON.stringify(questions), new Date(Date.now() - 5000).toISOString()],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      await (reception as any).scanTimeout();
+      await reception.pushNextQuestion(session.id);
+      await (reception as any).scanTimeout();
+      const snapshot = await reception.snapshot(1, attempt.id);
+      const buyer = snapshot.sessions.find((item: any) => item.sessionId === session.id);
+      expect(buyer.waitedSec).toBeGreaterThanOrEqual(5);
+      expect(buyer.timeoutCount).toBe(1);
+      const reply = await reception.sendMessage(1, attempt.id, session.id, '亲您好，我在的，请问有什么可以帮您？');
+      expect(reply.responseSec).toBeGreaterThanOrEqual(5);
+      await reception.finishSession(1, attempt.id, session.id);
+      const result = await reception.attemptResult(attempt.id);
+      expect(result.sessions[0].metrics.timeoutCount).toBe(1);
+    } finally {
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
   it('新接待将同一问题的买家追问单独计时，客服连发不重复计时', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)

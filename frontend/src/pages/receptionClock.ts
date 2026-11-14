@@ -11,7 +11,7 @@ export function projectSessionTimer<T extends {
     const remaining = Math.max(0, Math.ceil((Date.parse(session.closeDeadlineAt) - serverNow) / 1000));
     return { ...session, remainSec: remaining, closeRemainSec: remaining };
   }
-  if ((session.state === 'serving' || session.state === 'timeout') && session.lastBuyerAt) {
+  if ((session.state === 'wait' || session.state === 'serving' || session.state === 'timeout') && session.lastBuyerAt) {
     const waited = Math.max(0, Math.round((serverNow - Date.parse(session.lastBuyerAt)) / 1000));
     return { ...session, waitedSec: waited, remainSec: Math.max(0, session.timeoutLimitSec - waited) };
   }
