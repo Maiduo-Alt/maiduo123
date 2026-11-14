@@ -83,6 +83,43 @@ describe('在线模拟接待端到端链路', () => {
     await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
   }, 60000);
 
+  it.each([['L1', 300], ['L2', 30], ['L3', 30], ['L4', 30]])(
+    '%s 整理阶段按难度设置和重置倒计时',
+    async (level, expectedSeconds) => {
+      const attempt = await sharedDb.one<{ id: number }>(
+        `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+         VALUES ($1, 1, $2, 'free', $3::jsonb) RETURNING id`,
+        [`AT-close-${level}`, level, JSON.stringify(DEFAULT_PARAMS)],
+      );
+      const session = await sharedDb.one<{ id: number }>(
+        `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions)
+         VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb) RETURNING id`,
+        [attempt.id, JSON.stringify([{ seq: 1, question: '面料是什么？', keyPoints: ['面料'], stage: 'presale' }])],
+      );
+      const reception = app.get(ReceptionService);
+      const checkDeadline = async () => {
+        const row = await sharedDb.one<{ state: string; close_deadline_at: string }>(
+          `SELECT state, close_deadline_at FROM sessions WHERE id = $1`, [session.id],
+        );
+        expect(row.state).toBe('awaiting_agent_close');
+        const seconds = (new Date(row.close_deadline_at).getTime() - Date.now()) / 1000;
+        expect(seconds).toBeGreaterThan(expectedSeconds - 5);
+        expect(seconds).toBeLessThanOrEqual(expectedSeconds + 1);
+      };
+      try {
+        await (reception as any).enterAgentCloseWindow(session.id);
+        await checkDeadline();
+        await sharedDb.query(`UPDATE sessions SET close_deadline_at = $2 WHERE id = $1`, [session.id, new Date(Date.now() + 1000).toISOString()]);
+        await reception.sendMessage(1, attempt.id, session.id, '好的亲，我帮您继续核实，谢谢您。');
+        await checkDeadline();
+      } finally {
+        await sharedDb.query(`UPDATE sessions SET state = 'finished' WHERE id = $1`, [session.id]);
+        await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+      }
+    },
+    60000,
+  );
+
   it('登录与鉴权：未登录访问被拦截，错误密码被拒绝', async () => {
     const unauthorized = await request(http).get('/api/products');
     expect(unauthorized.body.code).toBe(1002);

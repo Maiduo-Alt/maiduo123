@@ -156,7 +156,10 @@ export class ReceptionService implements OnModuleInit {
 
   /** 客服回复后，买家「思考」多久再抛下一个问题；服务重启补挂定时器时沿用同一口径。 */
   private readonly REPLY_THINK_DELAY_MS = 1500;
-  private readonly AGENT_CLOSE_WINDOW_MS = 5 * 60 * 1000;
+  /** L1 保留五分钟整理时间，其他难度使用三十秒。 */
+  private agentCloseWindowMs(level: string): number {
+    return level === 'L1' ? 5 * 60 * 1000 : 30 * 1000;
+  }
 
   constructor(
     private readonly db: DbService,
@@ -657,7 +660,11 @@ export class ReceptionService implements OnModuleInit {
   }
 
   private async enterAgentCloseWindow(sessionId: number): Promise<void> {
-    const deadline = new Date(Date.now() + this.AGENT_CLOSE_WINDOW_MS);
+    const attempt = await this.db.one<{ level: string }>(
+      `SELECT a.level FROM attempts a JOIN sessions s ON s.attempt_id = a.id WHERE s.id = $1`,
+      [sessionId],
+    );
+    const deadline = new Date(Date.now() + this.agentCloseWindowMs(attempt.level));
     const row = await this.db.one<{ id: number }>(
       `UPDATE sessions SET state = 'awaiting_agent_close', close_deadline_at = $2 WHERE id = $1 AND state NOT IN ('finished','transferred','aborted') RETURNING id`,
       [sessionId, deadline.toISOString()]
@@ -1248,6 +1255,9 @@ export class ReceptionService implements OnModuleInit {
       roundRows.map((r) => Number(r.sec)),
       session.total_questions - (session.skipped_seqs || []).length
     );
+    const closeDeadline = inAgentCloseWindow
+      ? new Date(Date.now() + this.agentCloseWindowMs(attempt.level)).toISOString()
+      : null;
     await this.db.query(
       `UPDATE sessions SET state = $7::varchar,
                            close_deadline_at = CASE WHEN $7::varchar = 'awaiting_agent_close' THEN $8::timestamptz ELSE NULL END,
@@ -1267,7 +1277,7 @@ export class ReceptionService implements OnModuleInit {
         hitAny || openerStage ? 0 : session.unresolved_streak + 1,
         JSON.stringify(conversationState),
         inAgentCloseWindow ? 'awaiting_agent_close' : 'waiting_buyer',
-        inAgentCloseWindow ? new Date(Date.now() + this.AGENT_CLOSE_WINDOW_MS).toISOString() : null,
+        closeDeadline,
       ]
     );
 
@@ -1308,7 +1318,7 @@ export class ReceptionService implements OnModuleInit {
     }
 
     if (inAgentCloseWindow) {
-      this.scheduleAgentClose(sessionId, Date.now() + this.AGENT_CLOSE_WINDOW_MS);
+      this.scheduleAgentClose(sessionId, Date.parse(closeDeadline!));
     } else {
       const rng = createRng(now + sessionId);
       const thinkDelay = 3000 + Math.round(rng() * 4000);
