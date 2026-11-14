@@ -16,6 +16,8 @@ function derivedQuestionFor(question: string, index: number, used: Set<string>):
     [/发货|出库|多久发/u, ['那一般什么时候可以发出呢？', '发出后大概多久能收到呢？']],
     [/物流|快递|配送|到货|签收/u, ['那物流大概几天能到呢？', '如果物流停滞，可以帮我跟进吗？']],
     [/尺码|尺寸|身高|体重|版型/u, ['那我这个身材应该怎么选尺码呢？', '如果尺码不合适，可以换吗？']],
+    [/买家秀|实拍|实物图|视频/u, ['这款商品的买家秀或实拍视频在哪里可以看呢？', '实拍图片能看清这款商品的颜色和细节吗？']],
+    [/洗涤|干洗|机洗|水洗|手洗|清洗|洗标/u, ['清洗这件衣服时有哪些需要注意的地方呢？', '如果不适合机洗，这件衣服应该怎么清洗呢？']],
     [/材质|面料|透气|厚度|成分/u, ['那穿起来会不会闷或不舒服呢？', '平时清洗和打理有什么要注意的吗？']],
     [/做工|走线|质量|瑕疵|损坏/u, ['如果收到后发现问题，售后怎么处理呢？', '这种情况可以退换或补发吗？']],
     [/工艺|包边|锁边|内衬|领口|袖口|针脚|细节|耐穿/u, ['这种工艺日常耐穿吗，清洗打理要注意什么？', '如果做工细节有问题，售后可以处理吗？']],
@@ -26,15 +28,15 @@ function derivedQuestionFor(question: string, index: number, used: Set<string>):
   const matched = topicTemplates.find(([pattern]) => pattern.test(text))?.[1];
   const candidates = matched?.length
     ? matched
-    : ['那具体应该怎么处理呢？', '还有哪些需要我提前注意的吗？', '平时使用和保养有什么要注意的吗？'];
+    : [`关于“${text.replace(/[？?！!。\s]+$/u, '')}”，还有哪些需要注意的呢？`];
   // 从 index 对应位置起找本轮还没用过的问法，避免多个不同父题兜底到同一句。
   for (let i = 0; i < candidates.length; i += 1) {
     const candidate = candidates[(index + i) % candidates.length];
     if (!used.has(candidate)) return candidate;
   }
   // 该主题候选全部用过时，按父题主题生成一句唯一的兜底追问。
-  const topic = text.replace(/[？?！!，,。.、；;：:\s]/gu, '').slice(0, 10);
-  return `那关于「${topic}」具体要注意什么呢？`;
+  const topic = text.replace(/[？?！!。\s]+$/u, '');
+  return `关于“${topic}”，可以再帮我确认一下吗？`;
 }
 
 /** 为短剧本补充同主题问题，供会话在不足最低轮次时使用。 */

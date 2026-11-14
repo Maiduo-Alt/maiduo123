@@ -83,6 +83,52 @@ describe('在线模拟接待端到端链路', () => {
     await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
   }, 60000);
 
+  it('开场问候计首响，正式首题单独计入平均响应', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-opener-timing', JSON.stringify(DEFAULT_PARAMS)],
+    );
+    const questions = [{ seq: 1, question: '这款是什么面料？', keyPoints: ['面料'], stage: 'presale' }];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, opener_pending, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 0, 1, $2::jsonb, true, $3) RETURNING id`,
+      [attempt.id, JSON.stringify(questions), new Date(Date.now() - 4000).toISOString()],
+    );
+    const reception = app.get(ReceptionService);
+    const opening = await reception.sendMessage(1, attempt.id, session.id, '亲您好，我在的，请问有什么可以帮您？');
+    expect(opening.responseSec).toBeGreaterThanOrEqual(3);
+    await sharedDb.query(`UPDATE sessions SET state = 'serving', opener_pending = false, current_seq = 1, last_buyer_at = $2 WHERE id = $1`,
+      [session.id, new Date(Date.now() - 12000).toISOString()]);
+    const reply = await reception.sendMessage(1, attempt.id, session.id, '亲，这款面料是纯棉的。');
+    expect(reply.responseSec).toBeGreaterThanOrEqual(11);
+    await reception.finishSession(1, attempt.id, session.id);
+    const result = await reception.attemptResult(attempt.id);
+    expect(result.sessions[0].metrics.firstResponseSec).toBe(opening.responseSec);
+    expect(result.sessions[0].metrics.avgResponseSec).toBe(reply.responseSec);
+  }, 60000);
+
+  it('洗标待核实回复不判敷衍，也不提前完成语义目标', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-pending-verification', JSON.stringify(DEFAULT_PARAMS)],
+    );
+    const questions = [{ seq: 1, question: '能机洗吗？', keyPoints: ['机洗'], stage: 'presale',
+      semanticGoals: [{ id: 'wash', name: '说明是否机洗', requiredPoints: [{ id: 'machine', label: '机洗', matchAny: ['机洗'] }] }] }];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, $3) RETURNING id`,
+      [attempt.id, JSON.stringify(questions), new Date().toISOString()],
+    );
+    const reception = app.get(ReceptionService);
+    const reply = await reception.sendMessage(1, attempt.id, session.id, '亲您好，是否可以机洗请以衣服洗标为准，我可以帮您核实水洗方式。');
+    expect(reply.ruleResult.judge.signal).toBe('hedge');
+    expect(reply.ruleResult.hitPoints).toEqual([]);
+    expect(reply.ruleResult.goalProgress[0].status).toBe('untriggered');
+    await reception.finishSession(1, attempt.id, session.id);
+  }, 60000);
+
   it.each([['L1', 300], ['L2', 30], ['L3', 30], ['L4', 30]])(
     '%s 整理阶段按难度设置和重置倒计时',
     async (level, expectedSeconds) => {

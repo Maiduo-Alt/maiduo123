@@ -58,6 +58,11 @@ describe('followUpEmotionDelta：追问带来的情绪变化', () => {
 
 
 describe('buildMissingPointFollowUpText：部分完成只追缺失语义点', () => {
+  it('将不完整的尺码规则词整理成完整的买家问题', () => {
+    const text = buildMissingPointFollowUpText('friendly', ['偏小', '版型偏'], 0);
+    expect(text).toContain('版型偏大还是偏小');
+    expect(text).not.toContain('偏小、版型偏');
+  });
   it('不复读整道原题，而是围绕缺失点追问', () => {
     const text = buildMissingPointFollowUpText('friendly', ['是否影响二次销售'], 0);
     expect(text).toContain('是否影响二次销售');

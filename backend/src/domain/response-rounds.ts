@@ -54,6 +54,7 @@ export function computeResponseRounds(
 ): ResponseRoundsResult {
   const agentMessages = messages.filter((m) => m.sender === 'agent');
   const timed = agentMessages.filter((m) => typeof m.responseSec === 'number' && (m.responseSec as number) >= 0);
+  const questionTimed = timed.filter((m) => !m.openerTiming);
 
   // 轮次边界：优先用提问序列；没有提问序列时退化为「消息里出现过的轮次号」
   const seqs = questions.length
@@ -66,7 +67,7 @@ export function computeResponseRounds(
 
   const rounds: RoundTiming[] = seqs.map((seq) => {
     // 该轮的第一条「有响应时长」的客服消息 = 该轮首条有效回复
-    const hit = timed.find((m) => m.questionSeq === seq);
+    const hit = questionTimed.find((m) => m.questionSeq === seq);
     return {
       seq,
       answered: !!hit,
@@ -80,8 +81,8 @@ export function computeResponseRounds(
 
   // 首次响应：按消息顺序的第一条有效回复（与轮次无关，方案 4.2 口径）
   const firstResponseSec = timed.length ? Math.round(timed[0].responseSec as number) : null;
-  const replyRatePct = timed.length
-    ? (timed.filter((m) => (m.responseSec as number) <= params.timeoutSec).length / timed.length) * 100
+  const replyRatePct = questionTimed.length
+    ? (questionTimed.filter((m) => (m.responseSec as number) <= params.timeoutSec).length / questionTimed.length) * 100
     : 0;
 
   return {

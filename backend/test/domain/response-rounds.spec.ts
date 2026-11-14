@@ -18,6 +18,14 @@ const reply = (seq: number, responseSec: number | null): ScoreMessage => ({
 });
 
 describe('响应时长按轮次建模（抖店官方口径）', () => {
+  it('首响包含开场回应，但平均时长使用正式问题的回复', () => {
+    const opening = { ...reply(1, 4), openerTiming: true };
+    const result = computeResponseRounds([buyer(1), opening, buyer(1), reply(1, 20)], [questions[0]], params);
+    expect(result.firstResponseSec).toBe(4);
+    expect(result.avgResponseSec).toBe(20);
+    expect(result.answeredRounds).toBe(1);
+  });
+
   it('未回复的轮次记 600 秒并计入分母', () => {
     const result = computeResponseRounds(
       [buyer(1), reply(1, 20), buyer(2), reply(2, 40), buyer(3), buyer(4)],

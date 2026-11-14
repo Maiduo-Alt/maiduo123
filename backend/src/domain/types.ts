@@ -291,6 +291,8 @@ export interface ScoreMessage {
   riskItems?: { ruleId: string; label: string; penalty: number; goalId?: string }[];
   /** 语义判定信号（reply-judge）：敷衍回复在话术维度单独扣分（客户 2026-10-11 口径）。 */
   judgeSignal?: string | null;
+  /** 新会话的开场回应只用于首响，不算正式问题轮次的响应。 */
+  openerTiming?: boolean;
 }
 
 export interface SessionScoreInput {

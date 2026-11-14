@@ -1,4 +1,4 @@
-import { judgeReply, isYesNoQuestion, hasStance, hasCompatibleStance, isPerfunctory, isHedge } from '../../src/domain/reply-judge';
+import { judgeReply, isYesNoQuestion, hasStance, hasCompatibleStance, isPerfunctory, isHedge, isPendingVerification } from '../../src/domain/reply-judge';
 
 /**
  * 语义判定器（2026-10-11 客户口径）：
@@ -50,6 +50,8 @@ describe('敷衍识别', () => {
   });
   it('正常回复不是敷衍', () => {
     expect(isPerfunctory({ ...base, reply: '可以的哈，A 字版型很遮胯哦' })).toBe(false);
+    expect(isPerfunctory({ ...base, reply: '亲您好，是否可以机洗请以衣服洗标为准，我可以帮您核实水洗方式。' })).toBe(false);
+    expect(isPerfunctory({ ...base, reply: '亲在的，稍等哦' })).toBe(true);
   });
 });
 
@@ -58,6 +60,16 @@ describe('打太极放行', () => {
     expect(isHedge('这个要看仓库安排哦')).toBe(true);
     expect(isHedge('价格以页面为准呢')).toBe(true);
     expect(isHedge('我们尽快帮您核实')).toBe(true);
+  });
+  it('区分仍需核实与已经明确答复', () => {
+    const pending = '亲您好，是否可以机洗请以衣服洗标为准，我可以帮您核实水洗方式。';
+    expect(isPendingVerification(pending)).toBe(true);
+    expect(judgeReply({ question: '能机洗吗', keyPoints: ['机洗'], buyerText: '能机洗吗', reply: pending }))
+      .toEqual({ pass: false, signal: 'hedge' });
+    expect(isPendingVerification('我帮您核实是否可以机洗，这款可以机洗。')).toBe(false);
+    expect(judgeReply({ question: '能机洗吗', keyPoints: ['机洗'], buyerText: '能机洗吗', reply: '我帮您核实是否可以机洗，这款可以机洗。' }))
+      .toEqual({ pass: true, signal: 'key-point' });
+    expect(isPendingVerification('我帮您核实是否可以机洗，这款不能机洗。')).toBe(false);
   });
 });
 

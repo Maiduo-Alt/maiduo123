@@ -26,7 +26,7 @@ import { allocateStyles, normalizeRatios } from '../../domain/style-ratio';
 import { shouldAbortAsDisconnected } from '../../domain/disconnect';
 import { weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
-import { judgeReply } from '../../domain/reply-judge';
+import { isPendingVerification, judgeReply } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
 import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef, inferQuantityFromTexts } from '../../domain/order';
 import {
@@ -794,7 +794,8 @@ export class ReceptionService implements OnModuleInit {
       ]);
       const countedRounds = await this.db.many<{ sec: number | string }>(
         `SELECT min(response_sec) AS sec FROM messages
-         WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL GROUP BY seq`,
+         WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL
+           AND COALESCE(rule_result->>'openerTiming', 'false') <> 'true' GROUP BY seq`,
         [sessionId]
       );
       const activeRoundCount = session.total_questions - next.skippedSeqs.length;
@@ -932,7 +933,7 @@ export class ReceptionService implements OnModuleInit {
       return;
     }
     const replies = await this.db.many<any>(
-      `SELECT rule_result FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'agent' ORDER BY id`,
+      `SELECT content, rule_result FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'agent' ORDER BY id`,
       [sessionId, session.current_seq]
     );
     // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
@@ -987,6 +988,23 @@ export class ReceptionService implements OnModuleInit {
       (!hasSemanticGoals && judgePassed) ||
       (hasSemanticGoals && stanceResolved);
 
+    // 客服需要买家提供身材数据时，让买家明确回应，而不是反复追问“穿多大”。
+    const latestReply = judgedReplies[judgedReplies.length - 1]?.content || '';
+    if (!resolved && followUps < (maxFollowUps ?? 2) && /尺码|码数|穿什么码|穿多大|版型/u.test(question.question) &&
+        /(?:提供|告诉|告知|测量|量一下).{0,24}(?:身高|体重|腰围|臀围|腰臀围)/u.test(latestReply)) {
+      const buyerMessages = await this.db.many<{ content: string }>(
+        `SELECT content FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'buyer' ORDER BY id`,
+        [sessionId, session.current_seq],
+      );
+      const response = '我的腰臀围暂时不清楚，可以先根据身高体重推荐尺码吗？';
+      if (buyerMessages.some((message) => message.content === response)) {
+        await this.pushNextQuestion(sessionId);
+      } else {
+        await this.pushMissingPointFollowUp(sessionId, session, question, [], followUps, response);
+      }
+      return;
+    }
+
     // 部分完成时，优先追“缺了什么”，而不是把原问题原样再问一遍。
     if (!resolved && partialProgress.length && followUps < (maxFollowUps ?? 2)) {
       const missingLabels = partialProgress.flatMap((progress: any) => {
@@ -1015,8 +1033,9 @@ export class ReceptionService implements OnModuleInit {
     question: ScriptQuestion,
     missingLabels: string[],
     round: number,
+    response?: string,
   ): Promise<void> {
-    const text = buildMissingPointFollowUpText(session.style_code, missingLabels, round);
+    const text = response || buildMissingPointFollowUpText(session.style_code, missingLabels, round);
     await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
       sessionId,
       text,
@@ -1113,7 +1132,8 @@ export class ReceptionService implements OnModuleInit {
     const lastBuyerAt = inAgentCloseWindow ? null : session.last_buyer_at ? new Date(session.last_buyer_at).getTime() : null;
 
     const currentQuestion = session.questions.find((q) => q.seq === session.current_seq) || null;
-    const hitPoints = currentQuestion ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
+    const pendingVerification = isPendingVerification(text);
+    const hitPoints = currentQuestion && !pendingVerification ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
     const vectorCandidates = await findVectorCandidates(
       text,
       buildSemanticCandidates(session.questions),
@@ -1121,6 +1141,10 @@ export class ReceptionService implements OnModuleInit {
       Number(process.env.SEMANTIC_MATCH_THRESHOLD || 0.78)
     );
     const semanticEvaluation = evaluateSemanticReply(text, session.questions, vectorCandidates);
+    if (pendingVerification && currentQuestion) {
+      const currentGoalIds = new Set((currentQuestion.semanticGoals || []).map((goal) => goal.id));
+      semanticEvaluation.goalMatches = semanticEvaluation.goalMatches.filter((match) => !currentGoalIds.has(match.goalId));
+    }
     const hitAny = hitPoints.length > 0 || semanticEvaluation.goalMatches.length > 0;
     // 开场白阶段（买家只发了问候/链接）：任何回应都算有效招呼，不参与要点/情绪扣分
     const openerStage = !!session.opener_pending;
@@ -1129,7 +1153,7 @@ export class ReceptionService implements OnModuleInit {
 
     // C6：无效 / 敷衍回复判定（默认关闭）。走领域纯函数，规则来自 param_snapshot。
     const historyRows = await this.db.many<any>(
-      `SELECT sender, content, seq, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
+      `SELECT sender, content, seq, response_sec, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
       [sessionId]
     );
     const historyMessages: ScoreMessage[] = historyRows.map((m) => ({
@@ -1158,10 +1182,8 @@ export class ReceptionService implements OnModuleInit {
     // 注意 last_buyer_at 在客服回复时**不刷新**，所以本轮稍后的第一条有效回复天然按
     // 「买家发消息 → 该条回复」计时，正好满足官方「回退到首条有效回复」的要求。
     // 被判无效的回复同样不计时，把这一轮留给后面的有效回复（始终没有则按 600 秒）。
-    const alreadyCounted = await this.db.one<{ id: number }>(
-      `SELECT id FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'agent' AND response_sec IS NOT NULL LIMIT 1`,
-      [sessionId, session.current_seq]
-    );
+    const alreadyCounted = historyRows.some((m) => m.sender === 'agent' && m.seq === insertSeq &&
+      m.response_sec !== null && (openerStage ? m.rule_result?.judge?.signal === 'opener' : m.rule_result?.judge?.signal !== 'opener'));
     const responseSec =
       !alreadyCounted && !invalidReason && lastBuyerAt ? Math.max(0, Math.round((now - lastBuyerAt) / 1000)) : null;
     const isTimeout = responseSec !== null && responseSec > Math.round(params.timeoutSec * tolerance);
@@ -1201,6 +1223,7 @@ export class ReceptionService implements OnModuleInit {
 
     const ruleResult = {
       questionSeq: insertSeq,
+      ...(openerStage ? { openerTiming: true } : {}),
       hitPoints,
       semanticEvaluation,
       goalProgress: getGoalProgress(session.questions, allSemanticEvaluations),
@@ -1247,7 +1270,8 @@ export class ReceptionService implements OnModuleInit {
     // 平均响应按官方口径：Σ轮次时长 ÷ 轮次总数，未回复/无有效回复的轮次记 600 秒
     const roundRows = await this.db.many<{ sec: number | string }>(
       `SELECT min(response_sec) AS sec FROM messages
-       WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL GROUP BY seq`,
+       WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL
+         AND COALESCE(rule_result->>'openerTiming', 'false') <> 'true' GROUP BY seq`,
       [sessionId]
     );
     const maxResponseSec = Math.max(session.max_response_sec || 0, responseSec || 0);
@@ -1462,6 +1486,7 @@ export class ReceptionService implements OnModuleInit {
         goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
         riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
         judgeSignal: m.rule_result?.judge?.signal ?? null,
+        openerTiming: m.rule_result?.openerTiming === true,
       })),
       transferredQuestionSeqs: session.transferred_seqs || [],
       skippedQuestionSeqs: session.skipped_seqs || [],

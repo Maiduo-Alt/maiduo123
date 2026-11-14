@@ -63,7 +63,7 @@ const HEDGE_PHRASES = [
   '到时候', '仓库那边', '页面显示', '以实际', '帮您看看', '帮您确认', '帮您核实', '留意', '关注',
 ];
 
-/** 纯语气词开头即敷衍的短回复（识别「亲在的」「稍等哦」这类）。 */
+/** 只包含问候或等待语气的回复（识别「亲在的」「稍等哦」这类）。 */
 const PERFUNCTORY_PHRASES = [
   '亲在的', '在的亲', '在的', '稍等', '等一下', '嗯嗯', '哦哦', '好的好的', '您好亲', '你好亲',
   '亲您好', '有什么可以帮您', '请问有什么', '看到了', '在呢', '在的哦', '好的亲', '好哦',
@@ -103,9 +103,15 @@ export function isPerfunctory(ctx: JudgeContext): boolean {
   if (!reply) return true;
   const stripped = reply.replace(/[\s~～!！?？。，,、.…—\-_=+*#@$%^&()（）\[\]【】"'’“”：:;；]/g, '');
   if (stripped.length <= 1) return true;
-  for (const p of PERFUNCTORY_PHRASES) {
-    if (stripped.startsWith(p.replace(/[\s~～!！?？。，,、.…—\-_=+*#@$%^&()（）\[\]【】"'’“”：:;；]/g, ''))) return true;
+  let remainder = stripped;
+  let removedGreeting = false;
+  while (remainder) {
+    const phrase = PERFUNCTORY_PHRASES.find((p) => remainder.startsWith(p));
+    if (!phrase) break;
+    remainder = remainder.slice(phrase.length);
+    removedGreeting = true;
   }
+  if (removedGreeting && /^[哒呢哦呀哈嘛啊呐啦的]*$/u.test(remainder)) return true;
   // 复读买家原话（把问题复制一遍当回复）；风格化买家一题多发，复读任意一条都算
   const allBuyer = (ctx.buyerTexts && ctx.buyerTexts.length ? ctx.buyerTexts : [ctx.buyerText]).filter(Boolean);
   for (const t of allBuyer) {
@@ -122,6 +128,13 @@ export function isPerfunctory(ctx: JudgeContext): boolean {
 export function isHedge(reply: string): boolean {
   const text = String(reply || '');
   return HEDGE_PHRASES.some((p) => text.includes(p));
+}
+
+/** 客服仍在核实“是否如此”，并没有给出确定的结果。 */
+export function isPendingVerification(reply: string): boolean {
+  if (!isHedge(reply) || !/(是否|能否|能不能|可不可以|需不需要|要不要)/u.test(reply)) return false;
+  // 后面若明确回答了结果，不能因为前文提到待核实就覆盖实际答复。
+  return !/(?:^|[，。；！!])\s*(?:亲|您好|这款|本款|商品|衣服)*(?:可以|不能|不可以|支持|不支持|会|不会)(?:机洗|水洗|手洗|干洗|退货|换货|发货|缩水)/u.test(reply);
 }
 
 /** 要点命中（与同义词表，和 reception.service 的 matchKeyPoints 同口径）。 */
@@ -162,6 +175,7 @@ export function hasCompatibleStance(question: string, reply: string): boolean {
 export function judgeReply(ctx: JudgeContext): JudgeResult {
   const reply = String(ctx.reply || '');
   if (isPerfunctory(ctx)) return { pass: false, signal: 'perfunctory' };
+  if (isPendingVerification(reply)) return { pass: false, signal: 'hedge' };
   const hits = matchPoints(reply, ctx.keyPoints || []);
   if (hits.length > 0) return { pass: true, signal: hits.includes('有效回应') ? 'fallback' : 'key-point' };
   if (hasCompatibleStance(ctx.question, reply)) {

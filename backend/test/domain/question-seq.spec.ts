@@ -18,6 +18,14 @@ describe('问题序列：问题级接待阶段（客户 2026-10-03）', () => {
     expect(first.derivedFromSeq).toBe(1);
     expect(second.stage).toBe('presale');
   });
+  it('实拍和洗护的补题明确指出要询问的内容', () => {
+    const photo = { seq: 1, question: '有没有买家秀或者实拍视频可以看', keyPoints: ['实拍'], stage: 'presale' as const };
+    const wash = { seq: 1, question: '要不要干洗', keyPoints: ['干洗'], stage: 'presale' as const };
+    expect(createMinimumRoundQuestion([photo], photo).question).toMatch(/实拍|买家秀/u);
+    expect(createMinimumRoundQuestion([wash], wash).question).toMatch(/清洗|机洗|洗涤/u);
+    const other = { seq: 1, question: '这款有没有现货', keyPoints: ['现货'], stage: 'presale' as const };
+    expect(createMinimumRoundQuestion([other], other).question).toContain(other.question);
+  });
   it('不足最低轮数时补充与原问题关联的衍生追问', () => {
     const presale = buildQuestionSeq(qa('presale', ['怎么下单？']), [6, 10]);
     const aftersale = buildQuestionSeq(qa('aftersale', ['怎么退货？']), [6, 10]);

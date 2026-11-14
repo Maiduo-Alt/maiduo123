@@ -360,7 +360,8 @@ export class RecordsService {
           messages.some((m: any) => m.sender === 'buyer') && !messages.some((m: any) => m.sender === 'agent');
         const timing = computeResponseRounds(
           messages.map((m: any) => ({ sender: m.sender, content: m.content,
-            questionSeq: m.rule_result?.questionSeq ?? m.seq, responseSec: m.response_sec, isTimeout: m.is_timeout })),
+            questionSeq: m.rule_result?.questionSeq ?? m.seq, responseSec: m.response_sec, isTimeout: m.is_timeout,
+            openerTiming: m.rule_result?.openerTiming === true })),
           questions, DEFAULT_PARAMS, session.skipped_seqs || [], { buyerLeftAfterSingleQuestion }
         );
         const current = responseMap.get(Number(session.attempt_id)) || { sum: 0, rounds: 0 };

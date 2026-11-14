@@ -89,7 +89,12 @@ export function buildMissingPointFollowUpText(
   missingLabels: string[],
   round: number,
 ): string {
-  const labels = [...new Set((missingLabels || []).map((label) => String(label || '').trim()).filter(Boolean))];
+  const labels = [...new Set((missingLabels || []).map((label) => {
+    const value = String(label || '').trim();
+    if (/^(偏大|偏小|版型偏|版型偏大|版型偏小)$/.test(value)) return '版型偏大还是偏小';
+    if (/^(穿多大|什么码|哪个码)$/.test(value)) return '尺码应该怎么选';
+    return value;
+  }).filter(Boolean))];
   const point = labels.slice(0, 2).join('、') || '这个细节';
   const tpl = MISSING_POINT_TEMPLATES[styleCode] || DEFAULT_MISSING_POINT_TEMPLATE;
   return tpl[Math.min(Math.max(round, 0), tpl.length - 1)].replace('{point}', point);
