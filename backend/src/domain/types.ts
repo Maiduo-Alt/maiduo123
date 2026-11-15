@@ -46,6 +46,7 @@ export interface SystemParams {
   levelRounds: [number, number];
   waitToleranceFactor: Record<string, number>;
   levelJoinDelaySec: [number, number];
+  questionPushDelaySec: [number, number];
   highLevelStyleBoost: number;
   emotionEscalateThreshold: number;
   emotionSootheStep: number;
@@ -109,6 +110,7 @@ export const DEFAULT_PARAMS: SystemParams = {
   levelRounds: [6, 10],
   waitToleranceFactor: { L1: 1.5, L2: 1, L3: 1, L4: 1 },
   levelJoinDelaySec: [10, 30],
+  questionPushDelaySec: [3, 7],
   highLevelStyleBoost: 1.5,
   emotionEscalateThreshold: 80,
   emotionSootheStep: 15,

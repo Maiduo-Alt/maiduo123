@@ -54,6 +54,35 @@ describe('在线模拟接待端到端链路', () => {
     throw new Error('等待条件超时');
   }
 
+  it('客服回复后的问题推送使用接待参数快照，并拒绝无效的推送间隔', async () => {
+    const token = await login('admin', 'Admin@123');
+    const auth = `Bearer ${token}`;
+    const invalid = await request(http).put('/api/settings').set('Authorization', auth).send({ questionPushDelaySec: [8, 2] });
+    expect(invalid.body.code).not.toBe(0);
+    const saved = await request(http).put('/api/settings').set('Authorization', auth).send({ questionPushDelaySec: [12, 12] });
+    expect(saved.body.data.questionPushDelaySec).toEqual([12, 12]);
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-push-delay', JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [2, 2] })],
+    );
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question: '是什么面料？', keyPoints: ['纯棉'], stage: 'presale' }])],
+    );
+    const reception = app.get(ReceptionService);
+    const schedule = jest.spyOn((reception as any).scheduler, 'schedule');
+    try {
+      await reception.sendMessage(1, attempt.id, session.id, '亲，这款是纯棉的。');
+      expect(schedule).toHaveBeenCalledWith(`next:${session.id}`, 2000, expect.any(Function));
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      schedule.mockRestore();
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+      await request(http).put('/api/settings').set('Authorization', auth).send({ questionPushDelaySec: [3, 7] });
+    }
+  });
+
   it('旧单题剧本至少推送三轮，再进入客服整理阶段', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, $2, 'L1', 'free', $3::jsonb) RETURNING id`,

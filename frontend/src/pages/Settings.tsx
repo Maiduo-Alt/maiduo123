@@ -40,6 +40,8 @@ export default function Settings() {
       roundsMax: data.levelRounds[1],
       joinMin: data.levelJoinDelaySec[0],
       joinMax: data.levelJoinDelaySec[1],
+      questionPushMin: data.questionPushDelaySec[0],
+      questionPushMax: data.questionPushDelaySec[1],
       emotionEscalateThreshold: data.emotionEscalateThreshold,
       messageMaxLength: data.messageMaxLength,
       aftersaleQuestionRatio: data.aftersaleQuestionRatio ?? 20,
@@ -113,6 +115,7 @@ export default function Settings() {
           levelTotal,
           levelRounds: [values.roundsMin, values.roundsMax],
           levelJoinDelaySec: [values.joinMin, values.joinMax],
+          questionPushDelaySec: [values.questionPushMin, values.questionPushMax],
           emotionEscalateThreshold: values.emotionEscalateThreshold,
           messageMaxLength: values.messageMaxLength,
           // 客户 2026-10-03：一次接待里「买完商品后的订单类问题」占比（默认 20）
@@ -254,6 +257,18 @@ export default function Settings() {
           <Col span={4}>
             <Form.Item name="joinMax" label="进线间隔上限（秒）">
               <InputNumber min={0} max={600} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col span={6}>
+            <Form.Item name="questionPushMin" label="问题推送间隔下限（秒）" rules={[{ required: true, message: '请输入下限' }]}>
+              <InputNumber min={0} max={600} precision={0} style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col span={6}>
+            <Form.Item name="questionPushMax" label="问题推送间隔上限（秒）" rules={[{ required: true, message: '请输入上限' }]} tooltip="客服回复后，买家在此范围内推送下一问题或追问；新接待生效">
+              <InputNumber min={0} max={600} precision={0} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
         </Row>

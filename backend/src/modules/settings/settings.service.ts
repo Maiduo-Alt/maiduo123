@@ -31,6 +31,11 @@ export class SettingsService {
     if (next.passLine < 0 || next.passLine > 100) throw new BizError(ERR.PARAM, '达标线取值范围为 0～100');
     if (next.maxConcurrent < 1 || next.maxConcurrent > 4) throw new BizError(ERR.PARAM, '并发接待上限取值范围为 1～4');
     if (next.levelRounds[0] > next.levelRounds[1]) throw new BizError(ERR.PARAM, '问题轮数下限不能大于上限');
+    if (!Array.isArray(next.questionPushDelaySec) || next.questionPushDelaySec.length !== 2 ||
+        next.questionPushDelaySec.some((value) => !Number.isInteger(value) || value < 0 || value > 600) ||
+        next.questionPushDelaySec[0] > next.questionPushDelaySec[1]) {
+      throw new BizError(ERR.PARAM, '问题推送间隔须为 0～600 秒，且下限不能大于上限');
+    }
     // 客户新增需求：各难度接入人数在 1～4 之间。
     // 与全局上限的关系是 min(本档人数, maxConcurrent)，所以这里不因为超过上限而拒绝，
     // 否则「先把上限调小」这种正常操作会被挡住。

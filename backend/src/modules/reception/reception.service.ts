@@ -1382,7 +1382,8 @@ export class ReceptionService implements OnModuleInit {
     } else if (!waitingForEscalationReply) {
       if (session.current_seq === 0 && !session.opener_pending) this.scheduler.cancel(`join:${sessionId}`);
       const rng = createRng(now + sessionId);
-      const thinkDelay = 3000 + Math.round(rng() * 4000);
+      const [minDelay, maxDelay] = params.questionPushDelaySec ?? [3, 7];
+      const thinkDelay = Math.round((minDelay + rng() * (maxDelay - minDelay)) * 1000);
       // 2026-10-11 自适应推送：不再无条件推下一题，先看本轮回复是否答到要点
       this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.advanceAfterReply(sessionId));
     }
