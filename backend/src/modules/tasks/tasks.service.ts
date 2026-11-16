@@ -236,9 +236,12 @@ export class TasksService {
     return { taskId: attempt.task_id, passed, details };
   }
 
-  async report(taskId: number) {
+  async report(taskId: number, user: AuthUser) {
+    if (user.roleCode === 'leader' && !user.groupId) throw new BizError(ERR.FORBIDDEN, '主管未分配小组');
     const task = await this.db.one(`SELECT * FROM tasks WHERE id = $1`, [taskId]);
     if (!task) throw new BizError(ERR.NOT_FOUND, '任务不存在');
+    const scope = user.roleCode === 'agent' ? ' AND ta.account_id = $2' : user.roleCode === 'leader' ? ' AND ac.group_id = $2' : '';
+    const args = user.roleCode === 'agent' ? [taskId, user.id] : user.roleCode === 'leader' ? [taskId, user.groupId] : [taskId];
     const assignees = await this.db.many<any>(
       `SELECT ta.account_id AS "accountId", ac.display_name AS "accountName", ta.done_count AS "doneCount", ta.passed_levels AS "passedLevels",
               ta.status, avg(a.total_score) AS "avgScoreRaw",
@@ -247,11 +250,12 @@ export class TasksService {
        FROM task_assignees ta
        LEFT JOIN accounts ac ON ac.id = ta.account_id
        LEFT JOIN attempts a ON a.account_id = ta.account_id AND a.task_id = ta.task_id
-       WHERE ta.task_id = $1
+       WHERE ta.task_id = $1${scope}
        GROUP BY ta.id, ta.account_id, ac.display_name, ta.done_count, ta.status
        ORDER BY ta.id`,
-      [taskId]
+      args
     );
+    if (user.roleCode !== 'admin' && !assignees.length) throw new BizError(ERR.FORBIDDEN, '无权查看该任务报表');
     const rows = assignees.map((row) => ({
       ...row,
       avgScore: Math.round(Number(row.avgScoreRaw || 0) * 10) / 10,

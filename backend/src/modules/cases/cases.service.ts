@@ -5,6 +5,7 @@ import { normalizePage, pageResult, PageQuery } from '../../common/pagination';
 import { base64ToBuffer, parseXlsx } from '../../common/xlsx';
 import { parseCsv } from '../../common/csv';
 import { pickCaseAdapter } from '../../domain/case-adapters';
+import { AuthUser } from '../../common/decorators';
 
 @Injectable()
 export class CasesService {
@@ -255,9 +256,9 @@ export class CasesService {
    * 把一次训练接待标记为典型案例推入案例库（方案 F5-09）。
    * 标题里带接待编号，天然按「这一次接待」去重，不需要额外加字段。
    */
-  async fromAttempt(attemptId: number, accountId: number, highlight = false) {
+  async fromAttempt(attemptId: number, user: AuthUser, highlight = false) {
     const attempt = await this.db.one<any>(
-      `SELECT a.id, a.attempt_no AS "attemptNo", a.level, a.status, a.conclusion, g.name AS "groupName"
+      `SELECT a.id, a.attempt_no AS "attemptNo", a.level, a.status, a.conclusion, g.name AS "groupName", ac.group_id AS "groupId"
        FROM attempts a
        LEFT JOIN accounts ac ON ac.id = a.account_id
        LEFT JOIN groups g ON g.id = ac.group_id
@@ -265,6 +266,7 @@ export class CasesService {
       [attemptId]
     );
     if (!attempt) throw new BizError(ERR.NOT_FOUND, '接待记录不存在');
+    if (user.roleCode === 'leader' && (!user.groupId || attempt.groupId !== user.groupId)) throw new BizError(ERR.FORBIDDEN, '无权操作其他小组的记录');
     if (attempt.status === 'running') throw new BizError(ERR.PARAM, '接待尚未结束，结束后才能转为案例');
 
     const title = `训练明细-${attempt.attemptNo}（${attempt.level}）`.slice(0, 160);
@@ -299,7 +301,7 @@ export class CasesService {
     const caseRow = await this.db.one<{ id: number }>(
       `INSERT INTO cases (title, source_type, shop, stage, tags, message_count, duration_sec, status, created_by)
        VALUES ($1,'attempt',$2,$3,$4::jsonb,$5,0,'ready',$6) RETURNING id`,
-      [title, attempt.groupName ?? null, stage, JSON.stringify(tags), messages.length, accountId]
+      [title, attempt.groupName ?? null, stage, JSON.stringify(tags), messages.length, user.id]
     );
     for (let index = 0; index < messages.length; index += 1) {
       await this.db.query(`INSERT INTO case_messages (case_id, seq, sender, content) VALUES ($1,$2,$3,$4)`, [

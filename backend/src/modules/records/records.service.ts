@@ -41,7 +41,8 @@ export class RecordsService {
     if (user.roleCode === 'agent') {
       args.push(user.id);
       where.push(`a.account_id = $${args.length}`);
-    } else if (user.roleCode === 'leader' && user.groupId) {
+    } else if (user.roleCode === 'leader') {
+      if (!user.groupId) throw new BizError(ERR.FORBIDDEN, '主管未分配小组');
       args.push(user.groupId);
       where.push(`ac.group_id = $${args.length}`);
     }
@@ -96,6 +97,7 @@ export class RecordsService {
     const days = Math.min(90, Math.max(7, Number(query.days) || 30));
     const accountId =
       user.roleCode === 'agent' ? user.id : query.accountId ? Number(query.accountId) : user.id;
+    if (user.roleCode === 'leader') await this.assertGroupScope(user, accountId);
     const granularity = query.granularity === 'day' ? 'day' : 'session';
     // 当天口径按服务器本地日期算（8:00 起算更贴近排班；这里取 0 点，简单且可复算）
     const todayStart = new Date();
@@ -427,6 +429,7 @@ export class RecordsService {
     );
     if (!attempt) throw new BizError(ERR.NOT_FOUND, '接待记录不存在');
     if (user.roleCode === 'agent' && attempt.account_id !== user.id) throw new BizError(ERR.FORBIDDEN, '无权查看他人接待记录');
+    if (user.roleCode === 'leader') await this.assertGroupScope(user, attempt.account_id);
 
     const sessions = await this.db.many<any>(
       `SELECT s.id, s.buyer_name AS "buyerName", s.style_code AS "styleCode", s.state, s.current_seq AS "seq",
@@ -507,9 +510,9 @@ export class RecordsService {
 
   /** 主管只能操作本组客服的记录（方案 2.2：训练报表查看限定本组）。 */
   private async assertGroupScope(user: AuthUser, ownerId: number): Promise<void> {
-    if (!user.groupId) return;
+    if (!user.groupId) throw new BizError(ERR.FORBIDDEN, '主管未分配小组');
     const owner = await this.db.one<{ group_id: number }>(`SELECT group_id FROM accounts WHERE id = $1`, [ownerId]);
-    if (owner && owner.group_id !== user.groupId) throw new BizError(ERR.FORBIDDEN, '无权操作其他小组的记录');
+    if (!owner || owner.group_id !== user.groupId) throw new BizError(ERR.FORBIDDEN, '无权操作其他小组的记录');
   }
 
   /** 个人成绩概览：用于首页仪表盘。 */

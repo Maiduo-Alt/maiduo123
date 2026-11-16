@@ -12,6 +12,7 @@ export interface AuthUser {
   displayName: string;
   roleCode: string;
   groupId: number | null;
+  tokenVersion: number;
 }
 
 export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext): AuthUser => {

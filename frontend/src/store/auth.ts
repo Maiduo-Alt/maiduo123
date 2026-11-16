@@ -11,6 +11,8 @@ export interface Profile {
   mobile?: string | null;
   preference?: Record<string, any> | null;
   avatarUrl?: string | null;
+  mustChangePassword?: boolean;
+  notice?: string | null;
 }
 
 interface AuthState {
@@ -20,7 +22,7 @@ interface AuthState {
   passwordNotice: string | null;
   login: (username: string, password: string) => Promise<{ mustChangePassword: boolean; notice: string | null }>;
   clearPasswordNotice: () => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   load: () => Promise<void>;
   hasRole: (...roles: string[]) => boolean;
 }
@@ -51,15 +53,19 @@ export const useAuth = create<AuthState>((set, get) => ({
   clearPasswordNotice() {
     set({ passwordNotice: null });
   },
-  logout() {
+  async logout() {
+    try {
+      if (getToken()) await api('/auth/logout', { method: 'POST' });
+    } finally {
     setToken(null);
     set({ profile: null, passwordNotice: null });
+    }
   },
   async load() {
     if (!getToken()) return;
     try {
       const profile = await api<Profile>('/auth/profile');
-      set({ profile });
+      set({ profile, passwordNotice: profile.mustChangePassword ? profile.notice || '请先修改密码' : null });
     } catch {
       set({ profile: null });
     }

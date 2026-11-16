@@ -12,10 +12,9 @@ export class AuthController {
     return this.auth.login(body.username, body.password);
   }
 
-  @Public()
   @Post('logout')
-  logout() {
-    return { success: true };
+  logout(@CurrentUser() user: AuthUser) {
+    return this.auth.logout(user.id);
   }
 
   @Get('profile')
@@ -34,7 +33,7 @@ export class AuthController {
   /** 续签登录令牌（方案 7.2） */
   @Post('refresh')
   refresh(@CurrentUser() user: AuthUser) {
-    return this.auth.refresh(user.id);
+    return this.auth.refresh(user.id, user.tokenVersion);
   }
 
   @Post('change-password')

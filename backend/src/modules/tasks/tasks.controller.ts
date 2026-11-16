@@ -24,8 +24,8 @@ export class TasksController {
   }
 
   @Get(':id/report')
-  report(@Param('id') id: string) {
-    return this.tasks.report(Number(id));
+  report(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.tasks.report(Number(id), user);
   }
 
   @Roles('admin', 'leader')

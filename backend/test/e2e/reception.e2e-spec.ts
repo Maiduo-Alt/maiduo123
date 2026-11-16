@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { DbService } from '../../src/db/db.service';
 import { ReceptionService } from '../../src/modules/reception/reception.service';
+import { AuthService } from '../../src/modules/auth/auth.service';
 import { DEFAULT_PARAMS } from '../../src/domain/types';
 import { AllExceptionsFilter } from '../../src/common/all-exceptions.filter';
 import { ResponseInterceptor } from '../../src/common/response.interceptor';
@@ -53,6 +54,46 @@ describe('在线模拟接待端到端链路', () => {
     }
     throw new Error('等待条件超时');
   }
+
+  it('账号停用及管理员重置密码后旧令牌不能访问业务接口', async () => {
+    const token = await login('agent2', 'Agent@123');
+    const auth = `Bearer ${token}`;
+    try {
+      await sharedDb.query(`UPDATE accounts SET status = 0 WHERE username = $1`, ['agent2']);
+      const disabled = await request(http).get('/api/records').set('Authorization', auth);
+      expect(disabled.body.code).not.toBe(0);
+      await sharedDb.query(`UPDATE accounts SET status = 1, must_change_password = true WHERE username = $1`, ['agent2']);
+      const restricted = await request(http).get('/api/records').set('Authorization', auth);
+      expect(restricted.body.code).not.toBe(0);
+      const profile = await request(http).get('/api/auth/profile').set('Authorization', auth);
+      expect(profile.body.code).toBe(0);
+    } finally {
+      await sharedDb.query(`UPDATE accounts SET status = 1, must_change_password = false WHERE username = $1`, ['agent2']);
+    }
+  });
+
+  it('退出后旧令牌失效，新登录令牌仍可使用', async () => {
+    const oldToken = await login('agent2', 'Agent@123');
+    const port = (http.address() as any).port as number;
+    const socket = io(`http://127.0.0.1:${port}`, { path: '/realtime', auth: { token: oldToken }, transports: ['websocket'], reconnection: false });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('实时连接超时')), 5000);
+      socket.on('reception.connected', () => { clearTimeout(timer); resolve(); });
+    });
+    const disconnected = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('实时连接未断开')), 5000);
+      socket.on('disconnect', () => { clearTimeout(timer); resolve(); });
+    });
+    const response = await request(http).post('/api/auth/logout').set('Authorization', `Bearer ${oldToken}`);
+    expect(response.body.code).toBe(0);
+    await disconnected;
+    socket.close();
+    const stale = await request(http).get('/api/records').set('Authorization', `Bearer ${oldToken}`);
+    expect(stale.body.code).not.toBe(0);
+    const newToken = await login('agent2', 'Agent@123');
+    const fresh = await request(http).get('/api/records').set('Authorization', `Bearer ${newToken}`);
+    expect(fresh.body.code).toBe(0);
+  });
 
   it('客服回复后的问题推送使用接待参数快照，并拒绝无效的推送间隔', async () => {
     const token = await login('admin', 'Admin@123');
@@ -742,6 +783,7 @@ describe('在线模拟接待端到端链路', () => {
     const refreshed = await request(http).post('/api/auth/refresh').set(auth);
     expect(refreshed.body.code).toBe(0);
     expect(typeof refreshed.body.data.token).toBe('string');
+    expect((await request(http).get('/api/auth/profile').set('Authorization', `Bearer ${refreshed.body.data.token}`)).body.code).toBe(0);
     expect(refreshed.body.data.profile.roleCode).toBe('admin');
 
     const anon = await request(http).post('/api/auth/refresh');
@@ -755,6 +797,44 @@ describe('在线模拟接待端到端链路', () => {
       .send({ name: '预热二组（改名）' });
     expect(updated.body.code).toBe(0);
   }, 60000);
+
+  it('续签守卫通过后会话被撤销，不能签发有效新令牌', async () => {
+    const token = await login('agent2', 'Agent@123');
+    const authService = app.get(AuthService);
+    const refresh = authService.refresh.bind(authService);
+    const spy = jest.spyOn(authService, 'refresh').mockImplementation(async (accountId, version) => {
+      await authService.logout(accountId);
+      return refresh(accountId, version);
+    });
+    try {
+      const response = await request(http).post('/api/auth/refresh').set('Authorization', `Bearer ${token}`);
+      expect(response.body.code).toBe(1002);
+      expect(response.body.data?.token).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('重置密码后个人资料恢复强制改密状态，改密后重新登录解除限制', async () => {
+    const adminToken = await login('admin', 'Admin@123');
+    const admin = { Authorization: `Bearer ${adminToken}` };
+    const created = await request(http).post('/api/accounts').set(admin)
+      .send({ username: 'reset_profile_probe', password: 'Probe@123', displayName: '改密探针', roleCode: 'agent' });
+    expect(created.body.code).toBe(0);
+    const reset = await request(http).post(`/api/accounts/${created.body.data.id}/reset-password`).set(admin).send({ password: 'Reset@123' });
+    expect(reset.body.code).toBe(0);
+    const loginRes = await request(http).post('/api/auth/login').send({ username: 'reset_profile_probe', password: 'Reset@123' });
+    expect(loginRes.body.data.mustChangePassword).toBe(true);
+    const auth = { Authorization: `Bearer ${loginRes.body.data.token}` };
+    const profile = await request(http).get('/api/auth/profile').set(auth);
+    expect(profile.body.data).toMatchObject({ mustChangePassword: true, notice: expect.any(String) });
+    expect((await request(http).get('/api/records').set(auth)).body.code).not.toBe(0);
+    expect((await request(http).post('/api/auth/change-password').set(auth).send({ oldPassword: 'Reset@123', newPassword: 'Newpass123' })).body.code).toBe(0);
+    const newToken = await login('reset_profile_probe', 'Newpass123');
+    const updatedProfile = await request(http).get('/api/auth/profile').set('Authorization', `Bearer ${newToken}`);
+    expect(updatedProfile.body.data).toMatchObject({ mustChangePassword: false, notice: null });
+    expect((await request(http).get('/api/records').set('Authorization', `Bearer ${newToken}`)).body.code).toBe(0);
+  });
 
   it('情绪升级：情绪值达到阈值后买家追加升级追问（方案 3.7.4 / 9.2 场景四）', async () => {
     const adminToken = await login('admin', 'Admin@123');
@@ -1598,6 +1678,9 @@ describe('在线模拟接待端到端链路', () => {
         .set(auth)
         .attach('file', Buffer.from('not-an-image'), { filename: 'a.txt', contentType: 'text/plain' });
       expect(rejected.body.code).not.toBe(0);
+      const disguised = await request(http).post('/api/uploads').set(auth)
+        .attach('file', Buffer.from('not-an-image'), { filename: 'a.png', contentType: 'image/png' });
+      expect(disguised.body.code).not.toBe(0);
 
       const agentToken = await login('agent', 'Agent@123');
       const denied = await request(http)

@@ -5,6 +5,7 @@ import { DbService } from '../../db/db.service';
 import { BizError, ERR } from '../../common/errors';
 import { maskMobile } from '../../common/mask';
 import { SettingsService } from '../settings/settings.service';
+import { SessionEvents } from '../../common/session-events';
 
 interface AccountRow {
   id: number;
@@ -21,6 +22,7 @@ interface AccountRow {
   locked_until: string | null;
   password_changed_at: string | null;
   must_change_password: boolean;
+  token_version: number;
 }
 
 @Injectable()
@@ -28,7 +30,8 @@ export class AuthService {
   constructor(
     private readonly db: DbService,
     private readonly jwt: JwtService,
-    private readonly settings: SettingsService
+    private readonly settings: SettingsService,
+    private readonly events: SessionEvents
   ) {}
 
   async login(username: string, password: string) {
@@ -67,6 +70,7 @@ export class AuthService {
       displayName: account.display_name,
       roleCode: account.role_code,
       groupId: account.group_id,
+      tokenVersion: account.token_version,
     });
     await this.db.query(
       `UPDATE accounts SET last_login_at = now(), login_fail_count = 0, locked_until = NULL WHERE id = $1`,
@@ -96,23 +100,32 @@ export class AuthService {
   async profile(accountId: number) {
     const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [accountId]);
     if (!account) throw new BizError(ERR.NOT_FOUND, '账号不存在');
-    return this.toProfile(account);
+    const params = await this.settings.getParams();
+    const changedAt = account.password_changed_at ? Date.parse(account.password_changed_at) : null;
+    const passwordExpired = Boolean(params.passwordMaxAgeDays > 0 && changedAt && Date.now() - changedAt > params.passwordMaxAgeDays * 24 * 3600 * 1000);
+    return {
+      ...this.toProfile(account),
+      mustChangePassword: account.must_change_password || passwordExpired,
+      notice: passwordExpired ? `密码已超过 ${params.passwordMaxAgeDays} 天有效期，请立即修改` : account.must_change_password ? '管理员已重置你的密码，请登录后立即修改' : null,
+    };
   }
 
   /**
    * 续签访问令牌（方案 7.2 `/api/auth/refresh`）。
    * 需要携带仍有效的令牌；账号被停用时拒绝续签，避免停用后旧令牌长期可用。
    */
-  async refresh(accountId: number) {
+  async refresh(accountId: number, tokenVersion: number) {
     const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [accountId]);
     if (!account) throw new BizError(ERR.UNAUTHORIZED, '账号不存在');
     if (account.status !== 1) throw new BizError(ERR.FORBIDDEN, '账号已停用，请联系管理员');
+    if (account.token_version !== tokenVersion) throw new BizError(ERR.UNAUTHORIZED, '登录状态已失效，请重新登录');
     const token = await this.jwt.signAsync({
       sub: account.id,
       username: account.username,
       displayName: account.display_name,
       roleCode: account.role_code,
       groupId: account.group_id,
+      tokenVersion,
     });
     return { token, profile: this.toProfile(account) };
   }
@@ -137,10 +150,17 @@ export class AuthService {
     }
     this.assertPasswordStrength(newPassword);
     await this.db.query(
-      `UPDATE accounts SET password_hash = $2, password_changed_at = now(), must_change_password = false, updated_at = now()
+      `UPDATE accounts SET password_hash = $2, password_changed_at = now(), must_change_password = false, token_version = token_version + 1, updated_at = now()
        WHERE id = $1`,
       [accountId, bcrypt.hashSync(newPassword, 10)]
     );
+    this.events.emit('revoke', accountId);
+    return { success: true };
+  }
+
+  async logout(accountId: number) {
+    await this.db.query(`UPDATE accounts SET token_version = token_version + 1 WHERE id = $1`, [accountId]);
+    this.events.emit('revoke', accountId);
     return { success: true };
   }
 

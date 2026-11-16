@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy } from '@nestjs/common';
 import {
   MessageBody,
   OnGatewayConnection,
@@ -10,13 +10,15 @@ import {
 import { ConnectedSocket } from '@nestjs/websockets';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
+import { DbService } from '../../db/db.service';
+import { SessionEvents } from '../../common/session-events';
 
 /** 实时通道：推送买家消息、计时同步与超时提醒。 */
 @WebSocketGateway({
   path: '/realtime',
   cors: { origin: true, credentials: true },
 })
-export class ReceptionGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ReceptionGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
   private readonly logger = new Logger(ReceptionGateway.name);
 
   @WebSocketServer()
@@ -44,7 +46,15 @@ export class ReceptionGateway implements OnGatewayConnection, OnGatewayDisconnec
       : { sockets: 0, lastSeenAt: 0, everConnected: false };
   }
 
-  constructor(private readonly jwt: JwtService) {}
+  private readonly revokeSockets = (userId: number) => this.server?.in(`user:${userId}`).disconnectSockets(true);
+
+  constructor(private readonly jwt: JwtService, private readonly db: DbService, private readonly events: SessionEvents) {
+    this.events.on('revoke', this.revokeSockets);
+  }
+
+  onModuleDestroy(): void {
+    this.events.off('revoke', this.revokeSockets);
+  }
 
   async handleConnection(socket: Socket): Promise<void> {
     try {
@@ -53,8 +63,14 @@ export class ReceptionGateway implements OnGatewayConnection, OnGatewayDisconnec
         (socket.handshake.query?.token as string) ||
         (socket.handshake.headers?.authorization as string)?.replace('Bearer ', '');
       const payload: any = await this.jwt.verifyAsync(token);
+      const account = await this.db.one<{ status: number; must_change_password: boolean; token_version: number }>(
+        `SELECT status, must_change_password, token_version FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [payload.sub],
+      );
+      if (!account || account.status !== 1 || account.must_change_password || account.token_version !== payload.tokenVersion) throw new Error('无效会话');
       socket.data.userId = payload.sub;
+      socket.data.token = token;
       await socket.join(`user:${payload.sub}`);
+      socket.data.expiryTimer = setTimeout(() => socket.disconnect(true), Math.max(0, payload.exp * 1000 - Date.now()));
       this.touch(payload.sub, 1);
       socket.emit('reception.connected', { userId: payload.sub });
     } catch {
@@ -64,6 +80,7 @@ export class ReceptionGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   handleDisconnect(socket: Socket): void {
+    clearTimeout(socket.data?.expiryTimer);
     this.logger.debug(`客户端断开: ${socket.id}`);
     const userId = socket.data?.userId as number | undefined;
     if (userId) this.touch(userId, -1);
@@ -79,9 +96,19 @@ export class ReceptionGateway implements OnGatewayConnection, OnGatewayDisconnec
    * 计时权威在服务端，这里只记录在线状态与焦点，供计时推送附带健康信息。
    */
   @SubscribeMessage('client.ack')
-  handleClientAck(@ConnectedSocket() socket: Socket, @MessageBody() payload: any) {
+  async handleClientAck(@ConnectedSocket() socket: Socket, @MessageBody() payload: any) {
     const userId = socket.data.userId as number | undefined;
     if (!userId) return { ok: false };
+    try {
+      const claims: any = await this.jwt.verifyAsync(socket.data.token);
+      const account = await this.db.one<{ status: number; must_change_password: boolean; token_version: number }>(
+        `SELECT status, must_change_password, token_version FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [userId],
+      );
+      if (!account || account.status !== 1 || account.must_change_password || account.token_version !== claims.tokenVersion) throw new Error('无效会话');
+    } catch {
+      socket.disconnect(true);
+      return { ok: false };
+    }
     this.touch(userId, 0);
     this.acks.set(userId, {
       at: new Date().toISOString(),

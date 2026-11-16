@@ -69,9 +69,11 @@ export default function AppLayout() {
         method: 'POST',
         body: { oldPassword: values.oldPassword, newPassword: values.newPassword },
       });
-      message.success('密码已修改');
+      message.success('密码已修改，请重新登录');
       clearPasswordNotice();
       setForcePwdOpen(false);
+      await logout().catch(() => {});
+      navigate('/login');
     } catch (e) {
       message.error((e as Error).message);
     }
@@ -112,8 +114,10 @@ export default function AppLayout() {
       method: 'POST',
       body: { oldPassword: values.oldPassword, newPassword: values.newPassword },
     });
-    message.success('密码已修改');
+    message.success('密码已修改，请重新登录');
     pwdForm.resetFields();
+    await logout().catch(() => {});
+    navigate('/login');
   };
 
   const items = useMemo(() => {
@@ -196,12 +200,12 @@ export default function AppLayout() {
                 { key: 'profile', icon: <UserOutlined />, label: '个人资料' },
                 { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
               ],
-              onClick: ({ key }) => {
+              onClick: async ({ key }) => {
                 if (key === 'profile') {
                   openProfile();
                   return;
                 }
-                logout();
+                await logout().catch(() => {});
                 navigate('/login');
               },
             }}
@@ -327,10 +331,10 @@ export default function AppLayout() {
         footer={[
           <Button
             key="logout"
-            onClick={() => {
+            onClick={async () => {
               clearPasswordNotice();
               setForcePwdOpen(false);
-              logout();
+              await logout().catch(() => {});
               navigate('/login');
             }}
           >
