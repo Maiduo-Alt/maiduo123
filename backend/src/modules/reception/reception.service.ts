@@ -26,7 +26,7 @@ import { allocateStyles, normalizeRatios } from '../../domain/style-ratio';
 import { shouldAbortAsDisconnected } from '../../domain/disconnect';
 import { computeResponseRounds, weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
-import { isHedge, isPendingVerification, judgeReply, supportsMachineWash } from '../../domain/reply-judge';
+import { isPendingVerification, judgeReply, supportsMachineWash } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
 import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef, inferQuantityFromTexts } from '../../domain/order';
 import {
@@ -42,6 +42,7 @@ import { createMinimumRoundQuestion, mixQuestionSeq, normalizeLegacyQuestionSeq 
 import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/seed-content';
 import { buildKeywordQuestionProgress, deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
+import { assessAutomaticReply, ReplyAssessment } from '../../domain/automatic-reply';
 import { evaluateWithModels } from '../../domain/model-reception';
 import { ModelCredentialsService } from '../settings/model-credentials.service';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, selectWashFollowUp } from '../../domain/adaptive-push';
@@ -286,7 +287,7 @@ export class ReceptionService implements OnModuleInit {
     }
     const effectiveParams = cloneParams(params);
     effectiveParams.responseTimingVersion = 2;
-    effectiveParams.replyJudgmentVersion = 1;
+    effectiveParams.replyJudgmentVersion = 2;
     if (override.concurrentCount !== undefined) {
       const value = Number(override.concurrentCount);
       if (!Number.isFinite(value) || value < 1 || value > 4) {
@@ -617,7 +618,7 @@ export class ReceptionService implements OnModuleInit {
       agentRows.map((row) => ({
         questionSeq: row.rule_result?.questionSeq ?? row.seq,
         hitPoints: row.rule_result?.hitPoints || [],
-        automaticResolved: row.rule_result?.judgmentVersion === 1 && row.rule_result?.judge?.pass === true &&
+        automaticResolved: row.rule_result?.judgmentVersion >= 1 && row.rule_result?.judge?.pass === true &&
           !row.rule_result?.invalid && row.rule_result?.judge?.signal !== 'opener',
       })),
     );
@@ -790,7 +791,7 @@ export class ReceptionService implements OnModuleInit {
     const previousTopic = conversationTopic(previousQuestion);
     const alreadyAnswered = [...(session.skipped_seqs || [])];
     const shippingAnswered = previousQuestion?.automaticEvaluation && priorMessages.some((message) =>
-      message.rule_result?.judgmentVersion === 1 && message.rule_result?.judge?.pass === true && !message.rule_result?.invalid &&
+      message.rule_result?.judgmentVersion >= 1 && message.rule_result?.judge?.pass === true && !message.rule_result?.invalid &&
       !/不确定|不知道|不清楚|无法|不能|不保证|不承诺|不一定|可能|或许/u.test(message.content) &&
       /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(message.content),
     );
@@ -825,7 +826,10 @@ export class ReceptionService implements OnModuleInit {
     );
     if (next.nextSeq === null && askedRounds < 3 && previousQuestion) {
       const parent = session.questions.find((q) => q.seq === previousQuestion.derivedFromSeq) || previousQuestion;
-      const fallback = createMinimumRoundQuestion(session.questions, parent);
+      const latest = priorMessages[priorMessages.length - 1]?.rule_result;
+      const fallback = createMinimumRoundQuestion(session.questions, parent, latest?.judgmentVersion === 2 ? {
+        pending: latest.replyAssessment?.status === 'pending', agentReplies: priorMessages.map((message) => message.content),
+      } : undefined);
       session.questions = [...session.questions, fallback];
       session.total_questions = fallback.seq;
       await this.db.query(`UPDATE sessions SET questions = $2::jsonb, total_questions = $3 WHERE id = $1`, [
@@ -998,6 +1002,12 @@ export class ReceptionService implements OnModuleInit {
     // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
     // 必须从判定集合剔除——否则首题任何回复都会被它带成「已通过」（2026-10-11 线上实测）。
     const judgedReplies = replies.filter((r) => r.rule_result?.judge?.signal !== 'opener');
+    const latestAssessment = judgedReplies[judgedReplies.length - 1]?.rule_result?.replyAssessment;
+    if (latestAssessment?.status === 'partial' && latestAssessment.missing?.length && (session.follow_ups || 0) < (question.conversationPlan?.maxFollowUps ?? 2)) {
+      const remaining = latestAssessment.missing.map((text: string) => text.replace(/^尚未说明/u, '')).join('、');
+      await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0, `我还想了解${remaining}，可以再说一下吗？`);
+      return;
+    }
     if (judgedReplies[judgedReplies.length - 1]?.rule_result?.pendingVerification && (session.follow_ups || 0) < (question.conversationPlan?.maxFollowUps ?? 2)) {
       const followUp = judgedReplies[judgedReplies.length - 1]?.rule_result?.modelEvaluation?.buyerReply || '好的，麻烦您帮我确认一下。';
       await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0, followUp);
@@ -1233,6 +1243,14 @@ export class ReceptionService implements OnModuleInit {
     let modelResult: Awaited<ReturnType<typeof evaluateWithModels>> | null = null;
     try {
     modelResult = useModel ? await evaluateWithModels({
+      ...(params.replyJudgmentVersion === 2 ? { judgmentVersion: 2 as const, facts: {
+        product: session.products[0] ? {
+          title: session.products[0].title, attributes: session.products[0].attributes,
+          services: session.products[0].services, stock: session.products[0].stock,
+        } : undefined,
+        order: session.order_payload ? { stage: session.order_payload.stage, statusText: session.order_payload.statusText,
+          promisedShipAt: session.order_payload.promisedShipAt } : undefined,
+      } } : {}),
       question: currentQuestion!.question,
       goals: (currentQuestion!.semanticGoals || []).map((goal) => ({ id: goal.id, points: goal.requiredPoints.map((point) => ({ id: point.id, label: point.label })) })),
       history: historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent').slice(-12).map((m) => ({ role: m.sender, content: m.content })),
@@ -1251,11 +1269,35 @@ export class ReceptionService implements OnModuleInit {
       const latest = await this.loadSession(sessionId);
       if (!latest || latest.state !== session.state || latest.current_seq !== session.current_seq) throw new BizError(ERR.SESSION_STATE, '会话状态已改变，请重新确认后发送');
     }
-    const pendingVerification = isPendingVerification(text);
+    const replyContext = {
+      buyerContext: historyRows.filter((m) => m.sender === 'buyer').map((m) => m.content),
+      question: currentQuestion?.question || '',
+      keyPoints: currentQuestion?.keyPoints || [],
+      reply: text,
+      buyerText: [...historyRows].reverse().find((m) => m.sender === 'buyer')?.content || '',
+      // 风格化买家一题多发（题干+顾虑），复读判定覆盖本轮全部买家消息
+      buyerTexts: historyRows
+        .filter((m) => m.sender === 'buyer' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq)
+        .map((m) => m.content),
+      // 「与上一条重复」只在同一道题内比较：不同问题回同样的短句（如都是「可以的哈」）是正常的，
+      // 上一轮跨题比较会把正常回复误判成敷衍（2026-10-11 沙箱实测发现的误伤）
+      prevAgentText:
+        [...historyRows]
+          .reverse()
+          .find((m) => m.sender === 'agent' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq)
+          ?.content || null,
+    };
+    const ruleAssessment: ReplyAssessment = currentQuestion?.automaticEvaluation
+      ? assessAutomaticReply(replyContext, params.replyJudgmentVersion || 0)
+      : judgeReply(replyContext);
+    const pendingVerification = params.replyJudgmentVersion === 2 && 'status' in ruleAssessment
+      ? ruleAssessment.status === 'pending' : isPendingVerification(text);
     const machineWashResolved = !!currentQuestion &&
       /^(?:亲|请问|这款|这件|衣服|可以|能|可不可以|能不能|支持|是不是|是否)*机洗(?:吗|嘛|么|呢)?[？?。！!\s]*$/u.test(currentQuestion.question.trim()) &&
       supportsMachineWash(text);
-    const modelResolved = !!modelResult && (modelResult.resolved || machineWashResolved) && !pendingVerification;
+    const unsupportedFacts = 'status' in ruleAssessment && ruleAssessment.status === 'unsupported';
+    const blockedAssessment = unsupportedFacts || (params.replyJudgmentVersion === 2 && ruleAssessment.signal === 'perfunctory');
+    const modelResolved = !!modelResult && (modelResult.resolved || (params.replyJudgmentVersion !== 2 && machineWashResolved)) && !pendingVerification && !blockedAssessment;
     const hitPoints = modelResult && currentQuestion && !(currentQuestion.semanticGoals || []).length
       ? (modelResolved ? [...currentQuestion.keyPoints] : [])
       : currentQuestion && !pendingVerification ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
@@ -1277,58 +1319,15 @@ export class ReceptionService implements OnModuleInit {
     // 开场回应归入 seq 1（与随后的题目同轮），避免产生 seq 0 的回复轮次干扰计分
     const insertSeq = openerStage ? 1 : session.current_seq;
 
-    const unifiedJudgment = params.replyJudgmentVersion === 1;
+    const unifiedJudgment = params.replyJudgmentVersion !== undefined;
     const judgedReply = unifiedJudgment && inAgentCloseWindow
       ? { pass: false, signal: 'closing' as const }
       : openerStage
         ? { pass: true, signal: 'opener' as const }
+        : blockedAssessment ? ruleAssessment
         : modelResult
         ? { pass: modelResolved, signal: modelResolved ? 'key-point' as const : 'hedge' as const }
-        : (() => {
-          const result = judgeReply({
-            question: currentQuestion?.question || '',
-            keyPoints: currentQuestion?.keyPoints || [],
-            reply: text,
-            buyerText: [...historyRows].reverse().find((m) => m.sender === 'buyer')?.content || '',
-            // 风格化买家一题多发（题干+顾虑），复读判定覆盖本轮全部买家消息
-            buyerTexts: historyRows
-              .filter((m) => m.sender === 'buyer' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq)
-              .map((m) => m.content),
-            // 「与上一条重复」只在同一道题内比较：不同问题回同样的短句（如都是「可以的哈」）是正常的，
-            // 上一轮跨题比较会把正常回复误判成敷衍（2026-10-11 沙箱实测发现的误伤）
-            prevAgentText:
-              [...historyRows]
-                .reverse()
-                .find((m) => m.sender === 'agent' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq)
-                ?.content || null,
-          });
-          const questionTopic = conversationTopic(currentQuestion);
-          const replyTopic = conversationTopic({ seq: 0, question: text, keyPoints: [] });
-          if (unifiedJudgment && currentQuestion?.automaticEvaluation && !pendingVerification && result.signal !== 'perfunctory') {
-            const q = currentQuestion.question;
-            if (/偏大|偏小/u.test(q) && !/偏大|偏小|不偏|不大|不小|正常|标准|偏宽松|偏紧/u.test(text)) {
-              return { pass: false, signal: 'off-topic' as const };
-            }
-            const uncertain = /不知道|不清楚|不确定|无法(?:判断|确认|推荐)/u.test(text);
-            const outerSuggestion = /西装|开衫|夹克|针织衫|风衣|衬衫|(?:米白|白色|黑色|浅色|深色|短款)外套/u.test(text);
-            const shoeSuggestion = /乐福鞋|小白鞋|运动鞋|高跟鞋|平底鞋|凉鞋|短靴|长靴|(?:白色|黑色|浅色|休闲)鞋/u.test(text);
-            const stylingAnswer = /搭配|外套|鞋子/u.test(q) && (outerSuggestion || shoeSuggestion) &&
-              (!/外套/u.test(q) || outerSuggestion) && (!/鞋子/u.test(q) || shoeSuggestion);
-            const sizeAnswer = /穿(?:什么|多大|哪个)码/u.test(q) && /(?:[SMLX]{1,4}|\d{2,3})\s*码/iu.test(text);
-            const saleAnswer = /售后/u.test(q) && /售后|退换|退货|换货/u.test(text) && /订单|申请|联系/u.test(text);
-            const shippingAnswer = !/可能|或许|不一定/u.test(text) && /现货/u.test(q) && /发货|发出/u.test(q) &&
-              /现货|有货|缺货|无货/u.test(text) && /\d+\s*(?:小时|天|日)/u.test(text) && /发货|发出|出库/u.test(text);
-            if (!uncertain && (stylingAnswer || sizeAnswer || saleAnswer || shippingAnswer)) return { pass: true, signal: 'key-point' as const };
-            if ((/外套/u.test(q) && /鞋子/u.test(q)) || (/现货/u.test(q) && /发货|发出/u.test(q))) {
-              return { pass: false, signal: 'off-topic' as const };
-            }
-          }
-          if (currentQuestion?.automaticEvaluation && result.signal === 'stance' && questionTopic !== 'general' &&
-            replyTopic !== 'general' && questionTopic !== replyTopic) return { pass: false, signal: 'off-topic' as const };
-          return currentQuestion?.automaticEvaluation && result.signal === 'off-topic' && !isHedge(text) &&
-            !/不知道|不清楚|不确定/u.test(text) && questionTopic !== 'general' && questionTopic === replyTopic
-            ? { pass: true, signal: 'key-point' as const } : result;
-        })();
+        : ruleAssessment;
 
     // C6：无效 / 敷衍回复判定（默认关闭）。走领域纯函数，规则来自 param_snapshot。
     const historyMessages: ScoreMessage[] = historyRows.map((m) => ({
@@ -1337,6 +1336,7 @@ export class ReceptionService implements OnModuleInit {
       questionSeq: m.rule_result?.questionSeq ?? m.seq,
       hitPoints: m.rule_result?.hitPoints || [],
       pendingVerification: m.rule_result?.pendingVerification === true,
+      replyStatus: m.rule_result?.invalid ? undefined : m.rule_result?.replyAssessment?.status,
       judgeSignal: m.rule_result?.invalid ? null : m.rule_result?.judge?.signal,
       openerTiming: m.rule_result?.openerTiming === true,
       responseRoundType: m.rule_result?.responseRoundType,
@@ -1345,7 +1345,9 @@ export class ReceptionService implements OnModuleInit {
     }));
     const currentIndex = historyMessages.length;
     const validityRounds = judgeValidReplies(
-      [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints, pendingVerification, judgeSignal: judgedReply.pass ? judgedReply.signal : null, ...semanticEvaluation }],
+      [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints, pendingVerification,
+        replyStatus: 'status' in ruleAssessment ? ruleAssessment.status : undefined,
+        judgeSignal: judgedReply.pass ? judgedReply.signal : null, ...semanticEvaluation }],
       session.questions,
       params
     );
@@ -1371,7 +1373,8 @@ export class ReceptionService implements OnModuleInit {
       !alreadyCounted && !invalidReason && lastBuyerAt ? Math.max(0, Math.round((now - lastBuyerAt) / 1000)) : null;
     const isTimeout = responseSec !== null && responseSec > Math.round(params.timeoutSec * tolerance);
 
-    const responded = hitAny || openerStage || (unifiedJudgment && !invalidReason && (judgedReply.pass || pendingVerification));
+    const responded = hitAny || openerStage || (unifiedJudgment && !invalidReason && (judgedReply.pass || pendingVerification ||
+      (!modelResult && 'status' in ruleAssessment && ruleAssessment.status === 'partial')));
     const emotion = unifiedJudgment && inAgentCloseWindow
       ? { value: session.emotion_value, delta: 0, reason: 'none' as const, escalated: false }
       : updateEmotion(session.emotion_value, text, params, {
@@ -1393,7 +1396,7 @@ export class ReceptionService implements OnModuleInit {
           .map((m) => ({
             questionSeq: m.rule_result?.questionSeq ?? m.seq,
             hitPoints: m.rule_result?.hitPoints || [],
-            automaticResolved: m.rule_result?.judgmentVersion === 1 && m.rule_result?.judge?.pass === true &&
+            automaticResolved: m.rule_result?.judgmentVersion >= 1 && m.rule_result?.judge?.pass === true &&
               !m.rule_result?.invalid && m.rule_result?.judge?.signal !== 'opener',
           })),
         { questionSeq: insertSeq, hitPoints, automaticResolved: unifiedJudgment && !invalidReason && !openerStage && !inAgentCloseWindow && judgedReply.pass },
@@ -1411,7 +1414,12 @@ export class ReceptionService implements OnModuleInit {
 
     const ruleResult = {
       questionSeq: insertSeq,
-      ...(unifiedJudgment ? { judgmentVersion: 1 } : {}),
+      ...(unifiedJudgment ? { judgmentVersion: params.replyJudgmentVersion } : {}),
+      ...(params.replyJudgmentVersion === 2 && !openerStage && !inAgentCloseWindow ? {
+        replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: [] } : modelResult && !blockedAssessment
+          ? { source: modelResult.provider, intent: ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
+          : { ...ruleAssessment, source: 'rule' },
+      } : {}),
       ...(openerStage ? { openerTiming: true } : {}),
       hitPoints,
       semanticEvaluation,
@@ -1695,6 +1703,7 @@ export class ReceptionService implements OnModuleInit {
         isTimeout: m.is_timeout,
         hitPoints: m.rule_result?.hitPoints || [],
         pendingVerification: m.rule_result?.pendingVerification === true,
+        replyStatus: m.rule_result?.invalid ? undefined : m.rule_result?.replyAssessment?.status,
         goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
         riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
         judgeSignal: m.rule_result?.judge?.signal ?? null,

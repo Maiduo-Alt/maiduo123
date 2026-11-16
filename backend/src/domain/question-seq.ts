@@ -47,12 +47,26 @@ function derivedQuestionFor(question: string, index: number, used: Set<string>):
 }
 
 /** 为短剧本补充同主题问题，供会话在不足最低轮次时使用。 */
-export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: ScriptQuestion): ScriptQuestion {
+export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: ScriptQuestion,
+  context?: { pending: boolean; agentReplies: string[] }): ScriptQuestion {
   const used = new Set(questions.map((question) => question.question));
   const count = questions.filter((question) => question.derivedFromSeq === parent.seq).length;
+  let contextual: string | undefined;
+  if (context?.pending) {
+    contextual = `麻烦核实后告诉我“${parent.question.replace(/[？?。]+$/u, '')}”的具体结果，好吗？`;
+    if (used.has(contextual)) contextual = undefined;
+  } else if (context && /洗涤|干洗|机洗|水洗|清洗/u.test(parent.question)) {
+    const replies = context.agentReplies.join(' ');
+    const choices: Array<[RegExp, string]> = [
+      [/水温|温水|冷水|度/u, '清洗这件衣服时，水温有什么要求呢？'],
+      [/晾晒|暴晒|阴干|晾干/u, '清洗后应该怎么晾晒这件衣服呢？'],
+      [/洗衣袋/u, '清洗这件衣服需要使用洗衣袋吗？'],
+    ];
+    contextual = choices.find(([answered, text]) => !answered.test(replies) && !used.has(text))?.[1];
+  }
   return {
     seq: Math.max(0, ...questions.map((question) => question.seq)) + 1,
-    question: derivedQuestionFor(parent.question, count, used),
+    question: contextual || derivedQuestionFor(parent.question, count, used),
     keyPoints: parent.automaticEvaluation ? [] : ['有效回应'],
     ...(parent.automaticEvaluation ? { automaticEvaluation: true } : {}),
     sourceType: 'derived',

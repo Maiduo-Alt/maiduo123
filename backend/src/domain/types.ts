@@ -24,7 +24,7 @@ export interface SystemParams {
   /** 新接待按买家实际提问和追问分别统计响应；旧快照沿用旧口径。 */
   responseTimingVersion?: 2;
   /** 新接待统一自动判定、有效回复和计时口径；旧快照保留原规则。 */
-  replyJudgmentVersion?: 1;
+  replyJudgmentVersion?: 1 | 2;
   firstResponseLimitSec: number;
   avgResponseLimitSec: number;
   replyRateLimitPct: number;
@@ -295,6 +295,7 @@ export interface ScoreMessage {
   isTimeout?: boolean;
   hitPoints?: string[];
   pendingVerification?: boolean;
+  replyStatus?: 'resolved' | 'partial' | 'pending' | 'unanswered' | 'unsupported';
   goalMatches?: { goalId: string; pointIds: string[] }[];
   riskItems?: { ruleId: string; label: string; penalty: number; goalId?: string }[];
   /** 语义判定信号（reply-judge）：敷衍回复在话术维度单独扣分（客户 2026-10-11 口径）。 */

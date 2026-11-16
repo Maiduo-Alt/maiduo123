@@ -120,9 +120,9 @@ export default function RecordDetail() {
                 {m.sender === 'buyer' ? '买家' : m.sender === 'agent' ? '客服' : '系统'} ·{' '}
                 {new Date(m.createdAt).toLocaleTimeString('zh-CN')}
                 {m.responseSec !== null && m.sender === 'agent' && ` · 响应 ${m.responseSec}s`}
-                {m.sender === 'agent' && m.ruleResult?.judgmentVersion === 1 && !m.ruleResult?.invalid &&
+                {m.sender === 'agent' && m.ruleResult?.judgmentVersion >= 1 && !m.ruleResult?.invalid &&
                   !['opener', 'closing'].includes(m.ruleResult?.judge?.signal) && (
-                  <span> · 回答判定：{m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
+                  <span title={[m.ruleResult?.replyAssessment?.reason, ...(m.ruleResult?.replyAssessment?.evidence || [])].filter(Boolean).join('；')}> · 回答判定：{m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.replyAssessment?.status === 'partial' ? '部分回答' : m.ruleResult?.replyAssessment?.status === 'unsupported' ? '信息待核对' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
                 )}
                 {m.isTimeout && <span style={{ color: '#cf1322' }}> · 超时</span>}
                 {m.ruleResult?.modelEvaluation && (

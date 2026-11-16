@@ -123,12 +123,13 @@ function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: n
       continue;
     }
     if (q.automaticEvaluation) {
+      const partiallyAnswered = messages.some((message) => message.sender === 'agent' && message.questionSeq === q.seq && message.replyStatus === 'partial');
       const resolved = messages.some((message) => message.sender === 'agent' && message.questionSeq === q.seq &&
         (message.judgeSignal === 'stance' || message.judgeSignal === 'key-point'));
-      const factor = resolved ? 1 : pendingResponse ? 0.5 : 0;
+      const factor = resolved ? 1 : pendingResponse || partiallyAnswered ? 0.5 : 0;
       score += perQuestion * factor;
       if (resolved) solvedCount += 1;
-      else deductions.push({ dimension: 'solving', reason: `第 ${q.seq} 轮${pendingResponse ? '已回应并待核实，给予部分分' : '尚未确认解决'}`, points: round1(perQuestion * (1 - factor)), questionSeq: q.seq });
+      else deductions.push({ dimension: 'solving', reason: `第 ${q.seq} 轮${pendingResponse ? '已回应并待核实，给予部分分' : partiallyAnswered ? '已回答部分问题，给予部分分' : '尚未确认解决'}`, points: round1(perQuestion * (1 - factor)), questionSeq: q.seq });
       continue;
     }
     if (q.semanticGoals?.length) {

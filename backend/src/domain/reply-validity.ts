@@ -72,14 +72,14 @@ export function judgeValidReplies(
 
   for (const seq of seqs) {
     const round = bySeq.get(seq)!;
-    const automatic = params.replyJudgmentVersion === 1 && questions.some((q) => q.seq === seq && q.automaticEvaluation);
+    const automatic = params.replyJudgmentVersion !== undefined && questions.some((q) => q.seq === seq && q.automaticEvaluation);
     const roundIndexes = messages
       .map((m, index) => ({ m, index }))
       .filter(({ m }) => m.sender === 'agent' && m.questionSeq === seq && (!automatic || !m.openerTiming));
 
     // 该轮是否命中过要点（整轮取最大值：任一条命中即算解决）
     const hitAny = roundIndexes.some(({ m }) =>
-      m.pendingVerification || (automatic && (m.judgeSignal === 'stance' || m.judgeSignal === 'key-point')) ||
+      m.pendingVerification || (automatic && (m.judgeSignal === 'stance' || m.judgeSignal === 'key-point' || m.replyStatus === 'partial')) ||
       (m.hitPoints || []).length > 0 || (m.goalMatches || []).some((match) => match.pointIds.length > 0)
     );
     const asked = roundIndexes.length > 0 || messages.some((m) =>

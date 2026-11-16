@@ -249,3 +249,15 @@ describe('旧剧本兼容：通用补题降级', () => {
     expect(normalizeLegacyQuestionSeq(current)).toEqual(current);
   });
 });
+
+it('新版补题保留待核实主题，已答洗护细节不重复提问', () => {
+  const parent = { seq: 1, question: '是聚酯纤维吗？', keyPoints: [], automaticEvaluation: true };
+  const pending = createMinimumRoundQuestion([parent], parent, { pending: true, agentReplies: ['我先核实成分'] });
+  expect(pending.question).toContain('核实后');
+  expect(pending.question).toContain('聚酯纤维');
+  expect(pending.question).not.toContain('注意');
+  const wash = { ...parent, question: '能机洗吗？' };
+  const next = createMinimumRoundQuestion([wash], wash, { pending: false, agentReplies: ['支持机洗，使用洗衣袋，冷水清洗'] });
+  expect(next.question).toContain('晾晒');
+  expect(next.question).not.toContain('不适合机洗');
+});

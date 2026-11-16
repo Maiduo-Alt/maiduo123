@@ -1510,7 +1510,7 @@ export default function Reception() {
                   m.isTimeout ||
                   m.ruleResult?.businessAction ||
                   m.ruleResult?.invalid ||
-                  (m.sender === 'agent' && m.ruleResult?.judgmentVersion === 1 && !['opener', 'closing'].includes(m.ruleResult?.judge?.signal)) ||
+                  (m.sender === 'agent' && m.ruleResult?.judgmentVersion >= 1 && !['opener', 'closing'].includes(m.ruleResult?.judge?.signal)) ||
                   m.ruleResult?.modelEvaluation ||
                   m.ruleResult?.hitPoints?.length > 0 ||
                   m.ruleResult?.semanticEvaluation?.goalMatches?.length > 0 ||
@@ -1532,9 +1532,9 @@ export default function Reception() {
                       </Tooltip>
                     )}
                     {m.sender === 'agent' && m.responseSec !== null && `响应 ${m.responseSec}s`}
-                    {m.sender === 'agent' && m.ruleResult?.judgmentVersion === 1 && !m.ruleResult?.invalid &&
+                    {m.sender === 'agent' && m.ruleResult?.judgmentVersion >= 1 && !m.ruleResult?.invalid &&
                       !['opener', 'closing'].includes(m.ruleResult?.judge?.signal) && (
-                      <span> · 回答判定：{m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
+                      <span title={[m.ruleResult?.replyAssessment?.reason, ...(m.ruleResult?.replyAssessment?.evidence || [])].filter(Boolean).join('；')}> · 回答判定：{m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.replyAssessment?.status === 'partial' ? '部分回答' : m.ruleResult?.replyAssessment?.status === 'unsupported' ? '信息待核对' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
                     )}
                     {m.ruleResult?.modelEvaluation && (
                       <Tooltip title={m.ruleResult.modelEvaluation.reason}>

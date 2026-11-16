@@ -640,6 +640,91 @@ describe('在线模拟接待端到端链路', () => {
     }
   }, 60000);
 
+  it('新版意图判断接受模糊实质回复，拒绝纯等待，并保持部分分与追问一致', async () => {
+    const params = { ...DEFAULT_PARAMS, replyJudgmentVersion: 2, responseTimingVersion: 2,
+      invalidReplyEnabled: true, invalidReplyUnresolvedEnabled: true, invalidReplyUnresolvedStreak: 1 };
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-intent-v2', JSON.stringify(params)],
+    );
+    const reception = app.get(ReceptionService);
+    const ids: number[] = [];
+    const cases = [
+      ['要不要干洗', '不用那么麻烦，按平常洗衣方式轻柔洗就行', true],
+      ['尺码不合适可以换吗', '可以的，留好吊牌就好', true],
+      ['买家秀在哪里看', '往评价区翻翻，选晒图就能看大家发的图', true],
+      ['色差大吗', '差不多的，手机屏幕看会有一点区别', true],
+      ['要不要干洗', '我核实一下', false],
+      ['色差大吗', '稍等', false],
+      ['买家秀和实拍视频分别在哪里看', '买家秀在评价区看晒图', false],
+      ['梨形身材怎么选尺码', '亲，158厘米92斤可以参考M码', false],
+    ] as const;
+    try {
+      for (const [question, content, pass] of cases) {
+        const session = await sharedDb.one<{ id: number }>(
+          `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+           VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, $3) RETURNING id`,
+          [attempt.id, JSON.stringify([{ seq: 1, question, keyPoints: [], automaticEvaluation: true }]), new Date(Date.now() - 3000).toISOString()],
+        );
+        ids.push(session.id);
+        await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`,
+          [session.id, question, JSON.stringify({ responseRoundStart: true })]);
+        const result = await reception.sendMessage(1, attempt.id, session.id, content);
+        expect({ question, pass: result.ruleResult.judge.pass }).toEqual({ question, pass });
+        if (pass) {
+          expect((result.ruleResult as any).invalid).not.toBe(true);
+          expect(result.responseSec).toBeGreaterThanOrEqual(2);
+        }
+        if (question.includes('分别')) {
+          expect(result.ruleResult.replyAssessment?.status).toBe('partial');
+          expect(result.responseSec).toBeGreaterThanOrEqual(2);
+          await reception.advanceAfterReply(session.id);
+          const buyer = await sharedDb.one<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`, [session.id]);
+          expect(buyer.content).toContain('视频');
+          expect(buyer.content).not.toContain('买家秀');
+          await reception.finishSession(1, attempt.id, session.id);
+          const score = await sharedDb.one<{ solving_score: string }>(`SELECT solving_score FROM scores WHERE session_id = $1`, [session.id]);
+          expect(Number(score.solving_score)).toBe(17.5);
+        }
+      }
+    } finally {
+      for (const id of ids) (reception as any).scheduler.cancel(`next:${id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
+  it('新版模型不能把纯核实话术升级为已解决，并接收受限商品事实', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-model-evidence-v2', JSON.stringify({ ...DEFAULT_PARAMS, replyJudgmentVersion: 2 })],
+    );
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question: '要不要干洗', keyPoints: [], automaticEvaluation: true }])],
+    );
+    const keyMock = jest.spyOn(app.get(ModelCredentialsService), 'getKeys').mockResolvedValue({ glmKey: 'test' });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+      resolved: true, reason: '已回复', matchedPoints: [], buyerReply: '好的', evidence: ['我核实一下'],
+    }) } }] }) } as Response);
+    const reception = app.get(ReceptionService);
+    try {
+      const result = await reception.sendMessage(1, attempt.id, session.id, '我核实一下');
+      expect(result.ruleResult.judge.pass).toBe(false);
+      expect(result.ruleResult.pendingVerification).not.toBe(true);
+      expect(result.ruleResult.replyAssessment.status).toBe('unanswered');
+      const requestBody = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+      const input = JSON.parse(requestBody.messages[1].content);
+      expect(input.judgmentVersion).toBe(2);
+      expect(input.facts).toBeDefined();
+      expect(JSON.stringify(input)).not.toContain('receiver');
+    } finally {
+      keyMock.mockRestore(); fetchMock.mockRestore();
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
   it('自动判断识别开放式问答、复合问题和表态对象', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,

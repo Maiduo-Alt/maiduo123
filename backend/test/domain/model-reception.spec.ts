@@ -24,3 +24,12 @@ it('拒绝模型编造的目标编号', async () => {
   const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(invalid) } }] }) });
   await expect(evaluateWithModels(input, { glmKey: 'test' }, mock as any)).rejects.toThrow('模型服务不可用');
 });
+
+it('新版模型判定必须引用真实答复证据，缺证据时切换备用提供方', async () => {
+  const modern = { ...input, judgmentVersion: 2 as const, reply: '不需要专门干洗' };
+  const valid = { ...result, evidence: ['不需要专门干洗'] };
+  const mock = jest.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ ...valid, evidence: ['可以机洗'] }) } }] }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(valid) } }] }) });
+  expect(await evaluateWithModels(modern, { glmKey: 'test', deepseekKey: 'test' }, mock as any)).toMatchObject({ provider: 'deepseek', evidence: ['不需要专门干洗'] });
+});
