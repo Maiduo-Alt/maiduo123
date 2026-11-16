@@ -725,6 +725,88 @@ describe('在线模拟接待端到端链路', () => {
     }
   }, 60000);
 
+  it('线上269回归：媒体口语回复可以解决原问题，下一轮不重复追问', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-media-269', JSON.stringify({ ...DEFAULT_PARAMS, replyJudgmentVersion: 2, responseTimingVersion: 2 })],
+    );
+    const questions = [
+      { seq: 1, question: '有没有买家秀或者实拍视频可以看', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '色差大吗', keyPoints: [], automaticEvaluation: true },
+      { seq: 3, question: '如果尺码不合适，可以换吗', keyPoints: [], automaticEvaluation: true },
+    ];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 3, $2::jsonb, now()) RETURNING id`, [attempt.id, JSON.stringify(questions)],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,1)`, [session.id, questions[0].question]);
+      const response = await reception.sendMessage(1, attempt.id, session.id,
+        '亲，有的，详情里能看实拍图片，买家秀也可以在评价区找晒图看；视频请以实际页面为准。');
+      expect(response.ruleResult.judge.pass).toBe(true);
+      expect(response.ruleResult.conversationState.resolvedGoalIds).toContain('keyword-seq-1');
+      await reception.advanceAfterReply(session.id);
+      const state = await sharedDb.one<{ current_seq: number; follow_ups: number }>(`SELECT current_seq, follow_ups FROM sessions WHERE id = $1`, [session.id]);
+      expect(state).toMatchObject({ current_seq: 2, follow_ups: 0 });
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      (reception as any).scheduler.cancel(`timeout:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
+  it.each([false, true])('资料不足控制重复核实；零追问且最后一题解决=%s 时仍保留原问题待核实状态', async (noFollowUps) => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      [`AT-pending-269-${noFollowUps}`,  JSON.stringify({ ...DEFAULT_PARAMS, replyJudgmentVersion: 2, responseTimingVersion: 2 })],
+    );
+    const questions = [
+      { seq: 1, question: '含棉量多少', keyPoints: [], automaticEvaluation: true, conversationPlan: { maxFollowUps: noFollowUps ? 0 : 2 } },
+      { seq: 2, question: '是聚酯纤维吗', keyPoints: [], automaticEvaluation: true, conversationPlan: { maxFollowUps: noFollowUps ? 0 : 2 } },
+    ];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 2, $2::jsonb, now()) RETURNING id`, [attempt.id, JSON.stringify(questions)],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,1)`, [session.id, questions[0].question]);
+      for (const topic of ['含棉比例', '聚酯纤维成分', '成分标签位置']) {
+        const resolved = noFollowUps && topic === '成分标签位置';
+        const response = await reception.sendMessage(1, attempt.id, session.id, resolved
+          ? '亲，面料成分标识可以在衣服内侧的洗标上查看。'
+          : `亲，我先帮您核实${topic}，确认后回复准确结果。`);
+        expect(response.ruleResult.replyAssessment.status).toBe(resolved ? 'resolved' : 'pending');
+        await reception.advanceAfterReply(session.id);
+        const state = await sharedDb.one<{ current_seq: number; follow_ups: number }>(`SELECT current_seq, follow_ups FROM sessions WHERE id = $1`, [session.id]);
+        if (!noFollowUps) {
+          expect(state!.follow_ups).toBe(1);
+          await reception.sendMessage(1, attempt.id, session.id, `亲，目前还需要确认${topic}，我查一下对应标签再回复您。`);
+          await reception.advanceAfterReply(session.id);
+        } else {
+          expect(state!.follow_ups).toBe(0);
+        }
+      }
+      const state = await sharedDb.one<{ state: string; questions: any[]; conversation_state: any }>(`SELECT state, questions, conversation_state FROM sessions WHERE id = $1`, [session.id]);
+      expect(state!.state).toBe('awaiting_agent_close');
+      expect(state!.questions).toHaveLength(3);
+      expect(state!.questions[2].question).toContain('查看面料成分标识');
+      expect(state!.conversation_state.resolvedGoalIds).toEqual(noFollowUps ? ['keyword-seq-3'] : []);
+      expect(state!.conversation_state.unresolvedGoalIds.length).toBeGreaterThan(0);
+      const lastBuyer = await sharedDb.one<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`, [session.id]);
+      expect(lastBuyer!.content).toContain('还没有确认具体结果');
+      await reception.finishSession(1, attempt.id, session.id);
+      const score = await sharedDb.one<{ solving_score: string }>(`SELECT solving_score FROM scores WHERE session_id = $1`, [session.id]);
+      expect(Number(score!.solving_score)).toBe(noFollowUps ? 23.3 : 17.5);
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      (reception as any).scheduler.cancel(`close:${session.id}`);
+      (reception as any).scheduler.cancel(`timeout:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
   it('自动判断识别开放式问答、复合问题和表态对象', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,

@@ -101,3 +101,27 @@ it.each([
 ])('自然短答按当前问题理解：%s → %s', (question, reply, pass) => {
   expect(assess(question, reply).pass).toBe(pass);
 });
+
+
+it.each([
+  ['有没有买家秀或者实拍视频可以看', '亲，有的，详情里能看实拍图片，买家秀也可以在评价区找晒图看；视频请以实际页面为准。', true],
+  ['有没有买家秀', '买家秀可以在评价区找晒图看', true],
+  ['有没有买家秀', '去评论区翻翻买家秀就能看到', true],
+  ['有没有实拍视频', '实拍视频可以在详情页往下翻着看', true],
+  ['有没有买家秀和实拍视频', '买家秀可以在评价区找晒图看', false],
+  ['有没有买家秀或者实拍视频', '有的', false],
+  ['有没有买家秀', '买家秀需要核实后才能确认', false],
+  ['有没有买家秀', '如果有买家秀可以去评价区看', false],
+  ['有没有买家秀', '买家秀不能在评价区看', false],
+  ['有没有实拍视频', '实拍图片可以在详情页看', false],
+  ['有没有买家秀', '有买家秀，但暂时没有买家秀', false],
+])('线上269媒体可用性口语回归：%s → %s', (question, reply, pass) => {
+  expect(assess(question, reply).pass).toBe(pass);
+});
+
+it('买家秀已答、视频未知时只保留缺失的视频信息', () => {
+  const result = assess('有没有买家秀和实拍视频', '买家秀也可以在评价区找晒图看，视频请以实际页面为准');
+  expect(result.status).toBe('partial');
+  expect(result.evidence).toContain('买家秀也可以在评价区找晒图看');
+  expect(result.missing).toEqual(['尚未说明视频是否可用']);
+});

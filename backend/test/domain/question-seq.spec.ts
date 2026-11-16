@@ -253,11 +253,29 @@ describe('旧剧本兼容：通用补题降级', () => {
 it('新版补题保留待核实主题，已答洗护细节不重复提问', () => {
   const parent = { seq: 1, question: '是聚酯纤维吗？', keyPoints: [], automaticEvaluation: true };
   const pending = createMinimumRoundQuestion([parent], parent, { pending: true, agentReplies: ['我先核实成分'] });
-  expect(pending.question).toContain('核实后');
-  expect(pending.question).toContain('聚酯纤维');
+  expect(pending.question).toContain('查看面料成分标识');
+  expect(pending.question).not.toContain('核实后');
   expect(pending.question).not.toContain('注意');
   const wash = { ...parent, question: '能机洗吗？' };
   const next = createMinimumRoundQuestion([wash], wash, { pending: false, agentReplies: ['支持机洗，使用洗衣袋，冷水清洗'] });
   expect(next.question).toContain('晾晒');
   expect(next.question).not.toContain('不适合机洗');
+});
+
+
+it('资料不足的补题询问信息来源，不重复索取成分结论', () => {
+  const parent = { seq: 1, question: '含棉量多少', keyPoints: [], automaticEvaluation: true };
+  const first = createMinimumRoundQuestion([parent], parent, { pending: true, agentReplies: ['含棉比例未注明，我核实成分标签后回复'] });
+  const second = createMinimumRoundQuestion([parent, first], parent, { pending: true, agentReplies: ['我还在核实成分标签'] });
+  expect(first.question).toContain('哪里查看');
+  expect(second.question).toContain('提供信息');
+  expect(first.question).not.toBe(second.question);
+  expect([first, second].every(q => !/核实后告诉|具体结果|可以再帮我确认/u.test(q.question))).toBe(true);
+});
+
+it('偏大问题的最低轮次补问使用具体选码关注点', () => {
+  const parent = { seq: 1, question: '平时穿M你们家偏大吗', keyPoints: [], automaticEvaluation: true };
+  const next = createMinimumRoundQuestion([parent], parent, { pending: false, agentReplies: ['尺码正常，先参考M码，对照腰臀围'] });
+  expect(next.question).toBe('如果尺码不合适，可以换吗？');
+  expect(next.question).not.toMatch(/关于|还有哪些/u);
 });

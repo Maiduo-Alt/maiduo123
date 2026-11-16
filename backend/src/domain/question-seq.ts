@@ -22,7 +22,7 @@ function derivedQuestionFor(question: string, index: number, used: Set<string>):
       '想让整体搭配更协调，包包可以选什么风格呢？',
       '搭配这款商品时，鞋跟高度怎么选更合适呢？',
     ]],
-    [/尺码|尺寸|身高|体重|版型/u, ['那我这个身材应该怎么选尺码呢？', '如果尺码不合适，可以换吗？']],
+    [/尺码|尺寸|身高|体重|版型|穿.{0,8}码|偏大|偏小/u, ['那我这个身材应该怎么选尺码呢？', '如果尺码不合适，可以换吗？']],
     [/买家秀|实拍|实物图|视频/u, ['这款商品的买家秀或实拍视频在哪里可以看呢？', '实拍图片能看清这款商品的颜色和细节吗？']],
     [/洗涤|干洗|机洗|水洗|手洗|清洗|洗标/u, ['清洗这件衣服时有哪些需要注意的地方呢？', '如果不适合机洗，这件衣服应该怎么清洗呢？']],
     [/材质|面料|透气|厚度|成分/u, ['那穿起来会不会闷或不舒服呢？', '平时清洗和打理有什么要注意的吗？']],
@@ -53,8 +53,20 @@ export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: 
   const count = questions.filter((question) => question.derivedFromSeq === parent.seq).length;
   let contextual: string | undefined;
   if (context?.pending) {
-    contextual = `麻烦核实后告诉我“${parent.question.replace(/[？?。]+$/u, '')}”的具体结果，好吗？`;
-    if (used.has(contextual)) contextual = undefined;
+    // 缺少资料时转向可执行的信息补充，不再次催问尚未核实的结论。
+    const material = /材质|面料|成分|含棉|聚酯|纤维/u.test(parent.question);
+    const choices = material
+      ? ['我收到衣服后，应该在哪里查看面料成分标识呢？', '成分标签看不清时，我怎么提供信息方便您核实呢？']
+      : ['我需要提供哪些信息，方便您核实这个问题呢？', '我应该在哪里找到您核实需要的商品信息呢？'];
+    contextual = choices.find((text) => !used.has(text));
+  } else if (context && /尺码|尺寸|穿.{0,8}码|偏大|偏小/u.test(parent.question)) {
+    const replies = context.agentReplies.join(' ');
+    const choices: Array<[RegExp, string]> = [
+      [/腰围|臀围|腰臀围/u, '挑选尺码时，需要对照尺码表上的哪些围度呢？'],
+      [/换货|换码|退换|调换/u, '如果尺码不合适，可以换吗？'],
+      [/合身|宽松|松紧/u, '喜欢穿得宽松一些时，应该怎么参考尺码表呢？'],
+    ];
+    contextual = choices.find(([answered, text]) => !answered.test(replies) && !used.has(text))?.[1];
   } else if (context && /洗涤|干洗|机洗|水洗|清洗/u.test(parent.question)) {
     const replies = context.agentReplies.join(' ');
     const choices: Array<[RegExp, string]> = [

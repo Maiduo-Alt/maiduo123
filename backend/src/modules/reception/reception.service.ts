@@ -653,7 +653,20 @@ export class ReceptionService implements OnModuleInit {
       session.id,
       JSON.stringify(finalState),
     ]);
-    const text = this.buyerClosingText(session.style_code, finalState.satisfaction);
+    const replies = await this.db.many<{ seq: number; rule_result: any }>(
+      `SELECT seq, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`, [session.id],
+    );
+    const unresolved = new Set(finalState.unresolvedGoalIds);
+    const awaitingVerification = replies.some((reply) => {
+      if (reply.rule_result?.judgmentVersion !== 2 || !reply.rule_result.pendingVerification) return false;
+      const seq = reply.rule_result.questionSeq ?? reply.seq;
+      const question = session.questions.find((question) => question.seq === seq);
+      const goalIds = question?.semanticGoals?.length ? question.semanticGoals.map((goal) => goal.id) : [`keyword-seq-${seq}`];
+      return goalIds.some((id) => unresolved.has(id));
+    });
+    const text = awaitingVerification
+      ? '好的，这次还没有确认具体结果，请核实后再答复，我先不继续追问了。'
+      : this.buyerClosingText(session.style_code, finalState.satisfaction);
     const lastBuyer = await this.db.one<{ content: string }>(
       `SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`,
       [session.id],
@@ -1008,7 +1021,19 @@ export class ReceptionService implements OnModuleInit {
       await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0, `我还想了解${remaining}，可以再说一下吗？`);
       return;
     }
-    if (judgedReplies[judgedReplies.length - 1]?.rule_result?.pendingVerification && (session.follow_ups || 0) < (question.conversationPlan?.maxFollowUps ?? 2)) {
+    const latestRule = judgedReplies[judgedReplies.length - 1]?.rule_result;
+    if (latestRule?.judgmentVersion === 2 && latestRule.pendingVerification) {
+      // 同一问题最多确认一次核实安排；继续待核实也不能反复催结果。
+      const limit = Math.min(1, question.conversationPlan?.maxFollowUps ?? 2);
+      if ((session.follow_ups || 0) < limit) {
+        await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0,
+          '好的，请核实这个问题，有准确结果后再告诉我。');
+      } else {
+        await this.pushNextQuestion(sessionId);
+      }
+      return;
+    }
+    if (latestRule?.pendingVerification && (session.follow_ups || 0) < (question.conversationPlan?.maxFollowUps ?? 2)) {
       const followUp = judgedReplies[judgedReplies.length - 1]?.rule_result?.modelEvaluation?.buyerReply || '好的，麻烦您帮我确认一下。';
       await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0, followUp);
       return;

@@ -63,7 +63,7 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
       return assessment('compound', parts.flatMap((part) => part.evidence || []),
         parts.filter((part) => !part.pass).flatMap((part) => part.missing || [ctx.question]), parts.some((part) => part.status === 'pending'));
     }
-    const clauses = ctx.reply.split(/[，。；;！!\n]/u).map((s) => s.trim()).filter(Boolean);
+    const clauses = ctx.reply.split(/[，。；;！!\n]|但是|不过|但/u).map((s) => s.trim()).filter(Boolean);
     // 核实中的问题描述、引用问题和不确定断言，不作为已经给出结论的证据。
     const statements = clauses.filter((s) => !/不确定|不知道|不清楚|核实|未确认|没确认|确认一下|查一下|查询|是否|有没有|能不能|需不需要|要不要|如果|假如|倘若|[？?]/u.test(s));
     if (intent === 'dry-clean-required' || intent === 'dry-clean-allowed') {
@@ -99,15 +99,20 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
           if (intent === 'media-location') return resource.location.test(s) &&
             (resource.topic.test(s) || (requested.length === 1 && !resources.some((other) => other !== resource && other.topic.test(s))) || (resource.name === '买家秀' && /晒图|评价|评论/u.test(s)));
           if (!resource.topic.test(s)) return requested.length === 1 && /^(?:亲)?(?:有的|有哦|有呢|没有|暂无)[哦呢哈\s]*$/u.test(s);
-          return /有|提供|查看|可以看|能看/u.test(s);
+          return /有|提供|查看|(?:可以|能).{0,16}(?:看|找|翻)|(?:在|去|到).{0,16}(?:看|找|翻)/u.test(s) && !/不能|无法|不可(?:以)?|看不了|找不到/u.test(s);
         });
+        const isAbsent = (s: string) => /没有|暂无|未提供|不提供/u.test(s);
+        if (matches.some(isAbsent) && matches.some((s) => !isAbsent(s))) {
+          missing.push(`${resource.name}的可用性说明前后矛盾`);
+          continue;
+        }
         if (matches.length) {
           evidence.push(...matches);
           if (matches.some((s) => !/没有|暂无|未提供|不提供/u.test(s))) alternativeSatisfied = true;
         } else missing.push(`尚未说明${resource.name}${intent === 'media-location' ? '的查看路径' : '是否可用'}`);
       }
       const alternatives = /或者|或是|或/u.test(ctx.question);
-      return assessment(intent, [...new Set(evidence)], alternatives && alternativeSatisfied ? [] : missing.length ? missing : requested.length ? [] : ['未识别要查看的资源'], pendingVerification);
+      return assessment(intent, [...new Set(evidence)], alternatives && alternativeSatisfied && !missing.some((text) => text.includes('前后矛盾')) ? [] : missing.length ? missing : requested.length ? [] : ['未识别要查看的资源'], pendingVerification);
     }
     if (intent === 'color-difference') {
       const evidence = statements.filter((s) => (!/价格|运费|尺码|发货/u.test(s) || /颜色|色差|光线|屏幕/u.test(s)) &&
