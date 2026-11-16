@@ -5,6 +5,7 @@ import { AppModule } from '../../src/app.module';
 import { DbService } from '../../src/db/db.service';
 import { ReceptionService } from '../../src/modules/reception/reception.service';
 import { AuthService } from '../../src/modules/auth/auth.service';
+import { ModelCredentialsService } from '../../src/modules/settings/model-credentials.service';
 import { DEFAULT_PARAMS } from '../../src/domain/types';
 import { AllExceptionsFilter } from '../../src/common/all-exceptions.filter';
 import { ResponseInterceptor } from '../../src/common/response.interceptor';
@@ -54,6 +55,41 @@ describe('在线模拟接待端到端链路', () => {
     }
     throw new Error('等待条件超时');
   }
+
+  it('仅管理员可保存模型密钥，密钥加密存储且不会返回或写入审计日志', async () => {
+    const admin = await login('admin', 'Admin@123');
+    const agent = await login('agent', 'Agent@123');
+    const secret = 'mock-provider-key-8391';
+    try {
+      const denied = await request(http).put('/api/settings/model-key').set('Authorization', `Bearer ${agent}`).send({ provider: 'glm', secret });
+      expect(denied.body.code).toBe(1003);
+      const saved = await request(http).put('/api/settings/model-key').set('Authorization', `Bearer ${admin}`).send({ provider: 'glm', secret });
+      expect(saved.body.code).toBe(0);
+      expect(saved.body.data.glmConfigured).toBe(true);
+      expect(JSON.stringify(saved.body)).not.toContain(secret);
+      const row = await sharedDb.one<{ encrypted_key: string }>(`SELECT encrypted_key FROM model_credentials WHERE provider = $1`, ['glm']);
+      expect(row.encrypted_key).not.toContain(secret);
+      expect((await app.get(ModelCredentialsService).getKeys()).glmKey).toBe(secret);
+      await sleep(100);
+      const logs = await sharedDb.many<{ detail: any }>(`SELECT detail FROM action_logs WHERE action = $1`, ['PUT /api/settings/model-key']);
+      expect(JSON.stringify(logs)).not.toContain(secret);
+    } finally {
+      await sharedDb.query(`DELETE FROM model_credentials WHERE provider = $1`, ['glm']);
+    }
+  });
+
+  it('生产环境拒绝通过 HTTP 提交模型密钥', async () => {
+    const admin = await login('admin', 'Admin@123');
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const response = await request(http).put('/api/settings/model-key').set('Authorization', `Bearer ${admin}`)
+        .send({ provider: 'glm', secret: 'mock-http-key' });
+      expect(response.body.code).toBe(1003);
+    } finally {
+      process.env.NODE_ENV = previous;
+    }
+  });
 
   it('仅管理员可查看模型配置状态且接口不返回密钥', async () => {
     const admin = await login('admin', 'Admin@123');

@@ -43,6 +43,7 @@ import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/s
 import { buildKeywordQuestionProgress, deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
 import { evaluateWithModels } from '../../domain/model-reception';
+import { ModelCredentialsService } from '../settings/model-credentials.service';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, selectWashFollowUp } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
 
@@ -168,7 +169,8 @@ export class ReceptionService implements OnModuleInit {
     private readonly settings: SettingsService,
     private readonly gateway: ReceptionGateway,
     @Inject(SCHEDULER) private readonly scheduler: SchedulerLike,
-    private readonly tasks: TasksService
+    private readonly tasks: TasksService,
+    private readonly credentials: ModelCredentialsService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -1172,7 +1174,8 @@ export class ReceptionService implements OnModuleInit {
     const lastBuyerAt = inAgentCloseWindow ? null : session.last_buyer_at ? new Date(session.last_buyer_at).getTime() : null;
 
     const currentQuestion = session.questions.find((q) => q.seq === session.current_seq) || null;
-    const useModel = Boolean(currentQuestion && !session.opener_pending && !inAgentCloseWindow && (process.env.GLM_API_KEY || process.env.DEEPSEEK_API_KEY));
+    const modelKeys = await this.credentials.getKeys();
+    const useModel = Boolean(currentQuestion && !session.opener_pending && !inAgentCloseWindow && (modelKeys.glmKey || modelKeys.deepseekKey));
     if (this.modelRequests.has(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复，请稍候');
     if (useModel) {
       const claimed = await this.db.one<{ id: number }>(
@@ -1194,7 +1197,7 @@ export class ReceptionService implements OnModuleInit {
       goals: (currentQuestion!.semanticGoals || []).map((goal) => ({ id: goal.id, points: goal.requiredPoints.map((point) => ({ id: point.id, label: point.label })) })),
       history: historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent').slice(-12).map((m) => ({ role: m.sender, content: m.content })),
       reply: text,
-    }, { glmKey: process.env.GLM_API_KEY, deepseekKey: process.env.DEEPSEEK_API_KEY }) : null;
+    }, modelKeys) : null;
     } catch (error) {
       if (lastBuyerAt !== null) {
         await this.db.query(

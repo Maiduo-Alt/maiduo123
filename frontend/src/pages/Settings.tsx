@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, Divider, Form, InputNumber, Row, Select, Space, Switch, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Divider, Form, Input, InputNumber, Row, Select, Space, Switch, Typography, message } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import { useAuth } from '../store/auth';
@@ -9,6 +9,9 @@ export default function Settings() {
   const [params, setParams] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [modelStatus, setModelStatus] = useState<{ glmConfigured: boolean; deepseekConfigured: boolean } | null>(null);
+  const [modelProvider, setModelProvider] = useState<'glm' | 'deepseek'>('glm');
+  const [modelKey, setModelKey] = useState('');
+  const [modelSaving, setModelSaving] = useState(false);
   const [form] = Form.useForm();
   const readOnly = profile?.roleCode !== 'admin';
 
@@ -150,6 +153,23 @@ export default function Settings() {
     }
   };
 
+  const saveModelKey = async () => {
+    if (!modelKey.trim()) { message.error('请输入 API Key'); return; }
+    setModelSaving(true);
+    try {
+      const status = await api<{ glmConfigured: boolean; deepseekConfigured: boolean }>('/settings/model-key', {
+        method: 'PUT', body: { provider: modelProvider, secret: modelKey.trim() },
+      });
+      setModelKey('');
+      setModelStatus(status);
+      message.success('API Key 已保存，请通过模拟接待验证接口');
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setModelSaving(false);
+    }
+  };
+
   if (!params) return <Card loading bordered={false} />;
 
   return (
@@ -170,6 +190,7 @@ export default function Settings() {
         message="所有阈值与权重均在此配置，修改后立即对新接待生效；历史接待按生成时的参数快照计分，不重算（方案 3.8.4）。"
       />
       {profile?.roleCode === 'admin' && (
+        <div style={{ marginBottom: 16 }}>
         <Alert
           type="info"
           showIcon
@@ -179,6 +200,13 @@ export default function Settings() {
             ? `智谱 GLM：${modelStatus.glmConfigured ? '已配置' : '未配置'}；DeepSeek 备用：${modelStatus.deepseekConfigured ? '已配置' : '未配置'}。仅显示密钥是否已配置，接口可用性需联调验证。`
             : '暂时无法读取模型配置状态。'}
         />
+        <Space wrap style={{ marginTop: 12 }}>
+          <Select value={modelProvider} onChange={setModelProvider} style={{ width: 180 }} options={[{ value: 'glm', label: '智谱 GLM（主用）' }, { value: 'deepseek', label: 'DeepSeek（备用）' }]} />
+          <Input.Password value={modelKey} onChange={(event) => setModelKey(event.target.value)} autoComplete="new-password" placeholder="输入新的 API Key" style={{ width: 300 }} disabled={!window.isSecureContext} />
+          <Button onClick={saveModelKey} loading={modelSaving} disabled={!window.isSecureContext}>保存 API Key</Button>
+        </Space>
+        {!window.isSecureContext && <Alert type="warning" showIcon message="请使用 HTTPS 访问系统后配置 API Key" style={{ marginTop: 8 }} />}
+        </div>
       )}
       <Form form={form} layout="vertical" disabled={readOnly}>
         <Typography.Title level={5}>考核规则</Typography.Title>

@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS app_params (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS model_credentials (
+  provider VARCHAR(16) PRIMARY KEY,
+  encrypted_key TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS categories (
   id            SERIAL PRIMARY KEY,
   type          VARCHAR(16) NOT NULL,
