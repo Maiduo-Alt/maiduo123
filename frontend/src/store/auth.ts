@@ -20,7 +20,7 @@ interface AuthState {
   passwordNotice: string | null;
   login: (username: string, password: string) => Promise<{ mustChangePassword: boolean; notice: string | null }>;
   clearPasswordNotice: () => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   load: () => Promise<void>;
   hasRole: (...roles: string[]) => boolean;
 }
@@ -51,9 +51,13 @@ export const useAuth = create<AuthState>((set, get) => ({
   clearPasswordNotice() {
     set({ passwordNotice: null });
   },
-  logout() {
+  async logout() {
+    try {
+      if (getToken()) await api('/auth/logout', { method: 'POST' });
+    } finally {
     setToken(null);
     set({ profile: null, passwordNotice: null });
+    }
   },
   async load() {
     if (!getToken()) return;

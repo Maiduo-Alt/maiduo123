@@ -3,12 +3,13 @@ import { Observable, tap } from 'rxjs';
 import { DbService } from '../db/db.service';
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-const SENSITIVE_KEYS = ['password', 'newPassword', 'oldPassword', 'passwordHash', 'token'];
+const SENSITIVE_KEYS = ['password', 'token', 'secret', 'authorization', 'base64', 'content', 'text', 'csv'];
 const MAX_STRING_LENGTH = 200;
 
 /** 审计明细里的值做脱敏与截断：不写密码，也不把 base64 文件内容塞进日志。 */
 function sanitize(value: any, depth = 0): any {
-  if (depth > 3 || value === null || typeof value !== 'object') {
+  if (depth > 3) return '[已省略]';
+  if (value === null || typeof value !== 'object') {
     if (typeof value === 'string' && value.length > MAX_STRING_LENGTH) {
       return `${value.slice(0, MAX_STRING_LENGTH)}...(truncated ${value.length})`;
     }
@@ -17,7 +18,7 @@ function sanitize(value: any, depth = 0): any {
   if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitize(item, depth + 1));
   const out: Record<string, any> = {};
   for (const [key, item] of Object.entries(value)) {
-    out[key] = SENSITIVE_KEYS.includes(key) ? '***' : sanitize(item, depth + 1);
+    out[key] = SENSITIVE_KEYS.some((sensitive) => key.toLowerCase().includes(sensitive)) ? '***' : sanitize(item, depth + 1);
   }
   return out;
 }

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { SessionEvents } from '../../common/session-events';
 import bcrypt from 'bcryptjs';
 import { DbService } from '../../db/db.service';
 import { BizError, ERR } from '../../common/errors';
@@ -7,7 +8,7 @@ import { normalizePage, pageResult, PageQuery } from '../../common/pagination';
 
 @Injectable()
 export class AccountsService {
-  constructor(private readonly db: DbService) {}
+  constructor(private readonly db: DbService, private readonly events: SessionEvents) {}
 
   async list(query: PageQuery & { role?: string; groupId?: string; status?: string; keyword?: string }) {
     const { page, pageSize, offset, limit } = normalizePage(query);
@@ -75,10 +76,12 @@ export class AccountsService {
                            employee_no = COALESCE($5, employee_no),
                            mobile = COALESCE($6, mobile),
                            status = COALESCE($7, status),
+                           token_version = token_version + CASE WHEN $3::varchar IS NOT NULL OR $4::integer IS NOT NULL OR $7::integer IS NOT NULL THEN 1 ELSE 0 END,
                            updated_at = now()
        WHERE id = $1 AND deleted_at IS NULL`,
       [id, body.displayName ?? null, body.roleCode ?? null, body.groupId ?? null, body.employeeNo ?? null, body.mobile ?? null, body.status ?? null]
     );
+    if (body.roleCode != null || body.groupId != null || body.status != null) this.events.emit('revoke', id);
     return { success: true };
   }
 
@@ -103,6 +106,7 @@ export class AccountsService {
       if (Number(rest.count) === 0) throw new BizError(ERR.PARAM, '至少保留一个启用状态的管理员账号');
     }
     await this.db.query(`UPDATE accounts SET deleted_at = now(), status = 0, updated_at = now() WHERE id = $1`, [id]);
+    this.events.emit('revoke', id);
     return { success: true };
   }
 
@@ -110,11 +114,12 @@ export class AccountsService {
     if (!password || password.length < 8) throw new BizError(ERR.PARAM, '密码长度至少 8 位');
     // 方案 F8-10：管理员重置密码后，本人登录时必须先改密
     await this.db.query(
-      `UPDATE accounts SET password_hash = $2, password_changed_at = now(), must_change_password = true,
+      `UPDATE accounts SET password_hash = $2, password_changed_at = now(), must_change_password = true, token_version = token_version + 1,
                            login_fail_count = 0, locked_until = NULL, updated_at = now()
        WHERE id = $1 AND deleted_at IS NULL`,
       [id, bcrypt.hashSync(password, 10)]
     );
+    this.events.emit('revoke', id);
     return { success: true };
   }
 
@@ -153,7 +158,7 @@ export class AccountsService {
   ): Promise<{ success: boolean; levels: string[] }> {
     const account = await this.db.one<{ group_id: number | null }>(`SELECT group_id FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [id]);
     if (!account) throw new BizError(ERR.NOT_FOUND, '账号不存在');
-    if (operator.roleCode === 'leader' && operator.groupId && account.group_id !== operator.groupId) {
+    if (operator.roleCode === 'leader' && (!operator.groupId || account.group_id !== operator.groupId)) {
       throw new BizError(ERR.FORBIDDEN, '只能为本组客服开放难度');
     }
 

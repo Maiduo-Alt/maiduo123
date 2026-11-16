@@ -19,7 +19,7 @@ async function bootstrap(): Promise<void> {
   app.useGlobalInterceptors(new ResponseInterceptor());
   app.enableCors({ origin: true, credentials: true });
   // 上传的图片按静态资源对外提供（方案 3.4 商品主图/详情图）
-  app.use('/uploads', express.static(uploadDir()));
+  app.use('/uploads', express.static(uploadDir(), { setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff') }));
 
   if (isMemoryDb()) {
     const db = app.get(DbService);

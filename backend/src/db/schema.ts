@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 -- 客户 2026-10-10：账号支持删除（软删除），历史接待数据不受影响
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS app_params (
   id            SERIAL PRIMARY KEY,

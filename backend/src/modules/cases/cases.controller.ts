@@ -50,7 +50,7 @@ export class CasesController {
   @Roles('admin', 'leader')
   @Post('from-attempt')
   fromAttempt(@Body() body: { attemptId: number; highlight?: boolean }, @CurrentUser() user: AuthUser) {
-    return this.cases.fromAttempt(Number(body.attemptId), user.id, Boolean(body.highlight));
+    return this.cases.fromAttempt(Number(body.attemptId), user, Boolean(body.highlight));
   }
 
   /** 方案 F5-05：维护案例的标题 / 店铺 / 阶段 / 标签。 */

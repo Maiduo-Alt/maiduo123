@@ -12,10 +12,9 @@ export class AuthController {
     return this.auth.login(body.username, body.password);
   }
 
-  @Public()
   @Post('logout')
-  logout() {
-    return { success: true };
+  logout(@CurrentUser() user: AuthUser) {
+    return this.auth.logout(user.id);
   }
 
   @Get('profile')

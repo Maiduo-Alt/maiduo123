@@ -29,11 +29,19 @@ function readZipEntries(buf: Buffer): Map<string, Buffer> {
   if (eocd < 0) throw new Error('不是有效的 xlsx 文件（未找到 ZIP 结构）');
 
   const total = buf.readUInt16LE(eocd + 10);
+  if (total > 256) throw new Error('Excel 文件包含过多条目');
+  let totalBytes = 0;
   let offset = buf.readUInt32LE(eocd + 16);
   for (let i = 0; i < total; i += 1) {
     if (offset + 46 > buf.length || buf.readUInt32LE(offset) !== CEN_SIG) break;
     const method = buf.readUInt16LE(offset + 10);
     const compressedSize = buf.readUInt32LE(offset + 20);
+    const uncompressedSize = buf.readUInt32LE(offset + 24);
+    totalBytes += uncompressedSize;
+    if (uncompressedSize > 16 * 1024 * 1024 || totalBytes > 32 * 1024 * 1024 ||
+        (uncompressedSize > 1024 * 1024 && uncompressedSize > compressedSize * 100)) {
+      throw new Error('Excel 解压数据过大');
+    }
     const nameLen = buf.readUInt16LE(offset + 28);
     const extraLen = buf.readUInt16LE(offset + 30);
     const commentLen = buf.readUInt16LE(offset + 32);
@@ -44,7 +52,10 @@ function readZipEntries(buf: Buffer): Map<string, Buffer> {
     const localExtraLen = buf.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
     const raw = buf.subarray(dataStart, dataStart + compressedSize);
-    entries.set(name, method === 0 ? Buffer.from(raw) : inflateRawSync(raw));
+    if (method !== 0 && method !== 8) throw new Error('不支持的 Excel 压缩方式');
+    const data = method === 0 ? Buffer.from(raw) : inflateRawSync(raw, { maxOutputLength: 16 * 1024 * 1024 });
+    if (data.length !== uncompressedSize) throw new Error('Excel 条目大小不一致');
+    entries.set(name, data);
 
     offset += 46 + nameLen + extraLen + commentLen;
   }
@@ -138,5 +149,6 @@ export function parseXlsx(buffer: Buffer): string[][] {
 export function base64ToBuffer(input: string): Buffer {
   const comma = input.indexOf(',');
   const data = comma >= 0 ? input.slice(comma + 1) : input;
+  if (data.length > 14 * 1024 * 1024) throw new Error('Excel 文件过大');
   return Buffer.from(data.replace(/\s/g, ''), 'base64');
 }
