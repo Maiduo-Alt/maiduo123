@@ -72,15 +72,19 @@ export function judgeValidReplies(
 
   for (const seq of seqs) {
     const round = bySeq.get(seq)!;
+    const automatic = params.replyJudgmentVersion === 1 && questions.some((q) => q.seq === seq && q.automaticEvaluation);
     const roundIndexes = messages
       .map((m, index) => ({ m, index }))
-      .filter(({ m }) => m.sender === 'agent' && m.questionSeq === seq);
+      .filter(({ m }) => m.sender === 'agent' && m.questionSeq === seq && (!automatic || !m.openerTiming));
 
     // 该轮是否命中过要点（整轮取最大值：任一条命中即算解决）
     const hitAny = roundIndexes.some(({ m }) =>
-      m.pendingVerification || (m.hitPoints || []).length > 0 || (m.goalMatches || []).some((match) => match.pointIds.length > 0)
+      m.pendingVerification || (automatic && (m.judgeSignal === 'stance' || m.judgeSignal === 'key-point')) ||
+      (m.hitPoints || []).length > 0 || (m.goalMatches || []).some((match) => match.pointIds.length > 0)
     );
-    if (rule.unresolvedEnabled) {
+    const asked = roundIndexes.length > 0 || messages.some((m) =>
+      m.sender === 'buyer' && m.questionSeq === seq && m.responseRoundType !== 'opener');
+    if (rule.unresolvedEnabled && (!automatic || asked)) {
       unresolvedRun = hitAny ? 0 : unresolvedRun + 1;
     }
     const unresolvedInvalid = rule.unresolvedEnabled && !hitAny && unresolvedRun >= rule.unresolvedStreak;

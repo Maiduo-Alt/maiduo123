@@ -537,6 +537,142 @@ describe('在线模拟接待端到端链路', () => {
     }
   }, 60000);
 
+  it('已明确说明发货时间时跳过等价追问', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-auto-shipping', JSON.stringify({ ...DEFAULT_PARAMS, replyJudgmentVersion: 1 })],
+    );
+    const questions = [
+      { seq: 1, question: '这条裙子是现货吗，拍下后多久能发货', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '那一般什么时候可以发出呢？', keyPoints: [], automaticEvaluation: true },
+      { seq: 3, question: '发出后多久可以送达？', keyPoints: [], automaticEvaluation: true },
+    ];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 3, $2::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify(questions)],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      const reply = await reception.sendMessage(1, attempt.id, session.id, '亲，有现货，48小时内发货，具体以订单为准。');
+      expect(reply.ruleResult.judge.pass).toBe(true);
+      await reception.advanceAfterReply(session.id);
+      const state = await sharedDb.one<{ current_seq: number; skipped_seqs: number[] }>(`SELECT current_seq, skipped_seqs FROM sessions WHERE id = $1`, [session.id]);
+      expect(state.current_seq).toBe(3);
+      expect(state.skipped_seqs).toContain(2);
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
+  it('自动判定与有效回复、计时和收尾使用一致口径', async () => {
+    const params = { ...DEFAULT_PARAMS, responseTimingVersion: 2, replyJudgmentVersion: 1, invalidReplyEnabled: true,
+      invalidReplyUnresolvedEnabled: true, invalidReplyUnresolvedStreak: 3 };
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-auto-unified', JSON.stringify(params)],
+    );
+    const questions = [
+      { seq: 1, question: '有现货吗？', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '跳过的问题', keyPoints: [], automaticEvaluation: true },
+      { seq: 3, question: '发出后大概多久能收到呢？', keyPoints: [], automaticEvaluation: true },
+    ];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, skipped_seqs, last_buyer_at, unresolved_streak)
+       VALUES ($1, 1, '测试买家', 'serving', 3, 3, $2::jsonb, '[2]'::jsonb, $3, 2) RETURNING id`,
+      [attempt.id, JSON.stringify(questions), new Date(Date.now() - 3000).toISOString()],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES
+        ($1,'agent','有现货',1,$2::jsonb), ($1,'buyer','发出后大概多久能收到呢？',3,$3::jsonb)`,
+      [session.id, JSON.stringify({ questionSeq: 1, judgmentVersion: 1, judge: { pass: true, signal: 'key-point' } }), JSON.stringify({ responseRoundStart: true })]);
+      const reply = await reception.sendMessage(1, attempt.id, session.id, '亲，发出后一般2到4天送达，偏远地区可能稍久。');
+      expect(reply.ruleResult.judge.pass).toBe(true);
+      expect((reply.ruleResult as any).invalid).not.toBe(true);
+      expect(reply.responseSec).toBeGreaterThanOrEqual(2);
+      expect(reply.ruleResult.conversationState.resolvedGoalIds).toContain('keyword-seq-3');
+      await sharedDb.query(`UPDATE sessions SET state = 'awaiting_agent_close', emotion_value = 75, unresolved_streak = 3 WHERE id = $1`, [session.id]);
+      const closing = await reception.sendMessage(1, attempt.id, session.id, '感谢您的咨询，祝您生活愉快，再见！');
+      expect(closing.ruleResult.judge.signal).toBe('closing');
+      expect(closing.ruleResult.emotionValue).toBe(75);
+      expect(closing.ruleResult.emotionDelta).toBe(0);
+      expect(closing.ruleResult.escalated).toBe(false);
+      expect(closing.responseSec).toBeNull();
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      (reception as any).scheduler.cancel(`close:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
+  it('新会话中待核实答复计时且给部分分，但仍追问而非判为解决', async () => {
+    const params = { ...DEFAULT_PARAMS, responseTimingVersion: 2, replyJudgmentVersion: 1,
+      invalidReplyEnabled: true, invalidReplyUnresolvedEnabled: true, invalidReplyUnresolvedStreak: 1 };
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-auto-pending-new', JSON.stringify(params)],
+    );
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, $3) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question: '能机洗吗？', keyPoints: [], automaticEvaluation: true }]), new Date(Date.now() - 3000).toISOString()],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer','能机洗吗？',1,$2::jsonb)`,
+        [session.id, JSON.stringify({ responseRoundStart: true })]);
+      const response = await reception.sendMessage(1, attempt.id, session.id, '亲，我先帮您核实洗标，确认后回复您。');
+      expect(response.responseSec).toBeGreaterThanOrEqual(2);
+      expect(response.ruleResult.pendingVerification).toBe(true);
+      expect(response.ruleResult.judge.pass).toBe(false);
+      expect(response.ruleResult.conversationState.resolvedGoalIds).not.toContain('keyword-seq-1');
+      await reception.advanceAfterReply(session.id);
+      const buyer = await sharedDb.one<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`, [session.id]);
+      expect(buyer.content).toContain('确认');
+      await reception.finishSession(1, attempt.id, session.id);
+      const score = await sharedDb.one<{ solving_score: string }>(`SELECT solving_score FROM scores WHERE session_id = $1`, [session.id]);
+      expect(Number(score.solving_score)).toBe(17.5);
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
+  it('自动判断识别开放式问答、复合问题和表态对象', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-auto-examples', JSON.stringify({ ...DEFAULT_PARAMS, replyJudgmentVersion: 1 })],
+    );
+    const cases = [
+      ['这条连衣裙搭配什么外套和鞋子好看', '亲，可以搭短款西装或针织开衫，鞋子搭乐福鞋或小白鞋。', true],
+      ['这条连衣裙搭配什么外套和鞋子好看', '亲，外套可以搭针织开衫哦。', false],
+      ['我158/92穿什么码', '亲，158厘米92斤可以先参考M码，建议对照尺码表。', true],
+      ['这条裙子是现货吗，拍下后多久能发货', '亲，页面显示有现货，48小时内发货，具体以订单显示为准。', true],
+      ['这条裙子是现货吗，拍下后多久能发货', '亲，这款有现货哦。', false],
+      ['平时穿M你们家偏大吗', '亲，可以先参考M码，这款是A字版型，建议对照尺码表。', false],
+      ['能机洗吗？', '我不确定能否机洗，先帮您核实洗标。', false],
+    ] as const;
+    const reception = app.get(ReceptionService);
+    const sessions: number[] = [];
+    try {
+      for (const [question, content, passed] of cases) {
+        const session = await sharedDb.one<{ id: number }>(
+          `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+           VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, now()) RETURNING id`,
+          [attempt.id, JSON.stringify([{ seq: 1, question, keyPoints: [], automaticEvaluation: true }])],
+        );
+        sessions.push(session.id);
+        const result = await reception.sendMessage(1, attempt.id, session.id, content);
+        expect({ question, pass: result.ruleResult.judge.pass }).toEqual({ question, pass: passed });
+      }
+    } finally {
+      for (const id of sessions) (reception as any).scheduler.cancel(`next:${id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
   it('询问是否有内衬的待核实回复不提前完成语义目标', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)

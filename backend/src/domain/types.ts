@@ -23,6 +23,8 @@ export interface ScoreWeights {
 export interface SystemParams {
   /** 新接待按买家实际提问和追问分别统计响应；旧快照沿用旧口径。 */
   responseTimingVersion?: 2;
+  /** 新接待统一自动判定、有效回复和计时口径；旧快照保留原规则。 */
+  replyJudgmentVersion?: 1;
   firstResponseLimitSec: number;
   avgResponseLimitSec: number;
   replyRateLimitPct: number;

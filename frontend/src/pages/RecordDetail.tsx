@@ -120,6 +120,10 @@ export default function RecordDetail() {
                 {m.sender === 'buyer' ? '买家' : m.sender === 'agent' ? '客服' : '系统'} ·{' '}
                 {new Date(m.createdAt).toLocaleTimeString('zh-CN')}
                 {m.responseSec !== null && m.sender === 'agent' && ` · 响应 ${m.responseSec}s`}
+                {m.sender === 'agent' && m.ruleResult?.judgmentVersion === 1 && !m.ruleResult?.invalid &&
+                  !['opener', 'closing'].includes(m.ruleResult?.judge?.signal) && (
+                  <span> · 回答判定：{m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
+                )}
                 {m.isTimeout && <span style={{ color: '#cf1322' }}> · 超时</span>}
                 {m.ruleResult?.modelEvaluation && (
                   <span style={{ color: '#1677ff' }}> · 模型判定：{m.ruleResult.modelEvaluation.reason}</span>

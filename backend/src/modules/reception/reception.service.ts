@@ -286,6 +286,7 @@ export class ReceptionService implements OnModuleInit {
     }
     const effectiveParams = cloneParams(params);
     effectiveParams.responseTimingVersion = 2;
+    effectiveParams.replyJudgmentVersion = 1;
     if (override.concurrentCount !== undefined) {
       const value = Number(override.concurrentCount);
       if (!Number.isFinite(value) || value < 1 || value > 4) {
@@ -616,6 +617,8 @@ export class ReceptionService implements OnModuleInit {
       agentRows.map((row) => ({
         questionSeq: row.rule_result?.questionSeq ?? row.seq,
         hitPoints: row.rule_result?.hitPoints || [],
+        automaticResolved: row.rule_result?.judgmentVersion === 1 && row.rule_result?.judge?.pass === true &&
+          !row.rule_result?.invalid && row.rule_result?.judge?.signal !== 'opener',
       })),
     );
 
@@ -767,7 +770,7 @@ export class ReceptionService implements OnModuleInit {
     }
 
     const priorMessages = await this.db.many<any>(
-      `SELECT rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
+      `SELECT content, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
       [sessionId]
     );
     const evaluations = priorMessages.map((row) => row.rule_result?.semanticEvaluation).filter(Boolean);
@@ -786,6 +789,19 @@ export class ReceptionService implements OnModuleInit {
     const previousQuestion = session.questions.find((question) => question.seq === session.current_seq) || null;
     const previousTopic = conversationTopic(previousQuestion);
     const alreadyAnswered = [...(session.skipped_seqs || [])];
+    const shippingAnswered = previousQuestion?.automaticEvaluation && priorMessages.some((message) =>
+      message.rule_result?.judgmentVersion === 1 && message.rule_result?.judge?.pass === true && !message.rule_result?.invalid &&
+      !/不确定|不知道|不清楚|无法|不能|不保证|不承诺|不一定|可能|或许/u.test(message.content) &&
+      /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(message.content),
+    );
+    if (shippingAnswered) {
+      for (const question of session.questions) {
+        if (question.seq > session.current_seq && !alreadyAnswered.includes(question.seq) &&
+          /^(?:亲|请问|那|一般|大概|具体)*(?:什么时候|多久|几天)(?:可以|能|会)?(?:发货|发出|出库)(?:呢|吗|嘛|么)?[？?。！!\s]*$/u.test(question.question.trim())) {
+          alreadyAnswered.push(question.seq);
+        }
+      }
+    }
     if (previousQuestion?.automaticEvaluation && /机洗/u.test(previousQuestion.question) && recentAgent && supportsMachineWash(recentAgent.content)) {
       for (const question of session.questions) {
         if (question.seq > session.current_seq && !alreadyAnswered.includes(question.seq) && /^(?:亲|请问|这款|这件|衣服|可以|能|可不可以|能不能|支持|是否)*水洗(?:吗|嘛|么|呢)?[？?。！!\s]*$/u.test(question.question.trim())) {
@@ -1261,94 +1277,10 @@ export class ReceptionService implements OnModuleInit {
     // 开场回应归入 seq 1（与随后的题目同轮），避免产生 seq 0 的回复轮次干扰计分
     const insertSeq = openerStage ? 1 : session.current_seq;
 
-    // C6：无效 / 敷衍回复判定（默认关闭）。走领域纯函数，规则来自 param_snapshot。
-    const historyMessages: ScoreMessage[] = historyRows.map((m) => ({
-      sender: m.sender,
-      content: m.content,
-      questionSeq: m.rule_result?.questionSeq ?? m.seq,
-      hitPoints: m.rule_result?.hitPoints || [],
-      pendingVerification: m.rule_result?.pendingVerification === true,
-      goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
-      riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
-    }));
-    const currentIndex = historyMessages.length;
-    const validityRounds = judgeValidReplies(
-      [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints, pendingVerification, ...semanticEvaluation }],
-      session.questions,
-      params
-    );
-    const invalidReason =
-      // 业务动作话术不算敷衍：连点两次催付、或者模板话术与上一条相同，都不该判无效
-      meta?.businessAction
-        ? null
-        : validityRounds.find((r) => r.seq === session.current_seq)?.reasons.find((r) => r.index === currentIndex)?.reason ||
-          null;
-
-    // 抖店口径 / 方案 4.2：同一轮多条回复只计首条。
-    // 先看这一轮是否已经计过时长；计过就记 null，避免「连发多条各计一次」把平均响应算歪。
-    // 注意 last_buyer_at 在客服回复时**不刷新**，所以本轮稍后的第一条有效回复天然按
-    // 「买家发消息 → 该条回复」计时，正好满足官方「回退到首条有效回复」的要求。
-    // 被判无效的回复同样不计时，把这一轮留给后面的有效回复（始终没有则按 600 秒）。
-    const eventStart = historyRows.map((m) => m.sender === 'buyer' && m.rule_result?.responseRoundStart === true).lastIndexOf(true);
-    const alreadyCounted = params.responseTimingVersion === 2
-      ? (eventStart < 0 && session.current_seq !== 0) || historyRows.slice(eventStart + 1).some((m) => m.sender === 'agent' && m.response_sec !== null)
-      : historyRows.some((m) => m.sender === 'agent' && m.seq === insertSeq &&
-          m.response_sec !== null && (openerStage ? m.rule_result?.judge?.signal === 'opener' : m.rule_result?.judge?.signal !== 'opener'));
-    const responseSec =
-      !alreadyCounted && !invalidReason && lastBuyerAt ? Math.max(0, Math.round((now - lastBuyerAt) / 1000)) : null;
-    const isTimeout = responseSec !== null && responseSec > Math.round(params.timeoutSec * tolerance);
-
-    const emotion = updateEmotion(session.emotion_value, text, params, {
-      unresolvedStreak: session.unresolved_streak,
-      hitAnyPoint: hitAny || openerStage,
-    });
-
-    const allSemanticEvaluations = [
-      ...historyRows
-        .filter((m) => m.sender === 'agent' && m.rule_result?.semanticEvaluation)
-        .map((m) => m.rule_result.semanticEvaluation),
-      semanticEvaluation,
-    ];
-    const keywordProgress = buildKeywordQuestionProgress(
-      session.questions,
-      [
-        ...historyRows
-          .filter((m) => m.sender === 'agent')
-          .map((m) => ({
-            questionSeq: m.rule_result?.questionSeq ?? m.seq,
-            hitPoints: m.rule_result?.hitPoints || [],
-          })),
-        { questionSeq: insertSeq, hitPoints },
-      ],
-    );
-    const conversationState = deriveConversationState(session.questions, allSemanticEvaluations, {
-      currentSeq: session.current_seq,
-      skippedSeqs: session.skipped_seqs || [],
-      emotionValue: emotion.value,
-      timeoutCount: session.timeout_count + (isTimeout ? 1 : 0),
-      unresolvedStreak: hitAny || openerStage ? 0 : session.unresolved_streak + 1,
-      followUps: session.follow_ups,
-      keywordProgress,
-    });
-
-    const ruleResult = {
-      questionSeq: insertSeq,
-      ...(openerStage ? { openerTiming: true } : {}),
-      hitPoints,
-      semanticEvaluation,
-      goalProgress: getGoalProgress(session.questions, allSemanticEvaluations),
-      conversationState,
-      ...(modelResult ? { modelEvaluation: { ...modelResult, resolved: modelResolved } } : {}),
-      ...(pendingVerification && !invalidReason && !openerStage ? { pendingVerification: true } : {}),
-      missingPoints: currentQuestion ? currentQuestion.keyPoints.filter((p) => !hitPoints.includes(p)) : [],
-      emotionDelta: emotion.delta,
-      emotionValue: emotion.value,
-      emotionReason: emotion.reason,
-      escalated: emotion.escalated,
-      isTimeout,
-      // 2026-10-11 语义判定：敷衍/表态/打太极/要点/答非所问五信号综合，
-      // 驱动自适应推送（advanceAfterReply 读它决定推进还是追问），复盘页可见判定依据
-      judge: openerStage
+    const unifiedJudgment = params.replyJudgmentVersion === 1;
+    const judgedReply = unifiedJudgment && inAgentCloseWindow
+      ? { pass: false, signal: 'closing' as const }
+      : openerStage
         ? { pass: true, signal: 'opener' as const }
         : modelResult
         ? { pass: modelResolved, signal: modelResolved ? 'key-point' as const : 'hedge' as const }
@@ -1372,12 +1304,130 @@ export class ReceptionService implements OnModuleInit {
           });
           const questionTopic = conversationTopic(currentQuestion);
           const replyTopic = conversationTopic({ seq: 0, question: text, keyPoints: [] });
+          if (unifiedJudgment && currentQuestion?.automaticEvaluation && !pendingVerification && result.signal !== 'perfunctory') {
+            const q = currentQuestion.question;
+            if (/偏大|偏小/u.test(q) && !/偏大|偏小|不偏|不大|不小|正常|标准|偏宽松|偏紧/u.test(text)) {
+              return { pass: false, signal: 'off-topic' as const };
+            }
+            const uncertain = /不知道|不清楚|不确定|无法(?:判断|确认|推荐)/u.test(text);
+            const outerSuggestion = /西装|开衫|夹克|针织衫|风衣|衬衫|(?:米白|白色|黑色|浅色|深色|短款)外套/u.test(text);
+            const shoeSuggestion = /乐福鞋|小白鞋|运动鞋|高跟鞋|平底鞋|凉鞋|短靴|长靴|(?:白色|黑色|浅色|休闲)鞋/u.test(text);
+            const stylingAnswer = /搭配|外套|鞋子/u.test(q) && (outerSuggestion || shoeSuggestion) &&
+              (!/外套/u.test(q) || outerSuggestion) && (!/鞋子/u.test(q) || shoeSuggestion);
+            const sizeAnswer = /穿(?:什么|多大|哪个)码/u.test(q) && /(?:[SMLX]{1,4}|\d{2,3})\s*码/iu.test(text);
+            const saleAnswer = /售后/u.test(q) && /售后|退换|退货|换货/u.test(text) && /订单|申请|联系/u.test(text);
+            const shippingAnswer = !/可能|或许|不一定/u.test(text) && /现货/u.test(q) && /发货|发出/u.test(q) &&
+              /现货|有货|缺货|无货/u.test(text) && /\d+\s*(?:小时|天|日)/u.test(text) && /发货|发出|出库/u.test(text);
+            if (!uncertain && (stylingAnswer || sizeAnswer || saleAnswer || shippingAnswer)) return { pass: true, signal: 'key-point' as const };
+            if ((/外套/u.test(q) && /鞋子/u.test(q)) || (/现货/u.test(q) && /发货|发出/u.test(q))) {
+              return { pass: false, signal: 'off-topic' as const };
+            }
+          }
           if (currentQuestion?.automaticEvaluation && result.signal === 'stance' && questionTopic !== 'general' &&
             replyTopic !== 'general' && questionTopic !== replyTopic) return { pass: false, signal: 'off-topic' as const };
           return currentQuestion?.automaticEvaluation && result.signal === 'off-topic' && !isHedge(text) &&
             !/不知道|不清楚|不确定/u.test(text) && questionTopic !== 'general' && questionTopic === replyTopic
             ? { pass: true, signal: 'key-point' as const } : result;
-        })(),
+        })();
+
+    // C6：无效 / 敷衍回复判定（默认关闭）。走领域纯函数，规则来自 param_snapshot。
+    const historyMessages: ScoreMessage[] = historyRows.map((m) => ({
+      sender: m.sender,
+      content: m.content,
+      questionSeq: m.rule_result?.questionSeq ?? m.seq,
+      hitPoints: m.rule_result?.hitPoints || [],
+      pendingVerification: m.rule_result?.pendingVerification === true,
+      judgeSignal: m.rule_result?.invalid ? null : m.rule_result?.judge?.signal,
+      openerTiming: m.rule_result?.openerTiming === true,
+      responseRoundType: m.rule_result?.responseRoundType,
+      goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
+      riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
+    }));
+    const currentIndex = historyMessages.length;
+    const validityRounds = judgeValidReplies(
+      [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints, pendingVerification, judgeSignal: judgedReply.pass ? judgedReply.signal : null, ...semanticEvaluation }],
+      session.questions,
+      params
+    );
+    const invalidReason =
+      // 业务动作话术不算敷衍：连点两次催付、或者模板话术与上一条相同，都不该判无效
+      meta?.businessAction
+        ? null
+        : unifiedJudgment && inAgentCloseWindow ? null
+        : validityRounds.find((r) => r.seq === session.current_seq)?.reasons.find((r) => r.index === currentIndex)?.reason ||
+          null;
+
+    // 抖店口径 / 方案 4.2：同一轮多条回复只计首条。
+    // 先看这一轮是否已经计过时长；计过就记 null，避免「连发多条各计一次」把平均响应算歪。
+    // 注意 last_buyer_at 在客服回复时**不刷新**，所以本轮稍后的第一条有效回复天然按
+    // 「买家发消息 → 该条回复」计时，正好满足官方「回退到首条有效回复」的要求。
+    // 被判无效的回复同样不计时，把这一轮留给后面的有效回复（始终没有则按 600 秒）。
+    const eventStart = historyRows.map((m) => m.sender === 'buyer' && m.rule_result?.responseRoundStart === true).lastIndexOf(true);
+    const alreadyCounted = params.responseTimingVersion === 2
+      ? (eventStart < 0 && session.current_seq !== 0) || historyRows.slice(eventStart + 1).some((m) => m.sender === 'agent' && m.response_sec !== null)
+      : historyRows.some((m) => m.sender === 'agent' && m.seq === insertSeq &&
+          m.response_sec !== null && (openerStage ? m.rule_result?.judge?.signal === 'opener' : m.rule_result?.judge?.signal !== 'opener'));
+    const responseSec =
+      !alreadyCounted && !invalidReason && lastBuyerAt ? Math.max(0, Math.round((now - lastBuyerAt) / 1000)) : null;
+    const isTimeout = responseSec !== null && responseSec > Math.round(params.timeoutSec * tolerance);
+
+    const responded = hitAny || openerStage || (unifiedJudgment && !invalidReason && (judgedReply.pass || pendingVerification));
+    const emotion = unifiedJudgment && inAgentCloseWindow
+      ? { value: session.emotion_value, delta: 0, reason: 'none' as const, escalated: false }
+      : updateEmotion(session.emotion_value, text, params, {
+        unresolvedStreak: session.unresolved_streak,
+        hitAnyPoint: responded,
+      });
+
+    const allSemanticEvaluations = [
+      ...historyRows
+        .filter((m) => m.sender === 'agent' && m.rule_result?.semanticEvaluation)
+        .map((m) => m.rule_result.semanticEvaluation),
+      semanticEvaluation,
+    ];
+    const keywordProgress = buildKeywordQuestionProgress(
+      session.questions,
+      [
+        ...historyRows
+          .filter((m) => m.sender === 'agent')
+          .map((m) => ({
+            questionSeq: m.rule_result?.questionSeq ?? m.seq,
+            hitPoints: m.rule_result?.hitPoints || [],
+            automaticResolved: m.rule_result?.judgmentVersion === 1 && m.rule_result?.judge?.pass === true &&
+              !m.rule_result?.invalid && m.rule_result?.judge?.signal !== 'opener',
+          })),
+        { questionSeq: insertSeq, hitPoints, automaticResolved: unifiedJudgment && !invalidReason && !openerStage && !inAgentCloseWindow && judgedReply.pass },
+      ],
+    );
+    const conversationState = deriveConversationState(session.questions, allSemanticEvaluations, {
+      currentSeq: session.current_seq,
+      skippedSeqs: session.skipped_seqs || [],
+      emotionValue: emotion.value,
+      timeoutCount: session.timeout_count + (isTimeout ? 1 : 0),
+      unresolvedStreak: inAgentCloseWindow && unifiedJudgment ? session.unresolved_streak : responded ? 0 : session.unresolved_streak + 1,
+      followUps: session.follow_ups,
+      keywordProgress,
+    });
+
+    const ruleResult = {
+      questionSeq: insertSeq,
+      ...(unifiedJudgment ? { judgmentVersion: 1 } : {}),
+      ...(openerStage ? { openerTiming: true } : {}),
+      hitPoints,
+      semanticEvaluation,
+      goalProgress: getGoalProgress(session.questions, allSemanticEvaluations),
+      conversationState,
+      ...(modelResult ? { modelEvaluation: { ...modelResult, resolved: modelResolved } } : {}),
+      ...(pendingVerification && !invalidReason && !openerStage && !(unifiedJudgment && inAgentCloseWindow) ? { pendingVerification: true } : {}),
+      missingPoints: currentQuestion ? currentQuestion.keyPoints.filter((p) => !hitPoints.includes(p)) : [],
+      emotionDelta: emotion.delta,
+      emotionValue: emotion.value,
+      emotionReason: emotion.reason,
+      escalated: emotion.escalated,
+      isTimeout,
+      // 2026-10-11 语义判定：敷衍/表态/打太极/要点/答非所问五信号综合，
+      // 驱动自适应推送（advanceAfterReply 读它决定推进还是追问），复盘页可见判定依据
+      judge: invalidReason && unifiedJudgment ? { pass: false, signal: 'invalid' as const } : judgedReply,
       // C6：被判无效时把原因一起落库，明细页据此标注「被判无效的轮次与依据」
       ...(invalidReason ? { invalid: true, invalidReason } : {}),
       // 客户 2026-10-03：业务动作（催付 / 改价 / 去发货…）在消息上留痕，对话与复盘里都能看到
@@ -1426,7 +1476,7 @@ export class ReceptionService implements OnModuleInit {
         maxResponseSec,
         avgResponseSec,
         emotion.value,
-        hitAny || openerStage ? 0 : session.unresolved_streak + 1,
+        inAgentCloseWindow && unifiedJudgment ? session.unresolved_streak : responded ? 0 : session.unresolved_streak + 1,
         JSON.stringify(conversationState),
         inAgentCloseWindow ? 'awaiting_agent_close' : 'waiting_buyer',
         closeDeadline,

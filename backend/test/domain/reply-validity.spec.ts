@@ -20,6 +20,14 @@ const agent = (seq: number, content: string, hitPoints: string[] = ['要点']): 
 const roundOf = (result: ReturnType<typeof judgeValidReplies>, seq: number) => result.find((r) => r.seq === seq)!;
 
 describe('无效 / 敷衍回复判定（客户新增需求 C6）', () => {
+  it('自动判断命中可重置未解决计数，未提问的轮次不累计', () => {
+    const auto = [1, 2, 3, 4].map((seq) => ({ seq, question: `第 ${seq} 问`, keyPoints: [], automaticEvaluation: true }));
+    const params = on({ replyJudgmentVersion: 1, invalidReplyUnresolvedEnabled: true, invalidReplyUnresolvedStreak: 2 });
+    const messages: ScoreMessage[] = [buyer(1), { ...agent(1, '已答', []), judgeSignal: 'key-point' }, buyer(3), { ...agent(3, '另一条合理答复', []), judgeSignal: 'stance' }];
+    expect(roundOf(judgeValidReplies(messages, auto, params), 3).invalidReplyIndexes).toEqual([]);
+    const unanswered: ScoreMessage[] = [buyer(1), agent(1, '未答一', []), buyer(3), agent(3, '未答二', [])];
+    expect(roundOf(judgeValidReplies(unanswered, auto, params), 3).invalidReplyIndexes).toEqual([3]);
+  });
   it('总开关关闭时一律视为有效（改造前行为不变）', () => {
     const messages = [buyer(1), agent(1, '亲，您好'), agent(1, '亲，您好'), agent(1, '亲，您好')];
     const result = judgeValidReplies(messages, questions, DEFAULT_PARAMS);

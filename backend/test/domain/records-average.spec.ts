@@ -22,7 +22,7 @@ describe('接待列表平均响应时间', () => {
         .mockResolvedValueOnce([]),
     };
     const service = new RecordsService(db);
-    const result = await service.list({ id: 1, username: 'a', displayName: 'a', roleCode: 'admin', groupId: null }, {});
+    const result = await service.list({ id: 1, username: 'a', displayName: 'a', roleCode: 'admin', groupId: null, tokenVersion: 0 }, {});
     expect(result.list[0].avgResponseSec).toBe(151.5);
   });
 
@@ -54,7 +54,7 @@ describe('接待列表平均响应时间', () => {
         .mockResolvedValueOnce([]),
     };
     const service = new RecordsService(db);
-    const result = await service.list({ id: 1, username: 'a', displayName: 'a', roleCode: 'admin', groupId: null }, {});
+    const result = await service.list({ id: 1, username: 'a', displayName: 'a', roleCode: 'admin', groupId: null, tokenVersion: 0 }, {});
     expect(result.list.map((row) => row.avgResponseSec)).toEqual([10, 20]);
   });
 });

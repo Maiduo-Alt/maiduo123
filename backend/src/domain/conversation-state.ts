@@ -9,7 +9,7 @@ export interface KeywordQuestionProgress {
 
 export function buildKeywordQuestionProgress(
   questions: ScriptQuestion[],
-  messages: Array<{ questionSeq?: number | null; hitPoints?: string[] }>,
+  messages: Array<{ questionSeq?: number | null; hitPoints?: string[]; automaticResolved?: boolean }>,
 ): KeywordQuestionProgress[] {
   const hitsBySeq = new Map<number, Set<string>>();
   for (const message of messages || []) {
@@ -17,6 +17,7 @@ export function buildKeywordQuestionProgress(
     if (!seq) continue;
     const set = hitsBySeq.get(seq) || new Set<string>();
     (message.hitPoints || []).forEach((point) => set.add(String(point)));
+    if (message.automaticResolved) set.add('automatic-resolved');
     hitsBySeq.set(seq, set);
   }
 
