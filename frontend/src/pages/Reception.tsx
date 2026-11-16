@@ -87,6 +87,7 @@ interface SessionDto {
   /** 会话接入时间，用于对话区首条咨询商品卡的时间戳 */
   joinAt?: string;
   lastBuyerAt?: string | null;
+  timerPausedAt?: string | null;
 }
 
 interface MessageDto {
@@ -581,6 +582,7 @@ export default function Reception() {
                   timerMode: next.timerMode ?? s.timerMode,
                   state: next.state ?? s.state,
                   lastBuyerAt: 'lastBuyerAt' in next ? next.lastBuyerAt : s.lastBuyerAt,
+                  timerPausedAt: 'timerPausedAt' in next ? next.timerPausedAt : s.timerPausedAt,
                   closeDeadlineAt: 'closeDeadlineAt' in next ? next.closeDeadlineAt : s.closeDeadlineAt,
                 }
               : s;
@@ -1508,6 +1510,7 @@ export default function Reception() {
                   m.isTimeout ||
                   m.ruleResult?.businessAction ||
                   m.ruleResult?.invalid ||
+                  m.ruleResult?.modelEvaluation ||
                   m.ruleResult?.hitPoints?.length > 0 ||
                   m.ruleResult?.semanticEvaluation?.goalMatches?.length > 0 ||
                   m.ruleResult?.semanticEvaluation?.riskItems?.length > 0) && (
@@ -1528,6 +1531,11 @@ export default function Reception() {
                       </Tooltip>
                     )}
                     {m.sender === 'agent' && m.responseSec !== null && `响应 ${m.responseSec}s`}
+                    {m.ruleResult?.modelEvaluation && (
+                      <Tooltip title={m.ruleResult.modelEvaluation.reason}>
+                        <span style={{ color: '#1677ff' }}> · 模型判定依据</span>
+                      </Tooltip>
+                    )}
                     {m.isTimeout && <span style={{ color: '#cf1322' }}> · 超时</span>}
                     {m.ruleResult?.hitPoints?.length > 0 && (
                       <span style={{ color: '#389e0d' }}> · 命中要点 {m.ruleResult.hitPoints.length} 项</span>

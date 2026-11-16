@@ -8,6 +8,7 @@ export default function Settings() {
   const { profile } = useAuth();
   const [params, setParams] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [modelStatus, setModelStatus] = useState<{ glmConfigured: boolean; deepseekConfigured: boolean } | null>(null);
   const [form] = Form.useForm();
   const readOnly = profile?.roleCode !== 'admin';
 
@@ -64,6 +65,12 @@ export default function Settings() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (profile?.roleCode === 'admin') {
+      api<{ glmConfigured: boolean; deepseekConfigured: boolean }>('/settings/model-status').then(setModelStatus).catch(() => setModelStatus(null));
+    }
+  }, [profile?.roleCode]);
 
   const save = async () => {
     const values = await form.validateFields();
@@ -162,6 +169,17 @@ export default function Settings() {
         style={{ marginBottom: 16 }}
         message="所有阈值与权重均在此配置，修改后立即对新接待生效；历史接待按生成时的参数快照计分，不重算（方案 3.8.4）。"
       />
+      {profile?.roleCode === 'admin' && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="模型接口配置"
+          description={modelStatus
+            ? `智谱 GLM：${modelStatus.glmConfigured ? '已配置' : '未配置'}；DeepSeek 备用：${modelStatus.deepseekConfigured ? '已配置' : '未配置'}。仅显示密钥是否已配置，接口可用性需联调验证。`
+            : '暂时无法读取模型配置状态。'}
+        />
+      )}
       <Form form={form} layout="vertical" disabled={readOnly}>
         <Typography.Title level={5}>考核规则</Typography.Title>
         <Row gutter={16}>

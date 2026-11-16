@@ -42,6 +42,7 @@ import { createMinimumRoundQuestion, mixQuestionSeq, normalizeLegacyQuestionSeq 
 import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/seed-content';
 import { buildKeywordQuestionProgress, deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
+import { evaluateWithModels } from '../../domain/model-reception';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, selectWashFollowUp } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
 
@@ -87,6 +88,7 @@ interface SessionRow {
 @Injectable()
 export class ReceptionService implements OnModuleInit {
   private readonly logger = new Logger(ReceptionService.name);
+  private readonly modelRequests = new Map<number, number>();
 
   /**
    * 沟通风格只改变“怎么说”，不再额外注入新的业务意图。
@@ -194,8 +196,8 @@ export class ReceptionService implements OnModuleInit {
     if (!attempts.length) return;
 
     const idList = attempts.map((a) => a.id);
-    const sessions = await this.db.many<{ id: number; state: string; close_deadline_at: string | null }>(
-      `SELECT id, state, close_deadline_at FROM sessions
+    const sessions = await this.db.many<{ id: number; state: string; close_deadline_at: string | null; model_started_at: string | null; last_buyer_at: string | null }>(
+      `SELECT id, state, close_deadline_at, model_started_at, last_buyer_at FROM sessions
        WHERE attempt_id IN (${idList.map((_, i) => `$${i + 1}`).join(',')})
          AND state NOT IN ('finished','transferred','aborted')`,
       idList
@@ -203,6 +205,13 @@ export class ReceptionService implements OnModuleInit {
 
     let rearmed = 0;
     for (const session of sessions) {
+      if (session.model_started_at) {
+        const lastBuyer = session.last_buyer_at && ['wait', 'serving', 'timeout'].includes(session.state)
+          ? new Date(new Date(session.last_buyer_at).getTime() + Math.max(0, Date.now() - new Date(session.model_started_at).getTime())).toISOString()
+          : session.last_buyer_at;
+        await this.db.query(`UPDATE sessions SET last_buyer_at = $2, model_started_at = NULL WHERE id = $1 AND model_started_at = $3`,
+          [session.id, lastBuyer, session.model_started_at]);
+      }
       if (session.state === 'wait') {
         this.scheduler.schedule(`join:${session.id}`, 2000, () => this.pushNextQuestion(session.id));
         rearmed += 1;
@@ -724,7 +733,7 @@ export class ReceptionService implements OnModuleInit {
     }
   }
 
-  async pushNextQuestion(sessionId: number): Promise<void> {
+  async pushNextQuestion(sessionId: number, modelIntro?: string): Promise<void> {
     let session = await this.loadSession(sessionId);
     if (!session || ['finished', 'transferred', 'aborted', 'pending', 'awaiting_agent_close'].includes(session.state)) return;
     // 题号可能因跳题而增加，必须按实际推送过的轮次计算。
@@ -875,6 +884,7 @@ export class ReceptionService implements OnModuleInit {
     // 转场文案已经按风格生成，不能再套一次 styleBehavior，否则会出现
     // “我想确认一下，另外我还想确认一下……”这类双重风格前缀。
     const texts = isTopicTransition ? [plannedPrompt] : behavior.transform(plannedPrompt);
+    if (modelIntro) texts.unshift(modelIntro);
     /**
      * 客户 2026-10-03：**推送哪个问题，就带出与之关联的订单状态**。
      * 售前问题配「待支付 / 待发货」，售后问题配「已发货」——同一笔记订单随问题推进状态。
@@ -951,6 +961,15 @@ export class ReceptionService implements OnModuleInit {
     // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
     // 必须从判定集合剔除——否则首题任何回复都会被它带成「已通过」（2026-10-11 线上实测）。
     const judgedReplies = replies.filter((r) => r.rule_result?.judge?.signal !== 'opener');
+    const modelReply = judgedReplies[judgedReplies.length - 1]?.rule_result?.modelEvaluation;
+    if (modelReply) {
+      if (modelReply.resolved || (session.follow_ups || 0) >= (question.conversationPlan?.maxFollowUps ?? 2)) {
+        await this.pushNextQuestion(sessionId, modelReply.buyerReply);
+      } else {
+        await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0, modelReply.buyerReply);
+      }
+      return;
+    }
     const actionCodes = replies
       .map((r) => r.rule_result?.businessAction?.code)
       .filter((code): code is string => !!code);
@@ -1153,8 +1172,46 @@ export class ReceptionService implements OnModuleInit {
     const lastBuyerAt = inAgentCloseWindow ? null : session.last_buyer_at ? new Date(session.last_buyer_at).getTime() : null;
 
     const currentQuestion = session.questions.find((q) => q.seq === session.current_seq) || null;
+    const useModel = Boolean(currentQuestion && !session.opener_pending && !inAgentCloseWindow && (process.env.GLM_API_KEY || process.env.DEEPSEEK_API_KEY));
+    if (this.modelRequests.has(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复，请稍候');
+    if (useModel) {
+      const claimed = await this.db.one<{ id: number }>(
+        `UPDATE sessions SET model_started_at = $2 WHERE id = $1 AND model_started_at IS NULL AND state = $3 AND current_seq = $4 RETURNING id`,
+        [sessionId, new Date(now).toISOString(), session.state, session.current_seq],
+      );
+      if (!claimed) throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复或状态已改变，请稍候');
+      this.modelRequests.set(sessionId, now);
+    }
+    try {
+    const historyRows = await this.db.many<any>(
+      `SELECT sender, content, seq, response_sec, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
+      [sessionId]
+    );
+    let modelResult: Awaited<ReturnType<typeof evaluateWithModels>> | null = null;
+    try {
+    modelResult = useModel ? await evaluateWithModels({
+      question: currentQuestion!.question,
+      goals: (currentQuestion!.semanticGoals || []).map((goal) => ({ id: goal.id, points: goal.requiredPoints.map((point) => ({ id: point.id, label: point.label })) })),
+      history: historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent').slice(-12).map((m) => ({ role: m.sender, content: m.content })),
+      reply: text,
+    }, { glmKey: process.env.GLM_API_KEY, deepseekKey: process.env.DEEPSEEK_API_KEY }) : null;
+    } catch (error) {
+      if (lastBuyerAt !== null) {
+        await this.db.query(
+          `UPDATE sessions SET last_buyer_at = $2 WHERE id = $1 AND state = $3 AND last_buyer_at = $4`,
+          [sessionId, new Date(lastBuyerAt + Date.now() - now).toISOString(), session.state, session.last_buyer_at],
+        );
+      }
+      throw error;
+    }
+    if (modelResult) {
+      const latest = await this.loadSession(sessionId);
+      if (!latest || latest.state !== session.state || latest.current_seq !== session.current_seq) throw new BizError(ERR.SESSION_STATE, '会话状态已改变，请重新确认后发送');
+    }
     const pendingVerification = isPendingVerification(text);
-    const hitPoints = currentQuestion && !pendingVerification ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
+    const hitPoints = modelResult && currentQuestion && !(currentQuestion.semanticGoals || []).length
+      ? (modelResult.resolved && !pendingVerification ? [...currentQuestion.keyPoints] : [])
+      : currentQuestion && !pendingVerification ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
     const vectorCandidates = await findVectorCandidates(
       text,
       buildSemanticCandidates(session.questions),
@@ -1162,6 +1219,7 @@ export class ReceptionService implements OnModuleInit {
       Number(process.env.SEMANTIC_MATCH_THRESHOLD || 0.78)
     );
     const semanticEvaluation = evaluateSemanticReply(text, session.questions, vectorCandidates);
+    if (modelResult) semanticEvaluation.goalMatches = modelResult.matchedPoints;
     if (pendingVerification && currentQuestion) {
       const currentGoalIds = new Set((currentQuestion.semanticGoals || []).map((goal) => goal.id));
       semanticEvaluation.goalMatches = semanticEvaluation.goalMatches.filter((match) => !currentGoalIds.has(match.goalId));
@@ -1173,10 +1231,6 @@ export class ReceptionService implements OnModuleInit {
     const insertSeq = openerStage ? 1 : session.current_seq;
 
     // C6：无效 / 敷衍回复判定（默认关闭）。走领域纯函数，规则来自 param_snapshot。
-    const historyRows = await this.db.many<any>(
-      `SELECT sender, content, seq, response_sec, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
-      [sessionId]
-    );
     const historyMessages: ScoreMessage[] = historyRows.map((m) => ({
       sender: m.sender,
       content: m.content,
@@ -1252,6 +1306,7 @@ export class ReceptionService implements OnModuleInit {
       semanticEvaluation,
       goalProgress: getGoalProgress(session.questions, allSemanticEvaluations),
       conversationState,
+      ...(modelResult ? { modelEvaluation: { ...modelResult, resolved: modelResult.resolved && !pendingVerification } } : {}),
       missingPoints: currentQuestion ? currentQuestion.keyPoints.filter((p) => !hitPoints.includes(p)) : [],
       emotionDelta: emotion.delta,
       emotionValue: emotion.value,
@@ -1262,6 +1317,8 @@ export class ReceptionService implements OnModuleInit {
       // 驱动自适应推送（advanceAfterReply 读它决定推进还是追问），复盘页可见判定依据
       judge: openerStage
         ? { pass: true, signal: 'opener' as const }
+        : modelResult
+        ? { pass: modelResult.resolved && !pendingVerification, signal: modelResult.resolved && !pendingVerification ? 'key-point' as const : 'hedge' as const }
         : judgeReply({
             question: currentQuestion?.question || '',
             keyPoints: currentQuestion?.keyPoints || [],
@@ -1389,6 +1446,12 @@ export class ReceptionService implements OnModuleInit {
     }
 
     return { messageId: inserted.id, responseSec, isTimeout, ruleResult, level: attempt.level };
+    } finally {
+      if (useModel) {
+        await this.db.query(`UPDATE sessions SET model_started_at = NULL WHERE id = $1 AND model_started_at = $2`, [sessionId, new Date(now).toISOString()]);
+        this.modelRequests.delete(sessionId);
+      }
+    }
   }
 
   /**
@@ -1753,12 +1816,14 @@ export class ReceptionService implements OnModuleInit {
         const lastBuyer = s.last_buyer_at ? new Date(s.last_buyer_at).getTime() : null;
         // 只有「等待客服回复」（serving）和「排队待接入」（wait）时才累计响应计时；
         // 客服已回复、买家思考中（waiting_buyer）时计时暂停，避免回复后倒计时继续走动
-        const waitedSec = s.state === 'waiting_buyer' || !lastBuyer ? 0 : Math.round((now - lastBuyer) / 1000);
+        const pausedAt = this.modelRequests.get(s.id);
+        const waitedSec = s.state === 'waiting_buyer' || !lastBuyer ? 0 : Math.max(0, Math.round(((pausedAt ?? now) - lastBuyer) / 1000));
         const closeRemainSec = s.state === 'awaiting_agent_close' && s.close_deadline_at
           ? Math.max(0, Math.ceil((Date.parse(s.close_deadline_at) - now) / 1000))
           : null;
         return {
           ...this.toSessionDto(s),
+          timerPausedAt: pausedAt === undefined ? null : new Date(pausedAt).toISOString(),
           waitedSec,
           timeoutLimitSec: limit,
           remainSec: closeRemainSec ?? Math.max(0, limit - waitedSec),
@@ -1894,7 +1959,8 @@ export class ReceptionService implements OnModuleInit {
       const params = row.param_snapshot as SystemParams;
       const limit = Math.round(params.timeoutSec * (params.waitToleranceFactor[row.level] ?? 1));
       const lastBuyer = row.last_buyer_at ? new Date(row.last_buyer_at).getTime() : null;
-      const waitedSec = row.state === 'waiting_buyer' || !lastBuyer ? 0 : Math.max(0, Math.round((now - lastBuyer) / 1000));
+      const pausedAt = this.modelRequests.get(row.id);
+      const waitedSec = row.state === 'waiting_buyer' || !lastBuyer ? 0 : Math.max(0, Math.round(((pausedAt ?? now) - lastBuyer) / 1000));
       const closeDeadline = row.close_deadline_at ? Date.parse(row.close_deadline_at) : null;
       const closeRemainSec = row.state === 'awaiting_agent_close' && closeDeadline
         ? Math.max(0, Math.ceil((closeDeadline - now) / 1000))
@@ -1905,6 +1971,7 @@ export class ReceptionService implements OnModuleInit {
         sessionId: row.id,
         state: row.state,
         lastBuyerAt: row.last_buyer_at,
+        timerPausedAt: pausedAt === undefined ? null : new Date(pausedAt).toISOString(),
         closeDeadlineAt: row.close_deadline_at,
         waitedSec,
         timeoutLimitSec: limit,
@@ -1935,6 +2002,7 @@ export class ReceptionService implements OnModuleInit {
        WHERE a.status = 'running' AND s.state IN ('serving','wait','timeout')`
     );
     for (const row of rows) {
+      if (this.modelRequests.has(row.id)) continue;
       if (!row.last_buyer_at) continue;
       const params = row.param_snapshot as SystemParams;
       const tolerance = params.waitToleranceFactor[row.level] ?? 1;

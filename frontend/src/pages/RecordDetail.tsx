@@ -121,6 +121,9 @@ export default function RecordDetail() {
                 {new Date(m.createdAt).toLocaleTimeString('zh-CN')}
                 {m.responseSec !== null && m.sender === 'agent' && ` · 响应 ${m.responseSec}s`}
                 {m.isTimeout && <span style={{ color: '#cf1322' }}> · 超时</span>}
+                {m.ruleResult?.modelEvaluation && (
+                  <span style={{ color: '#1677ff' }}> · 模型判定：{m.ruleResult.modelEvaluation.reason}</span>
+                )}
                 {m.ruleResult?.businessAction && (
                   <span style={{ color: '#1677ff' }}> · 业务动作：{m.ruleResult.businessAction.name}</span>
                 )}

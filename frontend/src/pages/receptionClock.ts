@@ -3,6 +3,7 @@ export function projectSessionTimer<T extends {
   state: string;
   timerMode: 'response' | 'agent_close';
   lastBuyerAt?: string | null;
+  timerPausedAt?: string | null;
   closeDeadlineAt?: string | null;
   timeoutLimitSec: number;
 }>(session: T, serverNow: number | null): T & { waitedSec?: number; remainSec?: number; closeRemainSec?: number } {
@@ -12,7 +13,7 @@ export function projectSessionTimer<T extends {
     return { ...session, remainSec: remaining, closeRemainSec: remaining };
   }
   if ((session.state === 'wait' || session.state === 'serving' || session.state === 'timeout') && session.lastBuyerAt) {
-    const waited = Math.max(0, Math.round((serverNow - Date.parse(session.lastBuyerAt)) / 1000));
+    const waited = Math.max(0, Math.round(((session.timerPausedAt ? Date.parse(session.timerPausedAt) : serverNow) - Date.parse(session.lastBuyerAt)) / 1000));
     return { ...session, waitedSec: waited, remainSec: Math.max(0, session.timeoutLimitSec - waited) };
   }
   return session;

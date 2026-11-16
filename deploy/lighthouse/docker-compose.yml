@@ -58,6 +58,8 @@ services:
       # 库就在同一台机器上，走 compose 内网，RTT 亚毫秒级
       DATABASE_URL: postgres://cs_training:${POSTGRES_PASSWORD:-cs_training_pwd}@postgres:5432/cs_training
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      GLM_API_KEY: ${GLM_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       USE_PG_MEM: 'false'
       UPLOAD_DIR: /app/uploads
       TZ: Asia/Shanghai

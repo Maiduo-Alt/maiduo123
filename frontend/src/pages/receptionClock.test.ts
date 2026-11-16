@@ -5,6 +5,11 @@ const start = Date.parse('2026-11-14T10:00:00.000Z');
 const session = { state: 'serving', timerMode: 'response' as const, lastBuyerAt: new Date(start).toISOString(), timeoutLimitSec: 45, waitedSec: 0, remainSec: 45 };
 
 describe('接待计时显示', () => {
+  it('模型处理期间按服务端提交时间暂停，恢复后继续计时', () => {
+    const paused = { ...session, timerPausedAt: new Date(start + 5000).toISOString() };
+    expect(projectSessionTimer(paused, start + 20000)).toMatchObject({ waitedSec: 5, remainSec: 40 });
+    expect(projectSessionTimer({ ...paused, timerPausedAt: null }, start + 20000)).toMatchObject({ waitedSec: 20, remainSec: 25 });
+  });
   it('用服务端时间与买家消息起点计算等待和剩余时间', () => {
     expect(projectSessionTimer(session, start + 19100)).toMatchObject({ waitedSec: 19, remainSec: 26 });
     expect(projectSessionTimer(session, start + 50000)).toMatchObject({ waitedSec: 50, remainSec: 0 });

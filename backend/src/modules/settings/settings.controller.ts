@@ -13,6 +13,12 @@ export class SettingsController {
   }
 
   @Roles('admin')
+  @Get('model-status')
+  modelStatus() {
+    return { glmConfigured: Boolean(process.env.GLM_API_KEY), deepseekConfigured: Boolean(process.env.DEEPSEEK_API_KEY) };
+  }
+
+  @Roles('admin')
   @Put()
   update(@Body() body: Partial<SystemParams>, @CurrentUser() user: AuthUser) {
     return this.settings.updateParams(body, user.id);

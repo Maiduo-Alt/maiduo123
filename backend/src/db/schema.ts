@@ -193,6 +193,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 ALTER TABLE sessions ALTER COLUMN state TYPE VARCHAR(32);
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS close_deadline_at TIMESTAMPTZ;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS model_started_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_sessions_close_deadline ON sessions (close_deadline_at) WHERE state = 'awaiting_agent_close';
 
 -- 老库补列（幂等）：自适应推送追问计数

@@ -55,6 +55,129 @@ describe('在线模拟接待端到端链路', () => {
     throw new Error('等待条件超时');
   }
 
+  it('仅管理员可查看模型配置状态且接口不返回密钥', async () => {
+    const admin = await login('admin', 'Admin@123');
+    const agent = await login('agent', 'Agent@123');
+    const oldGlm = process.env.GLM_API_KEY;
+    process.env.GLM_API_KEY = 'test-only-secret';
+    try {
+      const response = await request(http).get('/api/settings/model-status').set('Authorization', `Bearer ${admin}`);
+      expect(response.body.data.glmConfigured).toBe(true);
+      expect(JSON.stringify(response.body)).not.toContain('test-only-secret');
+      expect((await request(http).get('/api/settings/model-status').set('Authorization', `Bearer ${agent}`)).body.code).toBe(1003);
+    } finally {
+      if (oldGlm === undefined) delete process.env.GLM_API_KEY; else process.env.GLM_API_KEY = oldGlm;
+    }
+  });
+
+  it('服务重启后恢复中断的模型处理并排除暂停时间', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-model-restart-test', JSON.stringify(DEFAULT_PARAMS)],
+    );
+    const now = Date.now();
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at, model_started_at)
+       VALUES ($1, 1, '重启买家', 'serving', 1, 1, $2::jsonb, $3, $4) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question: '可以机洗吗？', keyPoints: ['洗标'], stage: 'presale' }]), new Date(now - 8000).toISOString(), new Date(now - 5000).toISOString()],
+    );
+    try {
+      const reception = app.get(ReceptionService);
+      await (reception as any).recoverRunningAttempts();
+      const row = await sharedDb.one<{ model_started_at: string | null }>(`SELECT model_started_at FROM sessions WHERE id = $1`, [session.id]);
+      expect(row.model_started_at).toBeNull();
+      const snapshot = await reception.snapshot(1, attempt.id);
+      expect(snapshot.sessions[0].waitedSec).toBeGreaterThanOrEqual(3);
+      expect(snapshot.sessions[0].waitedSec).toBeLessThanOrEqual(4);
+    } finally {
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  });
+
+  it('模型处理期间暂停计时，失败后恢复计时并可重试', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-model-pause-test', JSON.stringify(DEFAULT_PARAMS)],
+    );
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '计时买家', 'serving', 1, 1, $2::jsonb, $3) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question: '可以机洗吗？', keyPoints: ['洗标'], stage: 'presale' }]), new Date(Date.now() - 2000).toISOString()],
+    );
+    const reception = app.get(ReceptionService);
+    const oldGlm = process.env.GLM_API_KEY;
+    const oldDeepseek = process.env.DEEPSEEK_API_KEY;
+    process.env.GLM_API_KEY = 'test';
+    delete process.env.DEEPSEEK_API_KEY;
+    let rejectRequest: (response: Response) => void = () => {};
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() => new Promise((resolve) => { rejectRequest = resolve; }));
+    try {
+      const sending = reception.sendMessage(1, attempt.id, session.id, '请以洗标为准。');
+      await waitFor(() => fetchMock.mock.calls.length > 0);
+      const before = (await reception.snapshot(1, attempt.id)).sessions[0];
+      await sleep(1200);
+      const during = (await reception.snapshot(1, attempt.id)).sessions[0];
+      expect(during.timerPausedAt).toBeTruthy();
+      expect(during.waitedSec).toBe(before.waitedSec);
+      rejectRequest({ ok: false } as Response);
+      await expect(sending).rejects.toThrow('模型服务不可用');
+      const after = (await reception.snapshot(1, attempt.id)).sessions[0];
+      expect(after.timerPausedAt).toBeNull();
+      expect(after.waitedSec).toBeLessThanOrEqual(before.waitedSec + 1);
+    } finally {
+      fetchMock.mockRestore();
+      if (oldGlm === undefined) delete process.env.GLM_API_KEY; else process.env.GLM_API_KEY = oldGlm;
+      if (oldDeepseek === undefined) delete process.env.DEEPSEEK_API_KEY; else process.env.DEEPSEEK_API_KEY = oldDeepseek;
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  });
+
+  it('模型备用接口参与回复判定，生成的买家消息按会话推送；失败可重试', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-model-reception-test', JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [600, 600] })],
+    );
+    const question = { seq: 1, question: '可以机洗吗？', keyPoints: ['洗标'], stage: 'presale' };
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '模型买家', 'serving', 1, 1, $2::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify([question])],
+    );
+    await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`,
+      [session.id, question.question, JSON.stringify({ responseRoundStart: true })]);
+    const reception = app.get(ReceptionService);
+    const oldGlm = process.env.GLM_API_KEY;
+    const oldDeepseek = process.env.DEEPSEEK_API_KEY;
+    process.env.GLM_API_KEY = 'test-glm';
+    process.env.DEEPSEEK_API_KEY = 'test-deepseek';
+    const fetchMock = jest.spyOn(global, 'fetch');
+    try {
+      fetchMock.mockResolvedValueOnce({ ok: false } as Response).mockResolvedValueOnce({ ok: false } as Response);
+      await expect(reception.sendMessage(1, attempt.id, session.id, '我帮您核实一下。')).rejects.toThrow('模型服务不可用');
+      const failed = await sharedDb.one<{ count: string }>(`SELECT count(*)::text AS count FROM messages WHERE session_id = $1 AND sender = 'agent'`, [session.id]);
+      expect(Number(failed.count)).toBe(0);
+      fetchMock.mockResolvedValueOnce({ ok: false } as Response).mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '还需确认洗涤方式', matchedPoints: [], buyerReply: '那洗标上怎么写呢？' }) } }] }) } as Response);
+      const reply = await reception.sendMessage(1, attempt.id, session.id, '我帮您核实一下。');
+      expect(reply.ruleResult.modelEvaluation).toMatchObject({ provider: 'deepseek', resolved: false });
+      await reception.advanceAfterReply(session.id);
+      const buyer = await sharedDb.one<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`, [session.id]);
+      expect(buyer.content).toBe('那洗标上怎么写呢？');
+      fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ resolved: true, reason: '已明确说明洗涤依据', matchedPoints: [], buyerReply: '好的，明白了。' }) } }] }) } as Response);
+      const resolved = await reception.sendMessage(1, attempt.id, session.id, '以衣服洗标为准。');
+      expect(resolved.ruleResult.modelEvaluation).toMatchObject({ provider: 'glm', resolved: true });
+      expect(resolved.ruleResult.hitPoints).toContain('洗标');
+      await reception.advanceAfterReply(session.id);
+      const followup = await sharedDb.many<{ content: string; seq: number }>(`SELECT content, seq FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id`, [session.id]);
+      expect(followup.some((m) => m.seq > 1 && m.content === '好的，明白了。')).toBe(true);
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      fetchMock.mockRestore();
+      if (oldGlm === undefined) delete process.env.GLM_API_KEY; else process.env.GLM_API_KEY = oldGlm;
+      if (oldDeepseek === undefined) delete process.env.DEEPSEEK_API_KEY; else process.env.DEEPSEEK_API_KEY = oldDeepseek;
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  });
+
   it('账号停用及管理员重置密码后旧令牌不能访问业务接口', async () => {
     const token = await login('agent2', 'Agent@123');
     const auth = `Bearer ${token}`;
