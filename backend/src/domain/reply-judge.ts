@@ -132,9 +132,20 @@ export function isHedge(reply: string): boolean {
 
 /** 客服仍在核实“是否如此”，并没有给出确定的结果。 */
 export function isPendingVerification(reply: string): boolean {
-  if (!isHedge(reply) || !/(是否|能否|能不能|可不可以|需不需要|要不要|有没有|是不是)/u.test(reply)) return false;
+  if (!/(核实|确认一下|帮[您你我]?确认|查一下|查下|查询|帮[您你我]?看看)/u.test(reply)) return false;
   // 后面若明确回答了结果，不能因为前文提到待核实就覆盖实际答复。
-  return !/(?:^|[，。；！!])\s*(?:亲|您好|这款|本款|商品|衣服)*(?:(?:可以|不能|不可以|支持|不支持|会|不会)(?:机洗|水洗|手洗|干洗|退货|换货|发货|缩水)|(?:可以|不能|不可以|支持|不支持)(?:提供|查看|发送|看)(?:实拍|买家秀)|(?:是|采用|有|没有|无|不带)(?:有)?(?:内衬|里布|实拍|买家秀|包边|锁边))/u.test(reply);
+  return !/(?:^|[，。；！!])\s*(?:亲|您好|这款|本款|商品|衣服|是)*(?:(?:可以|不能|不可以|支持|不支持|会|不会)(?:机洗|水洗|手洗|干洗|退货|换货|发货|缩水)|(?:可以|不能|不可以|支持|不支持)(?:提供|查看|发送|看)(?:实拍|买家秀)|(?:是|采用|有|没有|无|不带)(?:有)?(?:内衬|里布|实拍|买家秀|包边|锁边))/u.test(reply);
+}
+
+/** 明确支持机洗意味着可用水清洗；不适合机洗不能反推不适合水洗。 */
+export function supportsMachineWash(reply: string): boolean {
+  const text = String(reply || '').replace(/\s/g, '');
+  const matches = text.matchAll(/(?:支持|可以|能够|能|可)机洗|机洗(?:是)?(?:可以|没问题|支持)/gu);
+  for (const match of matches) {
+    const prefix = text.slice(Math.max(0, (match.index ?? 0) - 6), match.index);
+    if (!/(不|没|未|无法|不能|不太|不建议|不可以|不确定|不清楚|不知道|是否|能不能)$/u.test(prefix)) return true;
+  }
+  return false;
 }
 
 /** 要点命中（与同义词表，和 reception.service 的 matchKeyPoints 同口径）。 */

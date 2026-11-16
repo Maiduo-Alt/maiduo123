@@ -53,7 +53,8 @@ export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: 
   return {
     seq: Math.max(0, ...questions.map((question) => question.seq)) + 1,
     question: derivedQuestionFor(parent.question, count, used),
-    keyPoints: ['有效回应'],
+    keyPoints: parent.automaticEvaluation ? [] : ['有效回应'],
+    ...(parent.automaticEvaluation ? { automaticEvaluation: true } : {}),
     sourceType: 'derived',
     requiresContext: true,
     derivedFromSeq: parent.seq,

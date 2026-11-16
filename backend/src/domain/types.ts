@@ -164,6 +164,7 @@ export interface ScriptQuestion {
   seq: number;
   question: string;
   keyPoints: string[];
+  automaticEvaluation?: boolean;
   /**
    * 问题来源：
    * - core：原始咨询内容，决定本场训练的核心目标；
@@ -291,6 +292,7 @@ export interface ScoreMessage {
   responseSec?: number | null;
   isTimeout?: boolean;
   hitPoints?: string[];
+  pendingVerification?: boolean;
   goalMatches?: { goalId: string; pointIds: string[] }[];
   riskItems?: { ruleId: string; label: string; penalty: number; goalId?: string }[];
   /** 语义判定信号（reply-judge）：敷衍回复在话术维度单独扣分（客户 2026-10-11 口径）。 */

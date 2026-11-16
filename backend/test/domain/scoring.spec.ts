@@ -104,6 +104,24 @@ describe('评分引擎（方案 4.3）', () => {
     expect(result.solvingScore).toBe(35 * 0.5);
   });
 
+  it('合理待核实给予部分解决分，但不计为已解决', () => {
+    const q: ScriptQuestion[] = [{ seq: 1, question: '能机洗吗？', keyPoints: ['机洗'], semanticGoals: [{ id: 'wash', name: '洗涤方式', requiredPoints: [{ id: 'machine', label: '机洗', matchAny: ['机洗'] }] }] }];
+    const result = scoreSession({ questions: q, messages: [{ sender: 'agent', content: '我先帮您核实洗标，确认后回复您', questionSeq: 1, pendingVerification: true }], emotionFinal: 10, hasEmotionScenario: false, params });
+    expect(result.solvingScore).toBe(17.5);
+    expect(result.metrics.solvedCount).toBe(0);
+    expect(result.deductions.some((d) => d.reason.includes('合理核实给予部分分'))).toBe(true);
+  });
+
+  it('自动判断模式按照答复状态计分，不依赖期望要点', () => {
+    const q: ScriptQuestion[] = [{ seq: 1, question: '能机洗吗？', keyPoints: [], automaticEvaluation: true }];
+    const score = (message: ScoreMessage) => scoreSession({ questions: q, messages: [message], emotionFinal: 10, hasEmotionScenario: false, params });
+    expect(score({ sender: 'agent', content: '可以机洗', questionSeq: 1, judgeSignal: 'stance' }).solvingScore).toBe(35);
+    const pending = score({ sender: 'agent', content: '我帮您核实洗标', questionSeq: 1, pendingVerification: true });
+    expect(pending.solvingScore).toBe(17.5);
+    expect(pending.metrics.solvedCount).toBe(0);
+    expect(score({ sender: 'agent', content: '支持退货', questionSeq: 1, judgeSignal: 'off-topic' }).solvingScore).toBe(0);
+  });
+
   it('主次目标标记只影响提问方式，不改变评分权重', () => {
     const weightedQuestion: ScriptQuestion[] = [{
       seq: 1,

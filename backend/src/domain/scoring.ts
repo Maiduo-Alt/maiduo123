@@ -116,9 +116,19 @@ function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: n
   let solvedCount = 0;
 
   for (const q of activeQuestions) {
+    const pendingResponse = messages.some((message) => message.sender === 'agent' && message.questionSeq === q.seq && message.pendingVerification);
     if (q.needTransfer && transferred.has(q.seq)) {
       score += perQuestion;
       solvedCount += 1;
+      continue;
+    }
+    if (q.automaticEvaluation) {
+      const resolved = messages.some((message) => message.sender === 'agent' && message.questionSeq === q.seq &&
+        (message.judgeSignal === 'stance' || message.judgeSignal === 'key-point'));
+      const factor = resolved ? 1 : pendingResponse ? 0.5 : 0;
+      score += perQuestion * factor;
+      if (resolved) solvedCount += 1;
+      else deductions.push({ dimension: 'solving', reason: `第 ${q.seq} 轮${pendingResponse ? '已回应并待核实，给予部分分' : '尚未确认解决'}`, points: round1(perQuestion * (1 - factor)), questionSeq: q.seq });
       continue;
     }
     if (q.semanticGoals?.length) {
@@ -135,13 +145,13 @@ function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: n
       const goalPointCount = new Set(q.semanticGoals.flatMap((goal) => goal.requiredPoints.map((point) => `${goal.id}:${point.id}`))).size;
       const coveredCount = Math.min(goalPointCount, covered.size);
       const ratio = goalPointCount ? coveredCount / goalPointCount : 0;
-      const gained = perQuestion * ratio;
+      const gained = perQuestion * Math.max(ratio, pendingResponse ? 0.5 : 0);
       score += gained;
       if (ratio === 1) solvedCount += 1;
       else {
         deductions.push({
           dimension: 'solving',
-          reason: `第 ${q.seq} 轮语义目标覆盖 ${coveredCount}/${goalPointCount} 个子要点（${Math.round(ratio * 100)}%）`,
+          reason: `第 ${q.seq} 轮语义目标覆盖 ${coveredCount}/${goalPointCount} 个子要点（${Math.round(ratio * 100)}%）${pendingResponse ? '，合理核实给予部分分' : ''}`,
           points: round1(perQuestion - gained),
           questionSeq: q.seq,
         });
@@ -159,6 +169,7 @@ function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: n
     let factor = 0;
     if (ratio >= 0.8) factor = 1;
     else if (ratio >= 0.4) factor = 0.6;
+    if (pendingResponse) factor = Math.max(factor, 0.5);
     const gained = perQuestion * factor;
     score += gained;
     if (factor === 1) solvedCount += 1;

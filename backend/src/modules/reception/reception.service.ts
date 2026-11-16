@@ -26,7 +26,7 @@ import { allocateStyles, normalizeRatios } from '../../domain/style-ratio';
 import { shouldAbortAsDisconnected } from '../../domain/disconnect';
 import { computeResponseRounds, weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
-import { isPendingVerification, judgeReply } from '../../domain/reply-judge';
+import { isHedge, isPendingVerification, judgeReply, supportsMachineWash } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
 import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef, inferQuantityFromTexts } from '../../domain/order';
 import {
@@ -490,7 +490,17 @@ export class ReceptionService implements OnModuleInit {
         pool: script.stage === 'aftersale' ? PRESALE_PRODUCT_QUESTIONS : ORDER_AFTERSALE_QUESTIONS,
         stage: script.stage === 'aftersale' ? 'presale' : 'aftersale',
         offset: i,
-      });
+      }).map((question) => ({
+        ...question,
+        question: question.baseQuestion || question.question,
+        keyPoints: [],
+        semanticGoals: [],
+        conversationPlan: undefined,
+        goalPriority: undefined,
+        primaryGoal: undefined,
+        customerGoal: undefined,
+        automaticEvaluation: true,
+      }));
       const product = await this.pickProduct(script.id, questions);
       const joinDelaySec =
         i >= activeSlots
@@ -775,11 +785,20 @@ export class ReceptionService implements OnModuleInit {
     const completedGoals = new Set(conversationState.resolvedGoalIds);
     const previousQuestion = session.questions.find((question) => question.seq === session.current_seq) || null;
     const previousTopic = conversationTopic(previousQuestion);
+    const alreadyAnswered = [...(session.skipped_seqs || [])];
+    if (previousQuestion?.automaticEvaluation && /机洗/u.test(previousQuestion.question) && recentAgent && supportsMachineWash(recentAgent.content)) {
+      for (const question of session.questions) {
+        if (question.seq > session.current_seq && !alreadyAnswered.includes(question.seq) && /^(?:亲|请问|这款|这件|衣服|可以|能|可不可以|能不能|支持|是否)*水洗(?:吗|嘛|么|呢)?[？?。！!\s]*$/u.test(question.question.trim())) {
+          alreadyAnswered.push(question.seq);
+        }
+      }
+      if (modelIntro && /水洗/u.test(modelIntro)) modelIntro = undefined;
+    }
     const next = selectNextQuestion(
       session.questions,
       session.current_seq,
       completedGoals,
-      session.skipped_seqs || [],
+      alreadyAnswered,
       {
         conversationStage: conversationState.conversationStage,
         resolutionScore: conversationState.resolutionScore,
@@ -963,6 +982,11 @@ export class ReceptionService implements OnModuleInit {
     // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
     // 必须从判定集合剔除——否则首题任何回复都会被它带成「已通过」（2026-10-11 线上实测）。
     const judgedReplies = replies.filter((r) => r.rule_result?.judge?.signal !== 'opener');
+    if (judgedReplies[judgedReplies.length - 1]?.rule_result?.pendingVerification && (session.follow_ups || 0) < (question.conversationPlan?.maxFollowUps ?? 2)) {
+      const followUp = judgedReplies[judgedReplies.length - 1]?.rule_result?.modelEvaluation?.buyerReply || '好的，麻烦您帮我确认一下。';
+      await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0, followUp);
+      return;
+    }
     const modelReply = judgedReplies[judgedReplies.length - 1]?.rule_result?.modelEvaluation;
     if (modelReply) {
       if (modelReply.resolved || (session.follow_ups || 0) >= (question.conversationPlan?.maxFollowUps ?? 2)) {
@@ -1212,8 +1236,12 @@ export class ReceptionService implements OnModuleInit {
       if (!latest || latest.state !== session.state || latest.current_seq !== session.current_seq) throw new BizError(ERR.SESSION_STATE, '会话状态已改变，请重新确认后发送');
     }
     const pendingVerification = isPendingVerification(text);
+    const machineWashResolved = !!currentQuestion &&
+      /^(?:亲|请问|这款|这件|衣服|可以|能|可不可以|能不能|支持|是不是|是否)*机洗(?:吗|嘛|么|呢)?[？?。！!\s]*$/u.test(currentQuestion.question.trim()) &&
+      supportsMachineWash(text);
+    const modelResolved = !!modelResult && (modelResult.resolved || machineWashResolved) && !pendingVerification;
     const hitPoints = modelResult && currentQuestion && !(currentQuestion.semanticGoals || []).length
-      ? (modelResult.resolved && !pendingVerification ? [...currentQuestion.keyPoints] : [])
+      ? (modelResolved ? [...currentQuestion.keyPoints] : [])
       : currentQuestion && !pendingVerification ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
     const vectorCandidates = await findVectorCandidates(
       text,
@@ -1239,12 +1267,13 @@ export class ReceptionService implements OnModuleInit {
       content: m.content,
       questionSeq: m.rule_result?.questionSeq ?? m.seq,
       hitPoints: m.rule_result?.hitPoints || [],
+      pendingVerification: m.rule_result?.pendingVerification === true,
       goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
       riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
     }));
     const currentIndex = historyMessages.length;
     const validityRounds = judgeValidReplies(
-      [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints, ...semanticEvaluation }],
+      [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints, pendingVerification, ...semanticEvaluation }],
       session.questions,
       params
     );
@@ -1309,7 +1338,8 @@ export class ReceptionService implements OnModuleInit {
       semanticEvaluation,
       goalProgress: getGoalProgress(session.questions, allSemanticEvaluations),
       conversationState,
-      ...(modelResult ? { modelEvaluation: { ...modelResult, resolved: modelResult.resolved && !pendingVerification } } : {}),
+      ...(modelResult ? { modelEvaluation: { ...modelResult, resolved: modelResolved } } : {}),
+      ...(pendingVerification && !invalidReason && !openerStage ? { pendingVerification: true } : {}),
       missingPoints: currentQuestion ? currentQuestion.keyPoints.filter((p) => !hitPoints.includes(p)) : [],
       emotionDelta: emotion.delta,
       emotionValue: emotion.value,
@@ -1321,8 +1351,9 @@ export class ReceptionService implements OnModuleInit {
       judge: openerStage
         ? { pass: true, signal: 'opener' as const }
         : modelResult
-        ? { pass: modelResult.resolved && !pendingVerification, signal: modelResult.resolved && !pendingVerification ? 'key-point' as const : 'hedge' as const }
-        : judgeReply({
+        ? { pass: modelResolved, signal: modelResolved ? 'key-point' as const : 'hedge' as const }
+        : (() => {
+          const result = judgeReply({
             question: currentQuestion?.question || '',
             keyPoints: currentQuestion?.keyPoints || [],
             reply: text,
@@ -1338,7 +1369,15 @@ export class ReceptionService implements OnModuleInit {
                 .reverse()
                 .find((m) => m.sender === 'agent' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq)
                 ?.content || null,
-          }),
+          });
+          const questionTopic = conversationTopic(currentQuestion);
+          const replyTopic = conversationTopic({ seq: 0, question: text, keyPoints: [] });
+          if (currentQuestion?.automaticEvaluation && result.signal === 'stance' && questionTopic !== 'general' &&
+            replyTopic !== 'general' && questionTopic !== replyTopic) return { pass: false, signal: 'off-topic' as const };
+          return currentQuestion?.automaticEvaluation && result.signal === 'off-topic' && !isHedge(text) &&
+            !/不知道|不清楚|不确定/u.test(text) && questionTopic !== 'general' && questionTopic === replyTopic
+            ? { pass: true, signal: 'key-point' as const } : result;
+        })(),
       // C6：被判无效时把原因一起落库，明细页据此标注「被判无效的轮次与依据」
       ...(invalidReason ? { invalid: true, invalidReason } : {}),
       // 客户 2026-10-03：业务动作（催付 / 改价 / 去发货…）在消息上留痕，对话与复盘里都能看到
@@ -1605,6 +1644,7 @@ export class ReceptionService implements OnModuleInit {
         responseSec: m.response_sec,
         isTimeout: m.is_timeout,
         hitPoints: m.rule_result?.hitPoints || [],
+        pendingVerification: m.rule_result?.pendingVerification === true,
         goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
         riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],
         judgeSignal: m.rule_result?.judge?.signal ?? null,
@@ -2124,6 +2164,7 @@ export class ReceptionService implements OnModuleInit {
     return keyPoints.filter((point) => {
       const key = String(point || '').replace(/\s/g, '');
       if (!key) return false;
+      if (key === '水洗' && supportsMachineWash(content)) return true;
       if (normalized.includes(key)) return true;
       // 兜底要点「有效回应」的语义是「有过实质回应即可」（question-seq.ts：缺失要点时的退化值，
       // 用途是避免该轮无法得分）。客服不必踩中 帮您/马上 这类词——真实回复大多不含它们，

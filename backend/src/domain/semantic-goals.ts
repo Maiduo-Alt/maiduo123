@@ -1,4 +1,5 @@
 import { ConversationState, ScriptQuestion, SemanticGoal, SemanticGoalPoint, SemanticRiskRule } from './types';
+import { supportsMachineWash } from './reply-judge';
 
 export interface GoalPointMatch {
   goalId: string;
@@ -66,7 +67,8 @@ export function evaluateSemanticReply(
     for (const goal of question.semanticGoals || []) {
       const pointIds = (goal.requiredPoints || [])
         .filter((point) => {
-          const exactMatch = matchesFlexible(normalizedText, point);
+          const exactMatch = matchesFlexible(normalizedText, point) ||
+            (/机洗|水洗/u.test(question.question) && point.label.trim() === '水洗' && supportsMachineWash(text));
           const vectorMatch = vectorCandidates.has(`${goal.id}:${point.id}`);
           if (!exactMatch && !vectorMatch) return false;
           const rules = point.businessRules;

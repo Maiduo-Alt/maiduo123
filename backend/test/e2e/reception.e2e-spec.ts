@@ -477,6 +477,64 @@ describe('在线模拟接待端到端链路', () => {
     expect(reply.ruleResult.hitPoints).toEqual([]);
     expect(reply.ruleResult.goalProgress[0].status).toBe('untriggered');
     await reception.finishSession(1, attempt.id, session.id);
+    const score = await sharedDb.one<{ solving_score: string }>(`SELECT solving_score FROM scores WHERE session_id = $1`, [session.id]);
+    expect(Number(score.solving_score)).toBe(17.5);
+  }, 60000);
+
+  it('明确支持机洗后不把水洗列为缺失或再次追问', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-wash-meaning', JSON.stringify(DEFAULT_PARAMS)],
+    );
+    const questions = [{ seq: 1, question: '能机洗吗？', keyPoints: ['洗涤', '机洗', '水洗'], stage: 'presale' }];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify(questions)],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      const reply = await reception.sendMessage(1, attempt.id, session.id, '亲亲，这款是支持机洗的哦，建议您在清洗的时候，将衣服翻面进行清洗');
+      expect(reply.ruleResult.missingPoints).not.toContain('水洗');
+      expect(reply.ruleResult.hitPoints).toContain('水洗');
+      await reception.advanceAfterReply(session.id);
+      const pushed = await sharedDb.many<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer'`, [session.id]);
+      expect(pushed.some((row) => /确认一下水洗/u.test(row.content))).toBe(false);
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  });
+
+  it('自动判断不把无关表态当成解答，机洗已答复后跳过简单水洗重复问题', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-auto-wash', JSON.stringify(DEFAULT_PARAMS)],
+    );
+    const questions = [
+      { seq: 1, question: '能机洗吗？', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '能水洗吗？', keyPoints: [], automaticEvaluation: true },
+      { seq: 3, question: '有现货吗？', keyPoints: [], automaticEvaluation: true },
+    ];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'serving', 1, 3, $2::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify(questions)],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      const unrelated = await reception.sendMessage(1, attempt.id, session.id, '亲，这款支持退货');
+      expect(unrelated.ruleResult.judge.pass).toBe(false);
+      const answer = await reception.sendMessage(1, attempt.id, session.id, '亲亲，这款是支持机洗的哦，建议您在清洗的时候，将衣服翻面进行清洗');
+      expect(answer.ruleResult.judge.pass).toBe(true);
+      await reception.advanceAfterReply(session.id);
+      const state = await sharedDb.one<{ current_seq: number; skipped_seqs: number[] }>(`SELECT current_seq, skipped_seqs FROM sessions WHERE id = $1`, [session.id]);
+      expect(state.current_seq).toBe(3);
+      expect(state.skipped_seqs).toContain(2);
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
   }, 60000);
 
   it('询问是否有内衬的待核实回复不提前完成语义目标', async () => {
@@ -578,7 +636,8 @@ describe('在线模拟接待端到端链路', () => {
     expect(session.timeoutLimitSec).toBe(270); // L1 宽松口径：180 × 1.5
 
     const question = session.questions.find((q: any) => q.seq === session.seq) || session.questions[0];
-    const reply = `亲，您好，${question.keyPoints.join('，')}，还有其他可以帮您的吗？`;
+    expect(session.questions.every((q: any) => q.automaticEvaluation && q.keyPoints.length === 0)).toBe(true);
+    const reply = '亲，您好，可以的哦，还有其他可以帮您的吗？';
     const send = await request(http)
       .post(`/api/receptions/${attemptId}/sessions/${session.sessionId}/messages`)
       .set(auth)
@@ -588,7 +647,7 @@ describe('在线模拟接待端到端链路', () => {
       console.error('[debug] sendMessage 失败:', JSON.stringify(send.body));
     }
     expect(send.body.code).toBe(0);
-    expect(send.body.data.ruleResult.hitPoints.length).toBeGreaterThan(0);
+    expect(send.body.data.ruleResult.judge).toBeDefined();
 
     const empty = await request(http)
       .post(`/api/receptions/${attemptId}/sessions/${session.sessionId}/messages`)

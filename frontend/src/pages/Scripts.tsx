@@ -88,7 +88,6 @@ export default function Scripts() {
   const [guideOpen, setGuideOpen] = useState(false);
   const createMode = Form.useWatch('createMode', form);
   const createWay = Form.useWatch('createWay', form);
-  const ruleMode = Form.useWatch('ruleMode', form);
   const productIds = Form.useWatch('productIds', form) as number[] | undefined;
   const qaIds = Form.useWatch('qaIds', form) as number[] | undefined;
   const selectedProducts = (options.products || []).filter((p) => (productIds || []).includes(p.id));
@@ -217,7 +216,7 @@ export default function Scripts() {
   const generate = async () => {
     const values = await form.validateFields(createWay === 'case' ? ['createWay', 'caseId', 'productIds'] : undefined);
     try {
-      const autoSemanticGoals = values.ruleMode === 'semantic' && values.createWay !== 'case';
+      const autoSemanticGoals = false;
       // 按案例创建（方案 F3-07）：案例的买家消息先沉淀成咨询内容，再走标准建剧本流程
       if (values.createWay === 'case') {
         const res = await api<any>('/scripts/from-case', {
@@ -518,9 +517,6 @@ export default function Scripts() {
                 <Button type="link" onClick={() => openDetail(row.id)}>
                   预览
                 </Button>
-                <Button type="link" onClick={() => void openGoalConfig(row.id)}>
-                  配置目标
-                </Button>
                 <Popconfirm
                   title="确认删除该剧本？"
                   description="删除后不可恢复；历史接待明细不受影响"
@@ -668,19 +664,6 @@ export default function Scripts() {
                   <Radio value="case">根据聊天案例创建</Radio>
                 </Radio.Group>
               </Form.Item>
-              {createWay !== 'case' && (
-                <Form.Item
-                  name="ruleMode"
-                  label="规则模式"
-                  rules={[{ required: true }]}
-                  extra="系统根据买家背景、咨询主题、接受方案与核心问题确定主目标，不再随机抽取；原始问题顺序保持不变。生成后可在剧本列表调整目标。"
-                >
-                  <Radio.Group>
-                    <Radio value="keyword">关键词规则（现有模式）</Radio>
-                    <Radio value="semantic">自动生成语义目标（推荐）</Radio>
-                  </Radio.Group>
-                </Form.Item>
-              )}
               <Form.Item name="category" label="剧本分类" rules={[{ required: true, message: '请选择剧本分类' }]}>
                 <Select
                   style={{ width: 200 }}
@@ -835,15 +818,7 @@ export default function Scripts() {
                 description="系统可能自动补充同主题问题。建议先在咨询内容中补充具体问题，或生成后打开剧本预览，检查补充的问题是否合适。"
               />
             )}
-            {ruleMode === 'semantic' && (
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginTop: 16 }}
-                message="系统会自动整理语义目标和提问计划"
-                description="创建时根据咨询内容、买家背景与接受方案生成可审核的客户核心目标、主次目标和提问计划。不再为了最低轮数跨主题补题，也不会把主目标强行移动到第一轮；生成后可在“预览”中检查并调整语义目标。"
-              />
-            )}
+            <Alert type="info" showIcon style={{ marginTop: 16 }} message="系统自动判断客服回复并决定下一步，无需配置期望要点" />
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
               生成数量 = 背景数 × 每个背景生成数量；每条咨询内容保持独立场景，内部问题顺序和上下文关系不打散。买家沟通风格默认取基础设置里的选择（默认友善随和型）；选「自动分配」时按《沟通风格》中的占比分配。
             </Typography.Paragraph>
@@ -866,11 +841,8 @@ export default function Scripts() {
               <br />
               咨询内容：{detail.qaTemplate}
               <br />
-              客户核心目标：{detail.customerGoal || '未生成'}
-              <br />
               买家接受方案：{detail.acceptedAnswer || '未填写'}
             </Typography.Paragraph>
-            <Button style={{ marginBottom: 12 }} onClick={() => void openGoalConfig()}>配置语义目标</Button>
             {(detail.questionSeq || []).some((q: any) => q.sourceType === 'derived' &&
               /^关于“.+”，(?:还有哪些需要注意的呢|可以再帮我确认一下吗)？$/u.test(q.question)) && (
               <Alert
@@ -887,10 +859,8 @@ export default function Scripts() {
                 children: (
                   <div>
                     <Typography.Text strong>
-                      第 {q.seq} 轮：{q.conversationPlan?.promptTemplates?.[0] || q.baseQuestion || q.question}
+                      第 {q.seq} 轮：{q.baseQuestion || q.question}
                     </Typography.Text>
-                    {q.goalPriority === 'primary' && <Tag color="gold">主目标：{q.primaryGoal}</Tag>}
-                    {q.goalPriority === 'secondary' && <Tag>次要目标</Tag>}
                     {q.sourceType === 'core' && <Tag color="blue">核心问题</Tag>}
                     {q.sourceType === 'derived' && <Tag color="cyan">衍生追问</Tag>}
                     {q.sourceType === 'optional' && <Tag color="purple">条件触发</Tag>}
@@ -910,24 +880,6 @@ export default function Scripts() {
                         {q.triggerConditions.requiresOrder ? '；需要订单上下文' : ''}
                       </div>
                     )}
-                    {q.conversationPlan && (
-                      <div style={{ fontSize: 12, color: '#59708a', marginTop: 4 }}>
-                        提问计划：{q.conversationPlan.priority === 'primary' ? '主目标·细问' : '次要目标·简问'}；
-                        追问上限 {q.conversationPlan.maxFollowUps} 次
-                      </div>
-                    )}
-                    <div style={{ fontSize: 12, color: '#8c8c8c' }}>
-                      期望要点：{q.keyPoints.map((point: string, index: number) => {
-                        const isPrimary = (q.semanticGoals || []).some((goal: any) =>
-                          (goal.requiredPoints || []).some((required: any) => required.label === point && required.isPrimary)
-                        );
-                        return (
-                          <span key={`${q.seq}-${index}`}>
-                            {index ? '、' : ''}{point}{isPrimary && <Tag color="gold" style={{ marginInlineStart: 4 }}>主目标</Tag>}
-                          </span>
-                        );
-                      })}
-                    </div>
                   </div>
                 ),
               }))}

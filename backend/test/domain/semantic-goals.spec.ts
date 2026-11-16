@@ -48,6 +48,15 @@ describe('topic transition continuity', () => {
 });
 
 describe('semantic goal evaluation', () => {
+  it('明确支持机洗时同时覆盖水洗，不把不支持机洗等同不支持水洗', () => {
+    const q: ScriptQuestion[] = [{ seq: 1, question: '能机洗吗？', keyPoints: ['机洗', '水洗'], semanticGoals: [{ id: 'wash', name: '清洗方式', requiredPoints: [
+      { id: 'machine', label: '机洗', matchAny: ['机洗'] }, { id: 'water', label: '水洗', matchAny: ['水洗'] },
+    ] }] }];
+    expect(evaluateSemanticReply('亲亲，这款是支持机洗的哦，建议您在清洗的时候，将衣服翻面进行清洗', q).goalMatches)
+      .toEqual([{ goalId: 'wash', pointIds: ['machine', 'water'] }]);
+    expect(evaluateSemanticReply('不支持机洗，建议手洗', q).goalMatches.flatMap((m) => m.pointIds)).not.toContain('water');
+    expect(evaluateSemanticReply('我不确定可以机洗', q).goalMatches.flatMap((m) => m.pointIds)).not.toContain('water');
+  });
   it('recognizes a configured equivalent expression for the size goal', () => {
     expect(evaluateSemanticReply('我们家是标准尺码的。', questions).goalMatches).toEqual([
       { goalId: 'size-normal', pointIds: ['normal'] },

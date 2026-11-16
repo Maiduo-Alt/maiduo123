@@ -1,4 +1,15 @@
-import { judgeReply, isYesNoQuestion, hasStance, hasCompatibleStance, isPerfunctory, isHedge, isPendingVerification } from '../../src/domain/reply-judge';
+import { judgeReply, isYesNoQuestion, hasStance, hasCompatibleStance, isPerfunctory, isHedge, isPendingVerification, supportsMachineWash } from '../../src/domain/reply-judge';
+
+it('确认机洗才表示可以水洗，否定和不确定不作肯定推断', () => {
+  expect(supportsMachineWash('亲亲，这款是支持机洗的哦，建议您将衣服翻面清洗')).toBe(true);
+  expect(supportsMachineWash('这款不支持机洗，建议手洗')).toBe(false);
+  expect(supportsMachineWash('我不确定可以机洗')).toBe(false);
+});
+
+it('没有“是否”字样的合理核实仍属于待核实', () => {
+  expect(isPendingVerification('我先帮您核实洗标，确认后回复您')).toBe(true);
+  expect(isPendingVerification('我先帮您核实，这款支持机洗')).toBe(false);
+});
 
 /**
  * 语义判定器（2026-10-11 客户口径）：
