@@ -100,24 +100,32 @@ export class AuthService {
   async profile(accountId: number) {
     const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [accountId]);
     if (!account) throw new BizError(ERR.NOT_FOUND, '账号不存在');
-    return this.toProfile(account);
+    const params = await this.settings.getParams();
+    const changedAt = account.password_changed_at ? Date.parse(account.password_changed_at) : null;
+    const passwordExpired = Boolean(params.passwordMaxAgeDays > 0 && changedAt && Date.now() - changedAt > params.passwordMaxAgeDays * 24 * 3600 * 1000);
+    return {
+      ...this.toProfile(account),
+      mustChangePassword: account.must_change_password || passwordExpired,
+      notice: passwordExpired ? `密码已超过 ${params.passwordMaxAgeDays} 天有效期，请立即修改` : account.must_change_password ? '管理员已重置你的密码，请登录后立即修改' : null,
+    };
   }
 
   /**
    * 续签访问令牌（方案 7.2 `/api/auth/refresh`）。
    * 需要携带仍有效的令牌；账号被停用时拒绝续签，避免停用后旧令牌长期可用。
    */
-  async refresh(accountId: number) {
+  async refresh(accountId: number, tokenVersion: number) {
     const account = await this.db.one<AccountRow>(`SELECT * FROM accounts WHERE id = $1 AND deleted_at IS NULL`, [accountId]);
     if (!account) throw new BizError(ERR.UNAUTHORIZED, '账号不存在');
     if (account.status !== 1) throw new BizError(ERR.FORBIDDEN, '账号已停用，请联系管理员');
+    if (account.token_version !== tokenVersion) throw new BizError(ERR.UNAUTHORIZED, '登录状态已失效，请重新登录');
     const token = await this.jwt.signAsync({
       sub: account.id,
       username: account.username,
       displayName: account.display_name,
       roleCode: account.role_code,
       groupId: account.group_id,
-      tokenVersion: account.token_version,
+      tokenVersion,
     });
     return { token, profile: this.toProfile(account) };
   }

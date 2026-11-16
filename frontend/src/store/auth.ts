@@ -11,6 +11,8 @@ export interface Profile {
   mobile?: string | null;
   preference?: Record<string, any> | null;
   avatarUrl?: string | null;
+  mustChangePassword?: boolean;
+  notice?: string | null;
 }
 
 interface AuthState {
@@ -63,7 +65,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     if (!getToken()) return;
     try {
       const profile = await api<Profile>('/auth/profile');
-      set({ profile });
+      set({ profile, passwordNotice: profile.mustChangePassword ? profile.notice || '请先修改密码' : null });
     } catch {
       set({ profile: null });
     }

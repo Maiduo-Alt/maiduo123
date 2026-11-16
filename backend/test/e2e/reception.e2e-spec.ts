@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { DbService } from '../../src/db/db.service';
 import { ReceptionService } from '../../src/modules/reception/reception.service';
+import { AuthService } from '../../src/modules/auth/auth.service';
 import { DEFAULT_PARAMS } from '../../src/domain/types';
 import { AllExceptionsFilter } from '../../src/common/all-exceptions.filter';
 import { ResponseInterceptor } from '../../src/common/response.interceptor';
@@ -782,6 +783,7 @@ describe('在线模拟接待端到端链路', () => {
     const refreshed = await request(http).post('/api/auth/refresh').set(auth);
     expect(refreshed.body.code).toBe(0);
     expect(typeof refreshed.body.data.token).toBe('string');
+    expect((await request(http).get('/api/auth/profile').set('Authorization', `Bearer ${refreshed.body.data.token}`)).body.code).toBe(0);
     expect(refreshed.body.data.profile.roleCode).toBe('admin');
 
     const anon = await request(http).post('/api/auth/refresh');
@@ -795,6 +797,44 @@ describe('在线模拟接待端到端链路', () => {
       .send({ name: '预热二组（改名）' });
     expect(updated.body.code).toBe(0);
   }, 60000);
+
+  it('续签守卫通过后会话被撤销，不能签发有效新令牌', async () => {
+    const token = await login('agent2', 'Agent@123');
+    const authService = app.get(AuthService);
+    const refresh = authService.refresh.bind(authService);
+    const spy = jest.spyOn(authService, 'refresh').mockImplementation(async (accountId, version) => {
+      await authService.logout(accountId);
+      return refresh(accountId, version);
+    });
+    try {
+      const response = await request(http).post('/api/auth/refresh').set('Authorization', `Bearer ${token}`);
+      expect(response.body.code).toBe(1002);
+      expect(response.body.data?.token).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('重置密码后个人资料恢复强制改密状态，改密后重新登录解除限制', async () => {
+    const adminToken = await login('admin', 'Admin@123');
+    const admin = { Authorization: `Bearer ${adminToken}` };
+    const created = await request(http).post('/api/accounts').set(admin)
+      .send({ username: 'reset_profile_probe', password: 'Probe@123', displayName: '改密探针', roleCode: 'agent' });
+    expect(created.body.code).toBe(0);
+    const reset = await request(http).post(`/api/accounts/${created.body.data.id}/reset-password`).set(admin).send({ password: 'Reset@123' });
+    expect(reset.body.code).toBe(0);
+    const loginRes = await request(http).post('/api/auth/login').send({ username: 'reset_profile_probe', password: 'Reset@123' });
+    expect(loginRes.body.data.mustChangePassword).toBe(true);
+    const auth = { Authorization: `Bearer ${loginRes.body.data.token}` };
+    const profile = await request(http).get('/api/auth/profile').set(auth);
+    expect(profile.body.data).toMatchObject({ mustChangePassword: true, notice: expect.any(String) });
+    expect((await request(http).get('/api/records').set(auth)).body.code).not.toBe(0);
+    expect((await request(http).post('/api/auth/change-password').set(auth).send({ oldPassword: 'Reset@123', newPassword: 'Newpass123' })).body.code).toBe(0);
+    const newToken = await login('reset_profile_probe', 'Newpass123');
+    const updatedProfile = await request(http).get('/api/auth/profile').set('Authorization', `Bearer ${newToken}`);
+    expect(updatedProfile.body.data).toMatchObject({ mustChangePassword: false, notice: null });
+    expect((await request(http).get('/api/records').set('Authorization', `Bearer ${newToken}`)).body.code).toBe(0);
+  });
 
   it('情绪升级：情绪值达到阈值后买家追加升级追问（方案 3.7.4 / 9.2 场景四）', async () => {
     const adminToken = await login('admin', 'Admin@123');

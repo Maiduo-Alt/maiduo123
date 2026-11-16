@@ -45,6 +45,7 @@ export class AuthGuard implements CanActivate {
       displayName: account.display_name,
       roleCode: account.role_code,
       groupId: account.group_id,
+      tokenVersion: payload.tokenVersion,
     };
     req.user = user;
 
