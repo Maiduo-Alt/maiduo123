@@ -660,13 +660,20 @@ describe('在线模拟接待端到端链路', () => {
       ['梨形身材怎么选尺码', '亲，158厘米92斤可以参考M码', false],
       ['那我这个身材应该怎么选尺码呢？', '亲，可以先对照尺码表量一下腰围和臀围，也可以把身高体重告诉我，再帮您参考。', false],
       ['那一般什么时候可以发出呢？', '亲，有现货，拍下后通常48小时内发货，具体也看订单显示的时效。', true],
+      ['发出后大概多久能收到呢？', '亲，发出后一般2到4天送达，偏远地区可能久一些。', true],
+      ['发出后大概多久能收到呢？', '亲，付款后通常48小时内发货。', false],
+      ['发出后在哪里查看物流进度呢？', '亲，在订单详情里选择查看物流，就可以看到物流进度。', true],
+      ['请问在哪里可以查看物流进度呢？', '亲，商品发出后在订单详情选择查看物流。', true],
+      ['梨形身材选哪个码', '亲，按您提供的身高体重可以先参考M码，建议对照尺码表。', true],
+      ['关于“梨形身材选哪个码”，还有哪些需要注意的呢？', '亲，建议量一下腰围和臀围，对照尺码表。', true],
+      ['这条连衣裙搭配什么外套和鞋子好看', '亲，我先帮您核实这条连衣裙搭配什么外套和鞋子好看的具体情况，确认后再回复您。', false],
     ] as const;
     try {
       for (const [question, content, pass] of cases) {
         const session = await sharedDb.one<{ id: number }>(
           `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
            VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, $3) RETURNING id`,
-          [attempt.id, JSON.stringify([{ seq: 1, question, keyPoints: [], automaticEvaluation: true }]), new Date(Date.now() - 3000).toISOString()],
+          [attempt.id, JSON.stringify([{ seq: 1, question, keyPoints: question === '这条连衣裙搭配什么外套和鞋子好看' ? ['搭配'] : [], automaticEvaluation: true }]), new Date(Date.now() - 3000).toISOString()],
         );
         ids.push(session.id);
         await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`,
@@ -677,12 +684,22 @@ describe('在线模拟接待端到端链路', () => {
           expect((result.ruleResult as any).invalid).not.toBe(true);
           expect(result.responseSec).toBeGreaterThanOrEqual(2);
         }
+        if (question === '发出后大概多久能收到呢？' && content.includes('48小时')) {
+          expect(['unsupported', 'unanswered']).toContain(result.ruleResult.replyAssessment?.status);
+          expect(result.ruleResult.judge.pass).toBe(false);
+        }
+        if (question === '这条连衣裙搭配什么外套和鞋子好看') {
+          expect(result.ruleResult.replyAssessment?.status).toBe('unanswered');
+          expect(result.ruleResult.pendingVerification).not.toBe(true);
+          expect(result.ruleResult.hitPoints).toEqual([]);
+          expect(result.ruleResult.conversationState.resolvedGoalIds).not.toContain('keyword-seq-1');
+        }
         if (question.includes('这个身材')) {
           expect(result.ruleResult.replyAssessment?.status).toBe('partial');
           expect(result.ruleResult.conversationState.resolvedGoalIds).not.toContain('keyword-seq-1');
           await reception.advanceAfterReply(session.id);
           const buyer = await sharedDb.one<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`, [session.id]);
-          expect(buyer.content).toContain('尺码表');
+          expect(buyer.content).toMatch(/身高\d+厘米，体重\d+斤/u);
           await reception.finishSession(1, attempt.id, session.id);
           const score = await sharedDb.one<{ solving_score: string }>(`SELECT solving_score FROM scores WHERE session_id = $1`, [session.id]);
           expect(Number(score.solving_score)).toBe(17.5);

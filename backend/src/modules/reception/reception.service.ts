@@ -1,3 +1,4 @@
+import { buyerMeasurements } from '../../domain/buyer-measurements';
 import { shippingConditionsCompatible } from '../../domain/shipping-context';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
@@ -659,14 +660,15 @@ export class ReceptionService implements OnModuleInit {
     );
     const unresolved = new Set(finalState.unresolvedGoalIds);
     const awaitingVerification = replies.some((reply) => {
-      if (reply.rule_result?.judgmentVersion !== 2 || !reply.rule_result.pendingVerification) return false;
+      if (reply.rule_result?.judgmentVersion !== 2 || !(reply.rule_result.pendingVerification ||
+          (reply.rule_result.replyAssessment?.intent === 'size-recommendation' && reply.rule_result.replyAssessment?.status === 'partial'))) return false;
       const seq = reply.rule_result.questionSeq ?? reply.seq;
       const question = session.questions.find((question) => question.seq === seq);
       const goalIds = question?.semanticGoals?.length ? question.semanticGoals.map((goal) => goal.id) : [`keyword-seq-${seq}`];
       return goalIds.some((id) => unresolved.has(id));
     });
     const text = awaitingVerification
-      ? '好的，这次还没有确认具体结果，请核实后再答复，我先不继续追问了。'
+      ? '好的，这次还没有确认具体结果，我先不继续追问了。'
       : this.buyerClosingText(session.style_code, finalState.satisfaction);
     const lastBuyer = await this.db.one<{ content: string }>(
       `SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`,
@@ -1046,7 +1048,7 @@ export class ReceptionService implements OnModuleInit {
       return;
     }
     const modelReply = judgedReplies[judgedReplies.length - 1]?.rule_result?.modelEvaluation;
-    if (modelReply) {
+    if (modelReply && !(latestRule?.judgmentVersion === 2 && latestAssessment?.intent === 'size-recommendation' && latestAssessment?.status === 'partial')) {
       if (modelReply.resolved || (session.follow_ups || 0) >= (question.conversationPlan?.maxFollowUps ?? 2)) {
         await this.pushNextQuestion(sessionId, modelReply.buyerReply);
       } else {
@@ -1103,21 +1105,27 @@ export class ReceptionService implements OnModuleInit {
       (!hasSemanticGoals && judgePassed) ||
       (hasSemanticGoals && stanceResolved);
 
-    // 客服需要买家提供身材数据时，让买家明确回应，而不是反复追问“穿多大”。
+    // 新版仅在确实需要买家补充资料时回复；历史会话保留原有口径。
     const latestReply = judgedReplies[judgedReplies.length - 1]?.content || '';
-    if (followUps < (maxFollowUps ?? 2) && /尺码|码数|穿什么码|穿多大|版型/u.test(question.question) &&
-        /(?:提供|告诉|告知|测量|量一下).{0,24}(?:身高|体重|腰围|臀围|腰臀围)/u.test(latestReply)) {
-      const buyerMessages = await this.db.many<{ content: string }>(
-        `SELECT content FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'buyer' ORDER BY id`,
-        [sessionId, session.current_seq],
+    const needsMeasurements = latestRule?.judgmentVersion === 2
+      ? latestAssessment?.intent === 'size-recommendation' && latestAssessment?.status === 'partial'
+      : /(?:提供|告诉|告知|测量|量一下).{0,24}(?:身高|体重|腰围|臀围|腰臀围)/u.test(latestReply);
+    if (followUps < (maxFollowUps ?? 2) && /尺码|码数|穿什么码|穿多大|版型|选.{0,8}码/u.test(question.question) && needsMeasurements) {
+      const buyerMessages = await this.db.many<{ content: string; seq: number }>(
+        `SELECT content, seq FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id`, [sessionId],
       );
-      const buyerText = buyerMessages.map((message) => message.content).join(' ');
-      const hasMeasurements = /\d{2,3}\s*[/／]\s*\d{2,3}/u.test(buyerText) ||
-        (/身高\s*\d{2,3}/u.test(buyerText) && /体重\s*\d{2,3}/u.test(buyerText));
-      const response = hasMeasurements
-        ? '我的腰臀围暂时不清楚，可以先根据身高体重推荐尺码吗？'
-        : '我的身高体重和腰臀围暂时都不清楚，可以先告诉我怎么看尺码表吗？';
-      if (buyerMessages.some((message) => message.content === response)) {
+      let response: string;
+      if (latestRule?.judgmentVersion === 2) {
+        const measurement = buyerMeasurements(sessionId, buyerMessages.map((message) => message.content));
+        response = `我身高${measurement.heightCm}厘米，体重${measurement.weightJin}斤，麻烦帮我参考一下尺码。`;
+      } else {
+        const buyerText = buyerMessages.filter((message) => message.seq === session.current_seq).map((message) => message.content).join(' ');
+        const hasMeasurements = /\d{2,3}\s*[/／]\s*\d{2,3}/u.test(buyerText) ||
+          (/身高\s*\d{2,3}/u.test(buyerText) && /体重\s*\d{2,3}/u.test(buyerText));
+        response = hasMeasurements ? '我的腰臀围暂时不清楚，可以先根据身高体重推荐尺码吗？'
+          : '我的身高体重和腰臀围暂时都不清楚，可以先告诉我怎么看尺码表吗？';
+      }
+      if (buyerMessages.some((message) => message.seq === session.current_seq && message.content === response)) {
         await this.pushNextQuestion(sessionId);
       } else {
         await this.pushMissingPointFollowUp(sessionId, session, question, [], followUps, response);
@@ -1330,7 +1338,9 @@ export class ReceptionService implements OnModuleInit {
     const unsupportedFacts = 'status' in ruleAssessment && ruleAssessment.status === 'unsupported';
     const blockedAssessment = unsupportedFacts || (params.replyJudgmentVersion === 2 && (ruleAssessment.signal === 'perfunctory' || (ruleAssessment.intent === 'size-recommendation' && ruleAssessment.status === 'partial')));
     const modelResolved = !!modelResult && (modelResult.resolved || (params.replyJudgmentVersion !== 2 && machineWashResolved)) && !pendingVerification && !blockedAssessment;
-    const hitPoints = modelResult && currentQuestion && !(currentQuestion.semanticGoals || []).length
+    const hitPoints = blockedAssessment
+      ? []
+      : modelResult && currentQuestion && !(currentQuestion.semanticGoals || []).length
       ? (modelResolved ? [...currentQuestion.keyPoints] : [])
       : currentQuestion && !pendingVerification ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
     const vectorCandidates = await findVectorCandidates(

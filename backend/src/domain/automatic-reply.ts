@@ -1,7 +1,7 @@
 import { JudgeContext, JudgeResult, isHedge, isPendingVerification, isPerfunctory, judgeReply } from './reply-judge';
 import { conversationTopic } from './semantic-goals';
 
-export type ReplyIntent = 'dry-clean-required' | 'dry-clean-allowed' | 'exchange' | 'media-location' | 'media-available' | 'color-difference' | 'compound' | 'size-recommendation' | 'general';
+export type ReplyIntent = 'dry-clean-required' | 'dry-clean-allowed' | 'exchange' | 'media-location' | 'media-available' | 'color-difference' | 'compound' | 'size-recommendation' | 'delivery-time' | 'logistics-location' | 'shipping-time' | 'general';
 export interface ReplyAssessment extends JudgeResult {
   intent?: ReplyIntent;
   status?: 'resolved' | 'partial' | 'pending' | 'unanswered' | 'unsupported';
@@ -12,6 +12,9 @@ export interface ReplyAssessment extends JudgeResult {
 
 /** 意图来自买家问题，不依赖编辑剧本时维护期望要点。 */
 export function replyIntent(question: string): ReplyIntent {
+  if (/什么时候|多久|几天|多长时间/u.test(question) && /收到|送达|到货|送到|抵达|到达|多久到|几天到/u.test(question)) return 'delivery-time';
+  if (/物流|快递/u.test(question) && /哪里|在哪|如何查看|怎么查看|怎么查|查询|查看/u.test(question)) return 'logistics-location';
+  if (/什么时候|多久|几天|多长时间/u.test(question) && /发货|发出|出库/u.test(question) && !/现货/u.test(question)) return 'shipping-time';
   if (/干洗/u.test(question)) {
     if (/要不要|需不需要|需要|必须|用不用|要干洗|需干洗/u.test(question)) return 'dry-clean-required';
     if (/能|可以|可不可以|允许|适合|支持/u.test(question)) return 'dry-clean-allowed';
@@ -45,6 +48,12 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
     const compact = ctx.reply.replace(/[\s，。！？!?～~、；;：:]/gu, '');
     const processOnly = /^(?:亲您好|您好|亲)?(?:(?:麻烦|请)?稍等(?:一下|下)?|(?:这边|我们|我)?(?:来|会|先)?(?:帮您|为您)?(?:尽快)?(?:核实|确认|查询|查|处理)(?:一下|下)?)[哦呢哈呀]*$/u.test(compact);
     if (processOnly) return { pass: false, signal: 'perfunctory', intent, status: 'unanswered', reason: '仅有等待或处理动作，没有实际回答', evidence: [], missing: [ctx.question] };
+    // 仅复述买家整句问题，再加“核实具体情况”，没有真实核实对象或行动。
+    const normalizedQuestion = ctx.question.replace(/[\s，。！？!?～~、；;：:]/gu, '');
+    const echoRemainder = normalizedQuestion.length >= 5 && compact.includes(normalizedQuestion)
+      ? compact.replace(normalizedQuestion, '').replace(/亲您好|您好|亲|我|这边|先|会|来|帮您|为您|帮你|核实|确认后|确认一下|确认|查询|一下|的|具体情况|相关情况|再|回复您|回复你|告诉您|哦|呢|哈|呀|啊|哒/gu, '')
+      : null;
+    if (echoRemainder === '') return { pass: false, signal: 'perfunctory', intent, status: 'unanswered', reason: '只是复述问题并表示核实，没有实际答复或具体核实对象', evidence: [], missing: [ctx.question] };
     const measurements = ctx.reply.match(/(\d{2,3})\s*(?:厘米|cm).{0,8}?(\d{2,3})\s*(斤|公斤|kg)/iu);
     if (measurements && ctx.buyerContext !== undefined) {
       const height = measurements[1];
@@ -57,7 +66,7 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
     }
     if (isPerfunctory(ctx)) return { ...result, intent, status: 'unanswered', reason: '回复过短、重复或没有实际答复', evidence: [], missing: [ctx.question] };
     // 索要尺码所需的身材信息是有效推进，不能视作具体尺码已经确定。
-    if (/(?:穿(?:什么|多大|哪个)码|(?:这个|我的|我这).{0,8}身材.{0,8}选尺码|(?:推荐|建议).{0,6}尺码)/u.test(ctx.question) &&
+    if (!/注意|注意事项/u.test(ctx.question) && /(?:穿(?:什么|多大|哪个)码|选(?:什么|多大|哪个)码|(?:这个|我的|我这).{0,8}身材.{0,8}选尺码|(?:推荐|建议).{0,6}尺码)/u.test(ctx.question) &&
         /(?:提供|告诉|告知|测量|量一下).{0,24}(?:身高|体重|腰围|臀围|腰臀围)/u.test(ctx.reply) &&
         !/(?:推荐|建议|参考|穿|选)\s*(?:[SMLX]{1,4}|\d{2,3})\s*码/iu.test(ctx.reply)) {
       return { pass: false, signal: 'off-topic', intent: 'size-recommendation', status: 'partial',
@@ -73,6 +82,34 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
     const clauses = ctx.reply.split(/[，。；;！!\n]|但是|不过|但/u).map((s) => s.trim()).filter(Boolean);
     // 核实中的问题描述、引用问题和不确定断言，不作为已经给出结论的证据。
     const statements = clauses.filter((s) => !/不确定|不知道|不清楚|核实|未确认|没确认|确认一下|查一下|查询|是否|有没有|能不能|需不需要|要不要|如果|假如|倘若|[？?]/u.test(s));
+    // 到货时效与物流查看路径优先于“发出后”等时间背景词。
+    if (/什么时候|多久|几天|多长时间/u.test(ctx.question) && /收到|送达|到货|送到|抵达|到达|多久到|几天到/u.test(ctx.question)) {
+      const evidence = statements.filter((part) => {
+        const duration = /\d+\s*(?:(?:到|至|[-~～—])\s*\d+\s*)?(?:小时|天|日|个工作日)/u.test(part);
+        const arrival = /收到|送达|到货|送到|抵达|到达|能到|可到/u.test(part);
+        const shortDuration = /^(?:亲|一般|通常|大概|预计|约|大约|大概是|大约是|需要|可能|会|要|差不多|\s)*\d+\s*(?:(?:到|至|[-~～—])\s*\d+\s*)?(?:小时|天|日|个工作日)(?:左右|内|吧|哦|呢|哈|呀|的|\s)*$/u.test(part);
+        const relativeArrival = /(?:今天|明天|后天|当日|次日|隔天)/u.test(part) && arrival;
+        return ((duration && (arrival || shortDuration)) || relativeArrival) && !/不一定|不保证|无法|不能|不确定|可能不/u.test(part);
+      });
+      const shippingOnly = /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(ctx.reply) && !evidence.length;
+      const result = assessment('delivery-time', evidence, evidence.length ? [] : ['尚未说明到货时效'], pendingVerification);
+      return shippingOnly && !pendingVerification ? { ...result, status: 'unsupported', reason: '发货时间不能替代到货时间' } : result;
+    }
+    if (/物流|快递/u.test(ctx.question) && /哪里|在哪|如何查看|怎么查看|怎么查|查询|查看/u.test(ctx.question)) {
+      const evidence = statements.filter((part) => /订单|详情页|物流页|快递单号|物流信息/u.test(part) &&
+        /物流|快递|进度|查询|查看/u.test(part) && !/不能|无法|不支持|不提供/u.test(part));
+      return assessment('logistics-location', evidence, evidence.length ? [] : ['尚未说明物流查询路径'], pendingVerification);
+    }
+    if (/选(?:什么|多大|哪个)码/u.test(ctx.question) && !/注意|注意事项/u.test(ctx.question)) {
+      const evidence = statements.filter((part) => (/(?:参考|建议|推荐|适合|穿|选|可以).{0,12}(?:[SMLX]{1,4}|\d{2,3})\s*码/iu.test(part) ||
+        /(?:[SMLX]{1,4}|\d{2,3})\s*码(?:比较|更)?(?:合适|适合|可以|就好|就行)/iu.test(part)) &&
+        !/不建议|不适合|不合适|不能|不确定|不知道/u.test(part));
+      return assessment('size-recommendation', evidence, evidence.length ? [] : ['尚未给出具体尺码建议'], pendingVerification);
+    }
+    if (/选.{0,8}码/u.test(ctx.question) && /注意/u.test(ctx.question)) {
+      const evidence = statements.filter((part) => /腰围|臀围|尺码表|尺寸|偏好|合身|宽松/u.test(part) && /量|对照|参考|结合|根据|选择/u.test(part));
+      return assessment('size-recommendation', evidence, evidence.length ? [] : ['尚未说明选码注意事项'], pendingVerification);
+    }
     // 明确发货时效应独立于库存主题判断；保留不确定和矛盾的限制。
     if (/什么时候|多久|几天|多长时间/u.test(ctx.question) && /发货|发出|出库/u.test(ctx.question) && !/现货/u.test(ctx.question)) {
       const evidence = statements.filter((s) => /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(s) &&

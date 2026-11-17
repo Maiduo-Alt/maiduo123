@@ -142,3 +142,61 @@ it('请求具体尺码时索要身材数据只算部分推进', () => {
   expect(result.pass).toBe(false);
   expect(assess('尺码表怎么看？', '请告诉我身高体重，我帮您对照尺码表。').intent).not.toBe('size-recommendation');
 });
+
+describe('线上 L1 271 回归', () => {
+  it('到货问题按送达时效而非发货时间判断', () => {
+    const q = '发出后大概多久能收到呢？';
+    const delivery = assess(q, '亲，发出后一般2到4天送达，偏远地区可能久一些。');
+    expect(delivery.pass).toBe(true);
+    expect(delivery.intent).toBe('delivery-time');
+    expect(delivery.evidence?.join('')).toContain('2到4天送达');
+    const onlyShipping = assess(q, '亲，付款后通常48小时内发货。');
+    expect(onlyShipping.pass).toBe(false);
+    expect(onlyShipping.status).toBe('unsupported');
+    const both = assess(q, '付款后48小时内发货，发出后一般2到4天送达。');
+    expect(both.pass).toBe(true);
+    expect(both.evidence?.join('')).toContain('2到4天送达');
+    expect(both.evidence?.join('')).not.toContain('48小时内发货');
+  });
+  it.each(['发出后在哪里查看物流进度呢？', '请问在哪里可以查看物流进度呢？'])(
+    '物流查询不因发出前缀改变主题：%s', (q) => {
+      for (const reply of ['亲，在订单详情里选择查看物流，就可以看到物流进度和快递信息。', '亲，商品发出后在订单详情选择查看物流，即可看到物流进度和快递信息。']) {
+        expect(assess(q, reply).pass).toBe(true);
+      }
+      expect(assess(q, '亲，48小时内发货。').pass).toBe(false);
+    },
+  );
+  it('选哪个码的明确建议和注意事项分别判定', () => {
+    expect(assess('梨形身材选哪个码', '亲，可以先参考M码，建议对照尺码表。').pass).toBe(true);
+    expect(assess('梨形身材选哪个码', 'M码可以。').pass).toBe(true);
+    expect(assess('梨形身材选哪个码', 'M码不合适。').pass).toBe(false);
+    expect(assess('梨形身材选哪个码', '亲，请告诉我身高体重，我再帮您推荐尺码。').status).toBe('partial');
+    expect(assess('关于“梨形身材选哪个码”，还有哪些需要注意的呢？', '选码时量一下腰围和臀围，对照商品尺码表。').pass).toBe(true);
+  });
+  it('复述问题说核实不算合理待核实；具体核实洗标仍获部分分', () => {
+    const question = '这条连衣裙搭配什么外套和鞋子好看';
+    const empty = assess(question, `亲您好，我先帮您核实${question}的具体情况，确认后再回复您。`);
+    expect(empty.status).toBe('unanswered');
+    expect(empty.signal).toBe('perfunctory');
+    expect(assess('要不要干洗', '我先帮您核实洗标要求，确认后回复您').status).toBe('pending');
+  });
+});
+
+it('泛化核实若仅复述整句补充问题，仍不获得待核实部分分', () => {
+  const question = '我需要提供哪些信息，方便您核实这个问题呢？';
+  const reply = '亲，我先帮您核实我需要提供哪些信息，方便您核实这个问题呢的具体情况，确认后再回复您。';
+  expect(assess(question, reply).status).toBe('unanswered');
+  expect(assess(question, reply).signal).toBe('perfunctory');
+});
+
+it('合并询问发货和到货时分别回答，不能只答其中一项', () => {
+  const question = '什么时候发货，发出后多久能收到？';
+  expect(assess(question, '付款后48小时内发货。').pass).toBe(false);
+  expect(assess(question, '付款后48小时内发货，发出后2到4天送达。').pass).toBe(true);
+});
+it('到货问题可理解上下文中的自然短答，但不把发货时间当到货时间', () => {
+  expect(assess('发出后多久能收到？', '一般2到4天左右。').pass).toBe(true);
+  expect(assess('发出后多久能收到？', '预计明天可以收到。').pass).toBe(true);
+  expect(assess('发出后多久能收到？', '预计明天发货。').pass).toBe(false);
+  expect(assess('发出后多久能收到？', '48小时内发货。').pass).toBe(false);
+});
