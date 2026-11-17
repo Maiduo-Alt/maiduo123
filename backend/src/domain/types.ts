@@ -174,6 +174,8 @@ export interface ScriptQuestion {
    * - optional：优惠/竞品/物流等仅在上下文合适时才可触发的可选问题。
    */
   sourceType?: 'core' | 'derived' | 'optional';
+  /** 最低轮次补充其他话题时，提示推送端使用自然转场。 */
+  topicTransition?: boolean;
   /** 衍生提问所依附的主问题轮次，用于保持对话主题连续。 */
   derivedFromSeq?: number;
   /** 强依赖前文的问题不能作为开场，例如“那大概多久能处理好呢？”。 */

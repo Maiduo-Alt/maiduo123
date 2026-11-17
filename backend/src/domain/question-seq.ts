@@ -1,5 +1,6 @@
 import { ScriptQuestion } from './types';
 import { orderStageForQuestion } from './order';
+import { conversationTopic } from './semantic-goals';
 
 /** 构建剧本所需的内容切片（买家咨询内容的最小输入）。 */
 export interface QuestionSeqSource {
@@ -10,7 +11,7 @@ export interface QuestionSeqSource {
   transferIdxs?: number[];
 }
 
-function derivedQuestionFor(question: string, index: number, used: Set<string>): string {
+function derivedQuestionFor(question: string, index: number, used: Set<string>, onExhausted?: () => string): string {
   const text = String(question || '');
   const topicTemplates: Array<[RegExp, string[]]> = [
     [/发货|出库|多久发/u, ['那一般什么时候可以发出呢？', '发出后大概多久能收到呢？']],
@@ -41,25 +42,92 @@ function derivedQuestionFor(question: string, index: number, used: Set<string>):
     const candidate = candidates[(index + i) % candidates.length];
     if (!used.has(candidate)) return candidate;
   }
-  // 该主题候选全部用过时，按父题主题生成一句唯一的兜底追问。
+  if (onExhausted) return onExhausted();
+  // 旧版序列保留原有兜底行为。
   const topic = text.replace(/[？?！!。\s]+$/u, '');
   return `关于“${topic}”，可以再帮我确认一下吗？`;
 }
 
+/** 只有当前主题的补题耗尽才会从其他咨询方向中选题。问题只询问信息，不预设商品事实。 */
+const CROSS_TOPIC_QUESTIONS: Array<{ topic: string; question: string }> = [
+  { topic: 'shipping', question: '请问下单后一般多久发货呢？' },
+  { topic: 'delivery', question: '请问在哪里可以查看物流进度呢？' },
+  { topic: 'exchange', question: '如果收到的商品不合适，可以申请换货吗？' },
+  { topic: 'refund', question: '如果商品不合适，如何申请退货呢？' },
+  { topic: 'promotion', question: '请问这件商品目前有什么优惠活动吗？' },
+  { topic: 'payment', question: '付款时可以使用哪些支付方式呢？' },
+  { topic: 'order', question: '下单后在哪里可以查看订单进度呢？' },
+  { topic: 'inventory', question: '请问这件商品现在有现货吗？' },
+  { topic: 'fit', question: '请问尺码表在哪里可以查看呢？' },
+  { topic: 'material', question: '请问在哪里可以查看商品的面料成分呢？' },
+  { topic: 'care', question: '请问商品的洗护说明在哪里查看呢？' },
+  { topic: 'craft', question: '请问在哪里可以查看商品做工的细节图呢？' },
+  { topic: 'shipping', question: '订单的出库时间在哪里查看呢？' },
+  { topic: 'delivery', question: '请问物流进度在哪里查询呢？' },
+  { topic: 'exchange', question: '需要换货的话，应该怎样申请呢？' },
+  { topic: 'refund', question: '请问退货申请应该在哪里提交呢？' },
+  { topic: 'promotion', question: '请问购买时可以使用优惠券吗？' },
+  { topic: 'payment', question: '下单后在哪里可以完成付款呢？' },
+  { topic: 'order', question: '请问如何查看自己下的订单呢？' },
+  { topic: 'inventory', question: '请问怎样查看商品是否有现货呢？' },
+  { topic: 'fit', question: '请问选尺码时应该参考哪里的信息呢？' },
+  { topic: 'material', question: '请问商品详情里的材质信息在哪里看呢？' },
+  { topic: 'care', question: '请问洗涤方法可以在哪查看呢？' },
+  { topic: 'craft', question: '请问可以在哪里看做工细节呢？' },
+  { topic: 'contact', question: '请问有问题时可以通过什么方式联系商家呢？' },
+  { topic: 'packaging', question: '请问商品一般会怎样包装呢？' },
+  { topic: 'invoice', question: '请问购买后如何申请发票呢？' },
+  { topic: 'freight', question: '请问运费是怎么计算的呢？' },
+];
+
+function crossTopicQuestion(questions: ScriptQuestion[], parent: ScriptQuestion, currentSeq: number, skippedSeqs: number[]): string {
+  const used = new Set(questions.map((q) => q.question.trim()));
+  const skipped = new Set(skippedSeqs);
+  const asked = questions.filter((q) => q.seq <= currentSeq && !skipped.has(q.seq));
+  const topics = new Set<string>(asked.map((q) => conversationTopic(q)));
+  topics.add(conversationTopic(parent));
+  // 一个问题可能同时提到多个主题，不能只靠单一主题分类器去重。
+  const mentioned: Array<[string, RegExp]> = [
+    ['shipping', /发货|发出|出库/u], ['delivery', /物流|快递|配送|到货|签收/u],
+    ['exchange', /换货|换码|退换/u], ['refund', /退款|退货|退钱|退换/u],
+    ['promotion', /优惠|活动|折扣|优惠券/u], ['payment', /付款|支付|催付/u],
+    ['order', /订单|下单/u], ['inventory', /现货|预售|库存|缺货/u],
+    ['fit', /尺码|码数|尺寸|身高|体重|版型/u], ['material', /面料|材质|成分|含棉|纤维/u],
+    ['care', /洗涤|洗护|清洗|机洗|水洗|手洗/u], ['craft', /做工|工艺|走线|包边|锁边/u],
+    ['contact', /联系.{0,6}(?:商家|客服)|(?:商家|客服).{0,6}联系/u], ['packaging', /包装|包裹怎么包/u],
+    ['invoice', /发票|开票/u], ['freight', /运费/u],
+  ];
+  for (const question of [...asked, parent]) {
+    for (const [topic, pattern] of mentioned) if (pattern.test(question.question)) topics.add(topic);
+  }
+  const available = CROSS_TOPIC_QUESTIONS.find((candidate) => !topics.has(candidate.topic) && !used.has(candidate.question));
+  if (!available) throw new Error('没有可用于补足最低轮次的跨话题问题');
+  return available.question;
+}
+
 /** 为短剧本补充同主题问题，供会话在不足最低轮次时使用。 */
 export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: ScriptQuestion,
-  context?: { pending: boolean; agentReplies: string[] }): ScriptQuestion {
+  context?: { pending: boolean; agentReplies: string[]; shippingAnswered?: boolean; currentSeq?: number; skippedSeqs?: number[] }): ScriptQuestion {
   const used = new Set(questions.map((question) => question.question));
   const count = questions.filter((question) => question.derivedFromSeq === parent.seq).length;
   let contextual: string | undefined;
+  let triedContextualCandidates = false;
   if (context?.pending) {
+    triedContextualCandidates = true;
     // 缺少资料时转向可执行的信息补充，不再次催问尚未核实的结论。
     const material = /材质|面料|成分|含棉|聚酯|纤维/u.test(parent.question);
     const choices = material
       ? ['我收到衣服后，应该在哪里查看面料成分标识呢？', '成分标签看不清时，我怎么提供信息方便您核实呢？']
       : ['我需要提供哪些信息，方便您核实这个问题呢？', '我应该在哪里找到您核实需要的商品信息呢？'];
     contextual = choices.find((text) => !used.has(text));
+  } else if (context && /发货|发出|出库/u.test(parent.question) && (context.shippingAnswered ?? context.agentReplies.some((reply) =>
+    /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(reply) &&
+    !/不确定|不知道|不清楚|无法|不能|不保证|不承诺|不一定|可能|或许/u.test(reply)))) {
+    triedContextualCandidates = true;
+    contextual = ['发出后大概多久能收到呢？', '发出后在哪里查看物流进度呢？', '如果物流停滞，可以帮我跟进吗？']
+      .find((text) => !used.has(text));
   } else if (context && /尺码|尺寸|穿.{0,8}码|偏大|偏小/u.test(parent.question)) {
+    triedContextualCandidates = true;
     const replies = context.agentReplies.join(' ');
     const choices: Array<[RegExp, string]> = [
       [/腰围|臀围|腰臀围/u, '挑选尺码时，需要对照尺码表上的哪些围度呢？'],
@@ -68,6 +136,7 @@ export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: 
     ];
     contextual = choices.find(([answered, text]) => !answered.test(replies) && !used.has(text))?.[1];
   } else if (context && /洗涤|干洗|机洗|水洗|清洗/u.test(parent.question)) {
+    triedContextualCandidates = true;
     const replies = context.agentReplies.join(' ');
     const choices: Array<[RegExp, string]> = [
       [/水温|温水|冷水|度/u, '清洗这件衣服时，水温有什么要求呢？'],
@@ -76,9 +145,18 @@ export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: 
     ];
     contextual = choices.find(([answered, text]) => !answered.test(replies) && !used.has(text))?.[1];
   }
+  let switchedTopic = false;
+  const chooseOtherTopic = () => {
+    switchedTopic = true;
+    return crossTopicQuestion(questions, parent, context?.currentSeq ?? Math.max(0, ...questions.map((q) => q.seq)), context?.skippedSeqs ?? []);
+  };
+  const text = contextual || (context && triedContextualCandidates
+    ? chooseOtherTopic()
+    : derivedQuestionFor(parent.question, count, used, context ? chooseOtherTopic : undefined));
   return {
     seq: Math.max(0, ...questions.map((question) => question.seq)) + 1,
-    question: contextual || derivedQuestionFor(parent.question, count, used),
+    question: text,
+    ...(switchedTopic ? { topicTransition: true } : {}),
     keyPoints: parent.automaticEvaluation ? [] : ['有效回应'],
     ...(parent.automaticEvaluation ? { automaticEvaluation: true } : {}),
     sourceType: 'derived',
@@ -86,7 +164,7 @@ export function createMinimumRoundQuestion(questions: ScriptQuestion[], parent: 
     derivedFromSeq: parent.seq,
     goalPriority: 'secondary',
     stage: parent.stage,
-    orderStage: orderStageForQuestion(parent),
+    orderStage: switchedTopic ? orderStageForQuestion({ stage: parent.stage, question: text }) : orderStageForQuestion(parent),
   };
 }
 

@@ -1,7 +1,7 @@
 import { JudgeContext, JudgeResult, isHedge, isPendingVerification, isPerfunctory, judgeReply } from './reply-judge';
 import { conversationTopic } from './semantic-goals';
 
-export type ReplyIntent = 'dry-clean-required' | 'dry-clean-allowed' | 'exchange' | 'media-location' | 'media-available' | 'color-difference' | 'compound' | 'general';
+export type ReplyIntent = 'dry-clean-required' | 'dry-clean-allowed' | 'exchange' | 'media-location' | 'media-available' | 'color-difference' | 'compound' | 'size-recommendation' | 'general';
 export interface ReplyAssessment extends JudgeResult {
   intent?: ReplyIntent;
   status?: 'resolved' | 'partial' | 'pending' | 'unanswered' | 'unsupported';
@@ -56,6 +56,13 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
       if (!known) return { pass: false, signal: 'off-topic', intent, status: 'unsupported', reason: '该买家的对话没有提供回复使用的身高体重', evidence: [], missing: ['请核实当前买家的身高体重'] };
     }
     if (isPerfunctory(ctx)) return { ...result, intent, status: 'unanswered', reason: '回复过短、重复或没有实际答复', evidence: [], missing: [ctx.question] };
+    // 索要尺码所需的身材信息是有效推进，不能视作具体尺码已经确定。
+    if (/(?:穿(?:什么|多大|哪个)码|(?:这个|我的|我这).{0,8}身材.{0,8}选尺码|(?:推荐|建议).{0,6}尺码)/u.test(ctx.question) &&
+        /(?:提供|告诉|告知|测量|量一下).{0,24}(?:身高|体重|腰围|臀围|腰臀围)/u.test(ctx.reply) &&
+        !/(?:推荐|建议|参考|穿|选)\s*(?:[SMLX]{1,4}|\d{2,3})\s*码/iu.test(ctx.reply)) {
+      return { pass: false, signal: 'off-topic', intent: 'size-recommendation', status: 'partial',
+        reason: '已请求选码所需数据，尚未给出具体尺码', evidence: [ctx.reply], missing: [] };
+    }
     const subQuestions = ctx.question.split(/[，；;。？?]|另外|还想问|并且/u).map((s) => s.trim()).filter(Boolean);
     const subIntents = new Set(subQuestions.map(replyIntent).filter((value) => value !== 'general'));
     if (subIntents.size > 1) {
@@ -66,6 +73,15 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
     const clauses = ctx.reply.split(/[，。；;！!\n]|但是|不过|但/u).map((s) => s.trim()).filter(Boolean);
     // 核实中的问题描述、引用问题和不确定断言，不作为已经给出结论的证据。
     const statements = clauses.filter((s) => !/不确定|不知道|不清楚|核实|未确认|没确认|确认一下|查一下|查询|是否|有没有|能不能|需不需要|要不要|如果|假如|倘若|[？?]/u.test(s));
+    // 明确发货时效应独立于库存主题判断；保留不确定和矛盾的限制。
+    if (/什么时候|多久|几天|多长时间/u.test(ctx.question) && /发货|发出|出库/u.test(ctx.question) && !/现货/u.test(ctx.question)) {
+      const evidence = statements.filter((s) => /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(s) &&
+        !/不确定|不保证|不承诺|不一定|不能|无法|可能|或许|不发货|不发出|不出库/u.test(s));
+      const durations = [...ctx.reply.matchAll(/(\d+)\s*(小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/gu)]
+        .map((match) => Number(match[1]) * (match[2] === '小时' ? 1 : 24));
+      const contradictory = new Set(durations).size > 1 || /(?:不能|无法|不会|不(?:能)?保证).{0,12}(?:发货|发出|出库)/u.test(ctx.reply);
+      return assessment(intent, contradictory ? [] : evidence, evidence.length && !contradictory ? [] : ['尚未明确发货时效'], pendingVerification);
+    }
     if (intent === 'dry-clean-required' || intent === 'dry-clean-allowed') {
       const pattern = intent === 'dry-clean-required'
         ? /(?:不需要|无需|不用|不必)(?:专门|进行)?干洗|(?:需要|必须|只能|要)(?:专门|进行)?干洗|正常洗|平常.{0,5}洗|日常清洗|没必要.{0,6}(?:干洗|麻烦)|不用.{0,6}麻烦|^(?:亲)?(?:不需要|不必|不用|需要|必须|不要|要)[的哦呢哈呀啊哒~～\s]*$/u

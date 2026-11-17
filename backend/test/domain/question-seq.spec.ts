@@ -279,3 +279,66 @@ it('偏大问题的最低轮次补问使用具体选码关注点', () => {
   expect(next.question).toBe('如果尺码不合适，可以换吗？');
   expect(next.question).not.toMatch(/关于|还有哪些/u);
 });
+
+it('已说明发货时效时补问送达而非重复发货时间', () => {
+  const parent = { seq: 1, question: '有现货吗，多久发货？', keyPoints: [], automaticEvaluation: true };
+  const next = createMinimumRoundQuestion([parent], parent, { pending: false, agentReplies: ['有现货，48小时内发货'] });
+  expect(next.question).toContain('多久能收到');
+});
+
+it('未确认发货时效时仍允许询问发货时间', () => {
+  const parent = { seq: 1, question: '有现货吗，多久发货？', keyPoints: [], automaticEvaluation: true };
+  const next = createMinimumRoundQuestion([parent], parent, { pending: false, shippingAnswered: false, agentReplies: ['可能48小时内发货，先帮您核实'] });
+  expect(next.question).toContain('什么时候可以发出');
+});
+
+it('同话题候选耗尽时补充未问过的其他话题，并标记自然转场', () => {
+  const parent = { seq: 1, question: '这件衣服可以机洗吗？', keyPoints: [], automaticEvaluation: true };
+  const current = { seq: 2, question: '水温有什么要求呢？', keyPoints: [], automaticEvaluation: true, derivedFromSeq: 1 };
+  const result = createMinimumRoundQuestion([parent, current], parent, {
+    pending: false, currentSeq: 2, agentReplies: ['可以机洗，冷水清洗，阴干，使用洗衣袋。'],
+  });
+  expect(result.topicTransition).toBe(true);
+  expect(result.question).toContain('发货');
+  expect([parent.question, current.question]).not.toContain(result.question);
+  expect(result.derivedFromSeq).toBe(1);
+  expect(result.automaticEvaluation).toBe(true);
+});
+
+it('待核实场景用尽相关候选后转到新话题，不重复催问具体结果', () => {
+  const parent = { seq: 1, question: '含棉量多少？', keyPoints: [], automaticEvaluation: true };
+  const first = { seq: 2, question: '我收到衣服后，应该在哪里查看面料成分标识呢？', keyPoints: [] };
+  const second = { seq: 3, question: '成分标签看不清时，我怎么提供信息方便您核实呢？', keyPoints: [] };
+  const result = createMinimumRoundQuestion([parent, first, second], parent, { pending: true, currentSeq: 2, agentReplies: [] });
+  expect(result.topicTransition).toBe(true);
+  expect(result.question).not.toMatch(/含棉|核实后告诉|具体结果/);
+  expect(result.question).not.toBe(first.question);
+  expect(result.question).not.toBe(second.question);
+});
+
+it('仍有相关候选时不提前转场', () => {
+  const parent = { seq: 1, question: '能机洗吗？', keyPoints: [], automaticEvaluation: true };
+  const result = createMinimumRoundQuestion([parent], parent, { pending: false, currentSeq: 1, agentReplies: ['可以机洗'] });
+  expect(result.topicTransition).toBeUndefined();
+  expect(result.question).toContain('水温');
+});
+
+it('一个已问问题包含发货与物流时，跨话题补题不会重复任一主题', () => {
+  const first = { seq: 1, question: '多久发货，物流在哪里看？', keyPoints: [], automaticEvaluation: true };
+  const parent = { seq: 2, question: '能机洗吗？', keyPoints: [], automaticEvaluation: true };
+  const result = createMinimumRoundQuestion([first, parent], parent, {
+    pending: false, currentSeq: 2, agentReplies: ['冷水洗，阴干，用洗衣袋'],
+  });
+  expect(result.topicTransition).toBe(true);
+  expect(result.question).not.toMatch(/发货|物流/);
+});
+
+it('跳过的问题不算已问话题，避免因为内部跳题过多而耗尽其他话题', () => {
+  const skipped = { seq: 1, question: '请问现货多久发货？', keyPoints: [], automaticEvaluation: true };
+  const parent = { seq: 2, question: '能机洗吗？', keyPoints: [], automaticEvaluation: true };
+  const result = createMinimumRoundQuestion([skipped, parent], parent, {
+    pending: false, currentSeq: 2, skippedSeqs: [1], agentReplies: ['冷水洗，阴干，用洗衣袋'],
+  });
+  expect(result.topicTransition).toBe(true);
+  expect(result.question).toContain('发货');
+});

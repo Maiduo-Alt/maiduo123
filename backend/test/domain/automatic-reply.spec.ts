@@ -125,3 +125,20 @@ it('买家秀已答、视频未知时只保留缺失的视频信息', () => {
   expect(result.evidence).toContain('买家秀也可以在评价区找晒图看');
   expect(result.missing).toEqual(['尚未说明视频是否可用']);
 });
+
+it.each([
+  ['亲，有现货，拍下后通常48小时内发货，具体也看订单显示的时效。', true],
+  ['亲，尽快安排发货。', false],
+  ['亲，我先核实是否能在48小时内发货。', false],
+  ['亲，48小时内发货，但不能保证48小时内发货。', false],
+  ['亲，48小时内发货，但72小时内发货。', false],
+])('单独询问发货时间时识别有效时效：%s', (reply, pass) => {
+  expect(assess('那一般什么时候可以发出呢？', reply).pass).toBe(pass);
+});
+
+it('请求具体尺码时索要身材数据只算部分推进', () => {
+  const result = assess('那我这个身材应该怎么选尺码呢？', '请告诉我身高体重，我再帮您参考尺码。');
+  expect(result.status).toBe('partial');
+  expect(result.pass).toBe(false);
+  expect(assess('尺码表怎么看？', '请告诉我身高体重，我帮您对照尺码表。').intent).not.toBe('size-recommendation');
+});

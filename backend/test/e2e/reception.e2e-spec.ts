@@ -658,6 +658,8 @@ describe('在线模拟接待端到端链路', () => {
       ['色差大吗', '稍等', false],
       ['买家秀和实拍视频分别在哪里看', '买家秀在评价区看晒图', false],
       ['梨形身材怎么选尺码', '亲，158厘米92斤可以参考M码', false],
+      ['那我这个身材应该怎么选尺码呢？', '亲，可以先对照尺码表量一下腰围和臀围，也可以把身高体重告诉我，再帮您参考。', false],
+      ['那一般什么时候可以发出呢？', '亲，有现货，拍下后通常48小时内发货，具体也看订单显示的时效。', true],
     ] as const;
     try {
       for (const [question, content, pass] of cases) {
@@ -674,6 +676,16 @@ describe('在线模拟接待端到端链路', () => {
         if (pass) {
           expect((result.ruleResult as any).invalid).not.toBe(true);
           expect(result.responseSec).toBeGreaterThanOrEqual(2);
+        }
+        if (question.includes('这个身材')) {
+          expect(result.ruleResult.replyAssessment?.status).toBe('partial');
+          expect(result.ruleResult.conversationState.resolvedGoalIds).not.toContain('keyword-seq-1');
+          await reception.advanceAfterReply(session.id);
+          const buyer = await sharedDb.one<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`, [session.id]);
+          expect(buyer.content).toContain('尺码表');
+          await reception.finishSession(1, attempt.id, session.id);
+          const score = await sharedDb.one<{ solving_score: string }>(`SELECT solving_score FROM scores WHERE session_id = $1`, [session.id]);
+          expect(Number(score.solving_score)).toBe(17.5);
         }
         if (question.includes('分别')) {
           expect(result.ruleResult.replyAssessment?.status).toBe('partial');
@@ -751,6 +763,57 @@ describe('在线模拟接待端到端链路', () => {
       expect(state).toMatchObject({ current_seq: 2, follow_ups: 0 });
     } finally {
       (reception as any).scheduler.cancel(`next:${session.id}`);
+      (reception as any).scheduler.cancel(`timeout:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  }, 60000);
+
+  it('相关补题耗尽时以自然转场补足最低轮次，并保留原问题未解决', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-cross-topic-exhausted', JSON.stringify({ ...DEFAULT_PARAMS, replyJudgmentVersion: 2, responseTimingVersion: 2 })],
+    );
+    const questions = [
+      { seq: 1, question: '这件衣服可以机洗吗？', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '清洗这件衣服时，水温有什么要求呢？', keyPoints: [], automaticEvaluation: true, derivedFromSeq: 1 },
+    ];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, style_code, state, current_seq, total_questions, questions, last_buyer_at)
+       VALUES ($1, 1, '测试买家', 'friendly', 'serving', 2, 2, $2::jsonb, now()) RETURNING id`, [attempt.id, JSON.stringify(questions)],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'agent',$2,1,$3::jsonb)`,
+        [session.id, '我先核实洗标能否机洗，确认后回复您。', JSON.stringify({ questionSeq: 1, judgmentVersion: 2, pendingVerification: true, judge: { pass: false, signal: 'hedge' }, replyAssessment: { status: 'pending' } })]);
+      await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,2)`, [session.id, questions[1].question]);
+      const reply = await reception.sendMessage(1, attempt.id, session.id, '亲，使用冷水清洗、晾晒时阴干，也可以用洗衣袋。');
+      expect(reply.ruleResult.judge.pass).toBe(true);
+      // 模拟模型同时返回另一道买家问题，跨话题补题不能把它并入同一轮。
+      const savedReply = await sharedDb.one<{ id: number; rule_result: any }>(`SELECT id, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id DESC LIMIT 1`, [session.id]);
+      await sharedDb.query(`UPDATE messages SET rule_result = $2::jsonb WHERE id = $1`, [savedReply!.id, JSON.stringify({ ...savedReply!.rule_result, modelEvaluation: { resolved: true, buyerReply: '请问还有什么颜色？' } })]);
+      await reception.advanceAfterReply(session.id);
+      const state = await sharedDb.one<any>(`SELECT state, current_seq, questions, conversation_state FROM sessions WHERE id = $1`, [session.id]);
+      expect(state.current_seq).toBe(3);
+      expect(state.state).toBe('serving');
+      expect(state.questions[2].topicTransition).toBe(true);
+      expect(state.questions[2].question).toContain('发货');
+      expect(state.conversation_state.unresolvedGoalIds).toContain('keyword-seq-1');
+      const buyer = await sharedDb.one<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`, [session.id]);
+      expect(buyer!.content).toContain('对了，我还想顺便问一下');
+      expect(buyer!.content).toContain(state.questions[2].question);
+      const pushed = await sharedDb.many<{ content: string }>(`SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' AND seq = 3 ORDER BY id`, [session.id]);
+      expect(pushed).toHaveLength(1);
+      expect(pushed[0].content).not.toContain('还有什么颜色');
+      await reception.sendMessage(1, attempt.id, session.id, '亲，付款后48小时内发货。');
+      await reception.advanceAfterReply(session.id);
+      const after = await sharedDb.one<any>(`SELECT conversation_state FROM sessions WHERE id = $1`, [session.id]);
+      expect(after.conversation_state.unresolvedGoalIds).toContain('keyword-seq-1');
+      await reception.finishSession(1, attempt.id, session.id);
+      const score = await sharedDb.one<{ solving_score: string }>(`SELECT solving_score FROM scores WHERE session_id = $1`, [session.id]);
+      expect(Number(score!.solving_score)).toBe(29.2);
+    } finally {
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      (reception as any).scheduler.cancel(`close:${session.id}`);
       (reception as any).scheduler.cancel(`timeout:${session.id}`);
       await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
     }

@@ -1,3 +1,4 @@
+import { shippingConditionsCompatible } from '../../domain/shipping-context';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { DbService } from '../../db/db.service';
@@ -805,6 +806,10 @@ export class ReceptionService implements OnModuleInit {
     const alreadyAnswered = [...(session.skipped_seqs || [])];
     const shippingAnswered = previousQuestion?.automaticEvaluation && priorMessages.some((message) =>
       message.rule_result?.judgmentVersion >= 1 && message.rule_result?.judge?.pass === true && !message.rule_result?.invalid &&
+      shippingConditionsCompatible(
+        session.questions.find((question) => question.seq === message.rule_result?.questionSeq)?.question || '',
+        message.content, previousQuestion.question,
+      ) &&
       !/不确定|不知道|不清楚|无法|不能|不保证|不承诺|不一定|可能|或许/u.test(message.content) &&
       /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(message.content),
     );
@@ -841,7 +846,7 @@ export class ReceptionService implements OnModuleInit {
       const parent = session.questions.find((q) => q.seq === previousQuestion.derivedFromSeq) || previousQuestion;
       const latest = priorMessages[priorMessages.length - 1]?.rule_result;
       const fallback = createMinimumRoundQuestion(session.questions, parent, latest?.judgmentVersion === 2 ? {
-        pending: latest.replyAssessment?.status === 'pending', agentReplies: priorMessages.map((message) => message.content),
+        pending: latest.replyAssessment?.status === 'pending', agentReplies: priorMessages.map((message) => message.content), shippingAnswered: !!shippingAnswered, currentSeq: session.current_seq, skippedSeqs: session.skipped_seqs || [],
       } : undefined);
       session.questions = [...session.questions, fallback];
       session.total_questions = fallback.seq;
@@ -929,16 +934,18 @@ export class ReceptionService implements OnModuleInit {
     const nextTopic = conversationTopic(question);
     const isTopicTransition =
       session.current_seq > 0 &&
+      (question.topicTransition === true || (
       previousTopic !== 'general' &&
       nextTopic !== 'general' &&
-      previousTopic !== nextTopic;
+      previousTopic !== nextTopic));
     const plannedPrompt = isTopicTransition
       ? buildTopicTransitionText(session.style_code, rawPrompt)
       : rawPrompt;
     // 转场文案已经按风格生成，不能再套一次 styleBehavior，否则会出现
     // “我想确认一下，另外我还想确认一下……”这类双重风格前缀。
     const texts = isTopicTransition ? [plannedPrompt] : behavior.transform(plannedPrompt);
-    if (modelIntro) texts.unshift(modelIntro);
+    // 跨话题补题已带完整转场；模型生成的下一句可能是另一个问题，避免同轮混入两道题。
+    if (modelIntro && !question.topicTransition) texts.unshift(modelIntro);
     /**
      * 客户 2026-10-03：**推送哪个问题，就带出与之关联的订单状态**。
      * 售前问题配「待支付 / 待发货」，售后问题配「已发货」——同一笔记订单随问题推进状态。
@@ -1321,7 +1328,7 @@ export class ReceptionService implements OnModuleInit {
       /^(?:亲|请问|这款|这件|衣服|可以|能|可不可以|能不能|支持|是不是|是否)*机洗(?:吗|嘛|么|呢)?[？?。！!\s]*$/u.test(currentQuestion.question.trim()) &&
       supportsMachineWash(text);
     const unsupportedFacts = 'status' in ruleAssessment && ruleAssessment.status === 'unsupported';
-    const blockedAssessment = unsupportedFacts || (params.replyJudgmentVersion === 2 && ruleAssessment.signal === 'perfunctory');
+    const blockedAssessment = unsupportedFacts || (params.replyJudgmentVersion === 2 && (ruleAssessment.signal === 'perfunctory' || (ruleAssessment.intent === 'size-recommendation' && ruleAssessment.status === 'partial')));
     const modelResolved = !!modelResult && (modelResult.resolved || (params.replyJudgmentVersion !== 2 && machineWashResolved)) && !pendingVerification && !blockedAssessment;
     const hitPoints = modelResult && currentQuestion && !(currentQuestion.semanticGoals || []).length
       ? (modelResolved ? [...currentQuestion.keyPoints] : [])
@@ -1334,7 +1341,7 @@ export class ReceptionService implements OnModuleInit {
     );
     const semanticEvaluation = evaluateSemanticReply(text, session.questions, vectorCandidates);
     if (modelResult) semanticEvaluation.goalMatches = modelResult.matchedPoints;
-    if (pendingVerification && currentQuestion) {
+    if ((pendingVerification || blockedAssessment) && currentQuestion) {
       const currentGoalIds = new Set((currentQuestion.semanticGoals || []).map((goal) => goal.id));
       semanticEvaluation.goalMatches = semanticEvaluation.goalMatches.filter((match) => !currentGoalIds.has(match.goalId));
     }
@@ -1399,7 +1406,7 @@ export class ReceptionService implements OnModuleInit {
     const isTimeout = responseSec !== null && responseSec > Math.round(params.timeoutSec * tolerance);
 
     const responded = hitAny || openerStage || (unifiedJudgment && !invalidReason && (judgedReply.pass || pendingVerification ||
-      (!modelResult && 'status' in ruleAssessment && ruleAssessment.status === 'partial')));
+      ((!modelResult || blockedAssessment) && 'status' in ruleAssessment && ruleAssessment.status === 'partial')));
     const emotion = unifiedJudgment && inAgentCloseWindow
       ? { value: session.emotion_value, delta: 0, reason: 'none' as const, escalated: false }
       : updateEmotion(session.emotion_value, text, params, {
