@@ -191,8 +191,8 @@ export class ReceptionService implements OnModuleInit {
     if (!attempts.length) return;
 
     const idList = attempts.map((a) => a.id);
-    const sessions = await this.db.many<{ id: number; state: string; close_deadline_at: string | null }>(
-      `SELECT id, state, close_deadline_at FROM sessions
+    const sessions = await this.db.many<{ id: number; state: string; join_at: string; close_deadline_at: string | null }>(
+      `SELECT id, state, join_at, close_deadline_at FROM sessions
        WHERE attempt_id IN (${idList.map((_, i) => `$${i + 1}`).join(',')})
          AND state NOT IN ('finished','transferred','aborted')`,
       idList
@@ -201,7 +201,7 @@ export class ReceptionService implements OnModuleInit {
     let rearmed = 0;
     for (const session of sessions) {
       if (session.state === 'wait') {
-        this.scheduler.schedule(`join:${session.id}`, 2000, () => this.pushNextQuestion(session.id));
+        this.scheduler.schedule(`join:${session.id}`, Math.max(0, new Date(session.join_at).getTime() - Date.now()), () => this.pushNextQuestion(session.id));
         rearmed += 1;
       } else if (session.state === 'waiting_buyer') {
         this.scheduler.schedule(`next:${session.id}`, this.REPLY_THINK_DELAY_MS, () => this.advanceAfterReply(session.id));
@@ -707,9 +707,10 @@ export class ReceptionService implements OnModuleInit {
         [attemptId]
       );
       if (!next) return;
-      await this.db.query(`UPDATE sessions SET state = 'wait', join_at = now() WHERE id = $1`, [next.id]);
-      // 新买家「走进来」到发出第一条问题之间留几秒（赤兔火眼实测 1～6 秒），避免突兀地秒进
-      const joinDelay = 1500 + Math.round(Math.random() * 3000);
+      const [minDelay, maxDelay] = params.levelJoinDelaySec;
+      const joinDelay = Math.round(minDelay + Math.random() * (maxDelay - minDelay)) * 1000;
+      const joinAt = new Date(Date.now() + joinDelay);
+      await this.db.query(`UPDATE sessions SET state = 'wait', join_at = $2 WHERE id = $1`, [next.id, joinAt.toISOString()]);
       this.scheduler.schedule(`join:${next.id}`, joinDelay, () => this.pushNextQuestion(next.id));
       slots -= 1;
     }
