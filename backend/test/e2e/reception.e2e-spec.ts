@@ -654,6 +654,7 @@ describe('在线模拟接待端到端链路', () => {
       ['尺码不合适可以换吗', '可以的，留好吊牌就好', true],
       ['买家秀在哪里看', '往评价区翻翻，选晒图就能看大家发的图', true],
       ['色差大吗', '差不多的，手机屏幕看会有一点区别', true],
+      ['实物和详情页图片色差大吗', '亲，图片光线和屏幕可能产生细微色差，一般情况是不影响日常使用的，如果您收到货后感觉不合适可以随时联系我们哈，我们家支持7天无理由的。', true],
       ['要不要干洗', '我核实一下', false],
       ['色差大吗', '稍等', false],
       ['买家秀和实拍视频分别在哪里看', '买家秀在评价区看晒图', false],
@@ -683,6 +684,14 @@ describe('在线模拟接待端到端链路', () => {
         if (pass) {
           expect((result.ruleResult as any).invalid).not.toBe(true);
           expect(result.responseSec).toBeGreaterThanOrEqual(2);
+        }
+        if (question === '实物和详情页图片色差大吗') {
+          expect(result.ruleResult.replyAssessment?.status).toBe('resolved');
+          expect(result.ruleResult.replyAssessment?.evidence?.join('')).toContain('细微色差');
+          expect(result.ruleResult.conversationState.resolvedGoalIds).toContain('keyword-seq-1');
+          await reception.finishSession(1, attempt.id, session.id);
+          const score = await sharedDb.one<{ solving_score: string }>(`SELECT solving_score FROM scores WHERE session_id = $1`, [session.id]);
+          expect(Number(score!.solving_score)).toBe(35);
         }
         if (question === '发出后大概多久能收到呢？' && content.includes('48小时')) {
           expect(['unsupported', 'unanswered']).toContain(result.ruleResult.replyAssessment?.status);

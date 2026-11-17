@@ -200,3 +200,29 @@ it('到货问题可理解上下文中的自然短答，但不把发货时间当�
   expect(assess('发出后多久能收到？', '预计明天发货。').pass).toBe(false);
   expect(assess('发出后多久能收到？', '48小时内发货。').pass).toBe(false);
 });
+
+
+describe('色差口语判定和误放边界', () => {
+  const question = '实物和详情页图片色差大吗';
+  const reply = '亲，图片光线和屏幕可能产生细微色差，一般情况是不影响日常使用的，如果您收到货后感觉不合适可以随时联系我们哈，我们家支持7天无理由的。';
+  it('识别截图中“细微色差”和等价的轻微表达', () => {
+    for (const word of ['细微', '轻微', '些微', '微小']) {
+      const result = assess(question, reply.replace('细微', word));
+      expect(result.pass).toBe(true);
+      expect(result.evidence?.join('')).toContain(`${word}色差`);
+    }
+  });
+  it('没有实质程度、仅售后承诺、待核实或无关差异不放行', () => {
+    for (const text of ['亲，可能会有色差。', '亲，支持七天无理由退换。', '先帮您核实是否存在细微色差。', '尺码有细微差异。', '没有细微色差。', '不存在轻微色差。']) {
+      expect(assess(question, text).pass).toBe(false);
+    }
+  });
+  it('同一色差同时描述轻微与非常大时不直接放行', () => {
+    const result = assess(question, '亲，可能有细微色差，但实物和图片颜色差异非常大。');
+    expect(result.pass).toBe(false);
+    expect(result.status).toBe('unsupported');
+  });
+  it('小色差及价格差异大的描述不构成色差矛盾', () => {
+    expect(assess(question, '亲，图片可能有细微色差，价格差异很大。').pass).toBe(true);
+  });
+});
