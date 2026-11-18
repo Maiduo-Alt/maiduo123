@@ -7,6 +7,7 @@ export interface ReplyAssessment extends JudgeResult {
   status?: 'resolved' | 'partial' | 'pending' | 'unanswered' | 'unsupported';
   reason?: string;
   evidence?: string[];
+  acceptedGuidance?: true;
   missing?: string[];
 }
 
@@ -41,7 +42,7 @@ function assessment(intent: ReplyIntent, evidence: string[], missing: string[], 
 }
 
 /** 新版特定意图以对应答复片段为证据；旧版本沿用原判断。 */
-export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string[] }, version: 0 | 1 | 2): ReplyAssessment {
+export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string[]; productMaterialDetails?: string }, version: 0 | 1 | 2): ReplyAssessment {
   const result = judgeReply(ctx);
   const pendingVerification = isPendingVerification(ctx.reply);
   if (version === 2) {
@@ -79,6 +80,36 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
       const parts = subQuestions.map((question) => assessAutomaticReply({ ...ctx, question }, 2));
       return assessment('compound', parts.flatMap((part) => part.evidence || []),
         parts.filter((part) => !part.pass).flatMap((part) => part.missing || [ctx.question]), parts.some((part) => part.status === 'pending'));
+    }
+    // 模拟题的商品资料未给出对应成分时，按客服是否回答该问题判定。
+    const cottonRatio = /含棉|棉含量|棉的比例|棉占比/u.test(ctx.question);
+    const polyester = /聚酯纤维|涤纶/u.test(ctx.question);
+    const asksMaterial = /什么(?:面料|材质|成分)|(?:面料|材质|成分)是什么/u.test(ctx.question);
+    const cottonAnswer = /(?:棉.{0,8}\d+(?:\.\d+)?\s*[%％]|\d+(?:\.\d+)?\s*[%％].{0,4}棉|不含棉|全棉|纯棉)/u;
+    const polyesterAnswer = /聚酯纤维|涤纶/u;
+    const materialAnswer = /棉|聚酯纤维|涤纶|羊毛|羊绒|真丝|桑蚕丝|亚麻|锦纶|氨纶|粘纤|腈纶|莱赛尔/u;
+    const materialDetails = ctx.productMaterialDetails;
+    if (materialDetails !== undefined && (cottonRatio || polyester || asksMaterial)) {
+      const known = cottonRatio ? cottonAnswer.test(materialDetails)
+        : polyester ? polyesterAnswer.test(materialDetails) || /100\s*[%％]|全棉|纯棉/u.test(materialDetails) : materialAnswer.test(materialDetails);
+      const answer = cottonRatio ? cottonAnswer : polyester ? polyesterAnswer : materialAnswer;
+      const evidence = ctx.reply.split(/[，。；;！!\n]/u).filter((part) => answer.test(part) &&
+        !/是否|[？?]|不确定|不清楚|不知道|无法确认|不能确认|核实|查询|待确认|可能|如果/u.test(part));
+      if (!known && evidence.length) {
+        return { ...assessment(intent, evidence, [], false), acceptedGuidance: true };
+      }
+    }
+    const guidanceSource = /含棉|棉含量|棉的比例/u.test(ctx.question)
+      ? /成分(?:标签|标|表)|吊牌|洗标|商品详情页/u
+      : /包边|锁边|走线|缝线/u.test(ctx.question)
+        ? /实拍|细节图|缝线|走线|缝边|包边|锁边|质检/u
+        : intent === 'dry-clean-required' || intent === 'dry-clean-allowed' ? /洗标|洗涤标签|洗涤说明/u : null;
+    const informationLimit = /未标(?:注|明)?|没有明确|没有(?:具体|完整|可确认)|资料不足|信息不全|无法确认|不能确认|暂(?:时)?不清楚|以.{0,14}(?:为准|标注为准)/u;
+    const nextStep = /核对|核实|查看|查阅|确认后|参考|对照|以.{0,14}为准/u;
+    if (guidanceSource?.test(ctx.reply) && informationLimit.test(ctx.reply) && nextStep.test(ctx.reply) &&
+        !/(?:无法|不能|不用|不必|无需)(?:再|去|帮您)?(?:查看|核对|核实|参考)/u.test(ctx.reply)) {
+      return { ...assessment(intent, [ctx.reply], [], false), acceptedGuidance: true,
+        reason: '已说明资料限制并提供对应核实方式' };
     }
     const clauses = ctx.reply.split(/[，。；;！!\n]|但是|不过|但/u).map((s) => s.trim()).filter(Boolean);
     // 核实中的问题描述、引用问题和不确定断言，不作为已经给出结论的证据。

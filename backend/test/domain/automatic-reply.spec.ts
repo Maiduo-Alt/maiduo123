@@ -3,6 +3,31 @@ const assess = (question: string, reply: string) => assessAutomaticReply({ quest
 
 describe('自动问答的意图与证据判断', () => {
   it.each([
+    ['含棉量多少', '含棉量约70%。', '其他22%', true],
+    ['是聚酯纤维吗？', '是聚酯纤维。', '', true],
+    ['是什么材质？', '这款是亚麻面料。', '', true],
+    ['含棉量多少', '含棉量约70%。', '棉100%', false],
+    ['含棉量多少', '含棉量约70%。', undefined, false],
+    ['含棉量多少', '我先核实含棉量是不是70%。', '', false],
+    ['含棉量多少', '48小时发货。', '', false],
+  ])('缺少材质信息时按是否作答放行：%s → %s', (question, reply, productMaterialDetails, accepted) => {
+    const result = assessAutomaticReply({ question, reply, productMaterialDetails, keyPoints: [], buyerText: question }, 2);
+    expect(result.acceptedGuidance === true).toBe(accepted);
+  });
+
+  it.each([
+    ['含棉量多少', '详情页没有明确含棉量，我可以核对成分标签后回复您。', true],
+    ['是包边还是锁边？', '资料没有明确标注，我可以核对商品缝边实拍。', true],
+    ['走线整齐吗？', '现有资料无法确认，我帮您核对细节图上的缝线。', true],
+    ['要不要干洗', '以衣服洗标为准，您可以查看上面的干洗符号。', true],
+    ['含棉量多少', '稍等，我核实一下。', false],
+    ['走线整齐吗？', '现有资料无法确认，我帮您核对发货时间。', false],
+    ['什么时候发货？', '目前资料不全，我会核对商品详情页。', false],
+  ])('资料不足时的通用说明：%s → %s', (question, answer, pass) => {
+    expect(assess(question, answer).pass).toBe(pass);
+  });
+
+  it.each([
     ['清洗后应该怎么晾晒这件衣服呢？', '洗后轻轻压出水分，整理裙型后在阴凉通风处悬挂晾干，尽量避免暴晒和用力拧干。', true],
     ['清洗后应该怎么晾晒这件衣服呢？', '我先帮您核实洗标', false],
     ['清洗后应该怎么晾晒这件衣服呢？', '支持冷水机洗', false],

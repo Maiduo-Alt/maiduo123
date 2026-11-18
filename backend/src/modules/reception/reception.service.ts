@@ -1310,7 +1310,15 @@ export class ReceptionService implements OnModuleInit {
       const latest = await this.loadSession(sessionId);
       if (!latest || latest.state !== session.state || latest.current_seq !== session.current_seq) throw new BizError(ERR.SESSION_STATE, '会话状态已改变，请重新确认后发送');
     }
+    const trainingProduct = session.products[0];
+    const productMaterialDetails = trainingProduct ? [
+      trainingProduct.title,
+      ...(trainingProduct.attributes || [])
+        .filter((attribute) => /材质|面料|成分|含棉/u.test(String(attribute.name || '')))
+        .map((attribute) => `${attribute.name}：${attribute.value || ''}`),
+    ].join('；') : undefined;
     const replyContext = {
+      productMaterialDetails,
       buyerContext: historyRows.filter((m) => m.sender === 'buyer').map((m) => m.content),
       question: currentQuestion?.question || '',
       keyPoints: currentQuestion?.keyPoints || [],
@@ -1339,6 +1347,7 @@ export class ReceptionService implements OnModuleInit {
       supportsMachineWash(text);
     const unsupportedFacts = 'status' in ruleAssessment && ruleAssessment.status === 'unsupported';
     const blockedAssessment = unsupportedFacts || (params.replyJudgmentVersion === 2 && (ruleAssessment.signal === 'perfunctory' || (ruleAssessment.intent === 'size-recommendation' && ruleAssessment.status === 'partial')));
+    const useGuidance = ruleAssessment.acceptedGuidance === true && !modelResult?.resolved;
     const modelResolved = !!modelResult && (modelResult.resolved || (params.replyJudgmentVersion !== 2 && machineWashResolved)) && !pendingVerification && !blockedAssessment;
     const hitPoints = blockedAssessment
       ? []
@@ -1368,7 +1377,7 @@ export class ReceptionService implements OnModuleInit {
       ? { pass: false, signal: 'closing' as const }
       : openerStage
         ? { pass: true, signal: 'opener' as const }
-        : blockedAssessment ? ruleAssessment
+        : blockedAssessment || useGuidance ? ruleAssessment
         : modelResult
         ? { pass: modelResolved, signal: modelResolved ? 'key-point' as const : 'hedge' as const }
         : ruleAssessment;
@@ -1460,7 +1469,7 @@ export class ReceptionService implements OnModuleInit {
       questionSeq: insertSeq,
       ...(unifiedJudgment ? { judgmentVersion: params.replyJudgmentVersion } : {}),
       ...(params.replyJudgmentVersion === 2 && !openerStage && !inAgentCloseWindow ? {
-        replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: [] } : modelResult && !blockedAssessment
+        replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: [] } : modelResult && !blockedAssessment && !useGuidance
           ? { source: modelResult.provider, intent: ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
           : { ...ruleAssessment, source: 'rule' },
       } : {}),
