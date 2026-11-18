@@ -1,7 +1,7 @@
 import { JudgeContext, JudgeResult, isHedge, isPendingVerification, isPerfunctory, judgeReply } from './reply-judge';
 import { conversationTopic } from './semantic-goals';
 
-export type ReplyIntent = 'dry-clean-required' | 'dry-clean-allowed' | 'exchange' | 'media-location' | 'media-available' | 'color-difference' | 'compound' | 'size-recommendation' | 'delivery-time' | 'logistics-location' | 'shipping-time' | 'general';
+export type ReplyIntent = 'dry-clean-required' | 'dry-clean-allowed' | 'exchange' | 'media-location' | 'media-available' | 'color-difference' | 'compound' | 'size-recommendation' | 'delivery-time' | 'logistics-location' | 'drying-method' | 'shipping-time' | 'general';
 export interface ReplyAssessment extends JudgeResult {
   intent?: ReplyIntent;
   status?: 'resolved' | 'partial' | 'pending' | 'unanswered' | 'unsupported';
@@ -15,6 +15,7 @@ export function replyIntent(question: string): ReplyIntent {
   if (/什么时候|多久|几天|多长时间/u.test(question) && /收到|送达|到货|送到|抵达|到达|多久到|几天到/u.test(question)) return 'delivery-time';
   if (/物流|快递/u.test(question) && /哪里|在哪|如何查看|怎么查看|怎么查|查询|查看/u.test(question)) return 'logistics-location';
   if (/什么时候|多久|几天|多长时间/u.test(question) && /发货|发出|出库/u.test(question) && !/现货/u.test(question)) return 'shipping-time';
+  if (/怎么|如何|怎样|能否|可以|能.{0,4}吗/u.test(question) && /晾晒|晾干|晒干|暴晒|阴干/u.test(question)) return 'drying-method';
   if (/干洗/u.test(question)) {
     if (/要不要|需不需要|需要|必须|用不用|要干洗|需干洗/u.test(question)) return 'dry-clean-required';
     if (/能|可以|可不可以|允许|适合|支持/u.test(question)) return 'dry-clean-allowed';
@@ -98,7 +99,20 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
     if (/物流|快递/u.test(ctx.question) && /哪里|在哪|如何查看|怎么查看|怎么查|查询|查看/u.test(ctx.question)) {
       const evidence = statements.filter((part) => /订单|详情页|物流页|快递单号|物流信息/u.test(part) &&
         /物流|快递|进度|查询|查看/u.test(part) && !/不能|无法|不支持|不提供/u.test(part));
+      if (!evidence.length) {
+        const paths = ctx.reply.split(/[。；;！？!?\n]/u);
+        evidence.push(...paths.filter((part) =>
+          /(?:订单(?:详情|页)?|物流页).{0,24}(?:点击|点开|选择|进入|打开).{0,8}(?:查看物流|物流详情|物流跟踪|查看快递)/u.test(part) &&
+          !/不能|无法|不支持|不提供|不知道|不确定|核实|是否|能不能|如果|假如/u.test(part)));
+      }
       return assessment('logistics-location', evidence, evidence.length ? [] : ['尚未说明物流查询路径'], pendingVerification);
+    }
+    if (intent === 'drying-method') {
+      const evidence = statements.filter((part) =>
+        (/悬挂晾干|挂起来晾|平铺晾(?:干|晒)|阴干|自然晾干|(?:阴凉|通风).{0,12}(?:晾|晒)/u.test(part) &&
+          !/(?:不要|不能|不宜|不建议|不可|避免).{0,10}(?:悬挂|挂起来|平铺|阴干|自然晾干)/u.test(part)) ||
+        /(?:避免|不要|不能|不宜|不建议)(?:阳光直射|暴晒)/u.test(part));
+      return assessment(intent, evidence, evidence.length ? [] : ['尚未说明晾晒方法'], pendingVerification);
     }
     if (/选(?:什么|多大|哪个)码/u.test(ctx.question) && !/注意|注意事项/u.test(ctx.question)) {
       const evidence = statements.filter((part) => (/(?:参考|建议|推荐|适合|穿|选|可以).{0,12}(?:[SMLX]{1,4}|\d{2,3})\s*码/iu.test(part) ||

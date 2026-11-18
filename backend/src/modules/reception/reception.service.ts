@@ -1325,7 +1325,8 @@ export class ReceptionService implements OnModuleInit {
       prevAgentText:
         [...historyRows]
           .reverse()
-          .find((m) => m.sender === 'agent' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq)
+          .find((m) => m.sender === 'agent' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq &&
+            (params.replyJudgmentVersion !== 2 || m.rule_result?.openerTiming !== true))
           ?.content || null,
     };
     const ruleAssessment: ReplyAssessment = currentQuestion?.automaticEvaluation

@@ -664,6 +664,8 @@ describe('在线模拟接待端到端链路', () => {
       ['发出后大概多久能收到呢？', '亲，发出后一般2到4天送达，偏远地区可能久一些。', true],
       ['发出后大概多久能收到呢？', '亲，付款后通常48小时内发货。', false],
       ['发出后在哪里查看物流进度呢？', '亲，在订单详情里选择查看物流，就可以看到物流进度。', true],
+      ['发出后在哪里查看物流进度呢？', '在我的订单打开这笔订单，点击查看物流，就能看到运单号和最新运输进度。', true],
+      ['清洗后应该怎么晾晒这件衣服呢？', '洗后轻轻压出水分，整理裙型后在阴凉通风处悬挂晾干，尽量避免暴晒和用力拧干。', true],
       ['请问在哪里可以查看物流进度呢？', '亲，商品发出后在订单详情选择查看物流。', true],
       ['梨形身材选哪个码', '亲，按您提供的身高体重可以先参考M码，建议对照尺码表。', true],
       ['关于“梨形身材选哪个码”，还有哪些需要注意的呢？', '亲，建议量一下腰围和臀围，对照尺码表。', true],
@@ -679,6 +681,13 @@ describe('在线模拟接待端到端链路', () => {
         ids.push(session.id);
         await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`,
           [session.id, question, JSON.stringify({ responseRoundStart: true })]);
+        if (question === '实物和详情页图片色差大吗') {
+          await sharedDb.query(
+            `INSERT INTO messages (session_id, sender, content, seq, rule_result, created_at)
+             VALUES ($1,'agent',$2,1,'{"openerTiming":true}'::jsonb, now() - interval '5 seconds')`,
+            [session.id, content],
+          );
+        }
         const result = await reception.sendMessage(1, attempt.id, session.id, content);
         expect({ question, pass: result.ruleResult.judge.pass }).toEqual({ question, pass });
         if (pass) {
