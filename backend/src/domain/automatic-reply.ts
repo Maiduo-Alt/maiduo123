@@ -30,6 +30,33 @@ export function replyIntent(question: string): ReplyIntent {
   return 'general';
 }
 
+/**
+ * 时长表达（BUG-L2-SEMANTIC-001）。
+ *
+ * 原实现只认阿拉伯数字（\d+），"两三天""三天左右""四五天"这类中文数字一律匹配不上，
+ * 于是语义完全正确的到货回答被判定为「尚未说明到货时效」→ unanswered →
+ * 判「未确认解决」并扣解决率分（第X轮尚未确认解决，17.5 分）。
+ *
+ * 这里把数字部分同时覆盖阿拉伯数字与中文数字，序号词（第一、第三）不会被误命中，
+ * 因为单位必须是小时/天/日/个工作日/周/星期。
+ */
+const DURATION_NUM = '(?:\\d+|[一二两三四五六七八九十半百]+)';
+const DURATION_UNIT = '(?:小时|天|日|个工作日|周|星期)';
+const DURATION_RE = new RegExp(
+  `${DURATION_NUM}\\s*(?:(?:到|至|[-~～—])\\s*${DURATION_NUM})?\\s*个?\\s*${DURATION_UNIT}`,
+  'u'
+);
+/** "就到了""才能到""到您手上"这类简写也属于到达表态，否则「两三天就到了」仍会被漏掉。 */
+const ARRIVAL_VERB = /收到|送达|到货|送到|抵达|到达|能到|可到|到(?:了|啦|哦|呢|的|手|您|你)/u;
+const SHORT_DURATION_RE = new RegExp(
+  `^(?:亲|一般|通常|大概|预计|约|大约|大概是|大约是|需要|可能|会|要|差不多|\\s)*` +
+    `${DURATION_NUM}\\s*(?:(?:到|至|[-~～—])\\s*${DURATION_NUM})?\\s*个?\\s*${DURATION_UNIT}` +
+    `(?:左右|内|吧|哦|呢|哈|呀|的|\\s)*$`,
+  'u'
+);
+const RELATIVE_DAY = /(?:今天|明天|后天|当日|次日|隔天)/u;
+const NEGATED_TIMING = /不一定|不保证|无法|不能|不确定|可能不/u;
+
 function assessment(intent: ReplyIntent, evidence: string[], missing: string[], pending: boolean): ReplyAssessment {
   const resolved = evidence.length > 0 && missing.length === 0;
   return {
@@ -117,11 +144,11 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
     // 到货时效与物流查看路径优先于“发出后”等时间背景词。
     if (/什么时候|多久|几天|多长时间/u.test(ctx.question) && /收到|送达|到货|送到|抵达|到达|多久到|几天到/u.test(ctx.question)) {
       const evidence = statements.filter((part) => {
-        const duration = /\d+\s*(?:(?:到|至|[-~～—])\s*\d+\s*)?(?:小时|天|日|个工作日)/u.test(part);
-        const arrival = /收到|送达|到货|送到|抵达|到达|能到|可到/u.test(part);
-        const shortDuration = /^(?:亲|一般|通常|大概|预计|约|大约|大概是|大约是|需要|可能|会|要|差不多|\s)*\d+\s*(?:(?:到|至|[-~～—])\s*\d+\s*)?(?:小时|天|日|个工作日)(?:左右|内|吧|哦|呢|哈|呀|的|\s)*$/u.test(part);
-        const relativeArrival = /(?:今天|明天|后天|当日|次日|隔天)/u.test(part) && arrival;
-        return ((duration && (arrival || shortDuration)) || relativeArrival) && !/不一定|不保证|无法|不能|不确定|可能不/u.test(part);
+        const duration = DURATION_RE.test(part);
+        const arrival = ARRIVAL_VERB.test(part);
+        const shortDuration = SHORT_DURATION_RE.test(part);
+        const relativeArrival = RELATIVE_DAY.test(part) && arrival;
+        return ((duration && (arrival || shortDuration)) || relativeArrival) && !NEGATED_TIMING.test(part);
       });
       const shippingOnly = /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(ctx.reply) && !evidence.length;
       const result = assessment('delivery-time', evidence, evidence.length ? [] : ['尚未说明到货时效'], pendingVerification);

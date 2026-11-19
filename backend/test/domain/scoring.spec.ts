@@ -245,3 +245,49 @@ describe('评分引擎（方案 4.3）', () => {
     expect(withTransfer.metrics.solvedCount).toBe(1);
   });
 });
+
+describe('分值单一数据源：子项满分随 weights 缩放', () => {
+  it('默认权重下响应维度正好 40 分（15 + 15 + 10）', () => {
+    const result = scoreSession({
+      questions,
+      messages: buildMessages(),
+      emotionFinal: 10,
+      hasEmotionScenario: false,
+      params: { ...DEFAULT_PARAMS },
+    });
+    expect(result.responseScore).toBe(40);
+  });
+
+  it('把 response 权重调到 50 后，满分答复仍能拿满 50（不再被 15+15+10 卡在 40）', () => {
+    const result = scoreSession({
+      questions,
+      messages: buildMessages(),
+      emotionFinal: 10,
+      hasEmotionScenario: false,
+      params: { ...DEFAULT_PARAMS, weights: { response: 50, solving: 30, wording: 10, emotion: 10 } },
+    });
+    expect(result.responseScore).toBe(50);
+  });
+
+  it('把 wording 权重调到 20 后，话术维度满分为 20', () => {
+    const result = scoreSession({
+      questions,
+      messages: buildMessages(),
+      emotionFinal: 10,
+      hasEmotionScenario: false,
+      params: { ...DEFAULT_PARAMS, weights: { response: 40, solving: 30, wording: 20, emotion: 10 } },
+    });
+    expect(result.wordingScore).toBe(20);
+  });
+
+  it('权重四项之和仍为 100 时，总分上限等于 100', () => {
+    const result = scoreSession({
+      questions,
+      messages: buildMessages(),
+      emotionFinal: 10,
+      hasEmotionScenario: false,
+      params: { ...DEFAULT_PARAMS, weights: { response: 50, solving: 30, wording: 10, emotion: 10 } },
+    });
+    expect(result.total).toBeLessThanOrEqual(100);
+  });
+});

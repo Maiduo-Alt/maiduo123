@@ -10,6 +10,17 @@ import { computeResponseRounds } from './response-rounds';
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
+/**
+ * 子项满分 = 维度权重 × 子项占比（占比基数为方案默认值）。
+ *
+ * 分值的唯一数据源是 `DEFAULT_PARAMS.weights`（types.ts）。子项原本在这里再硬编码一遍
+ * 15/15/10、3/3/5/4，等于维护了第二套分值：管理员把 response 从 40 调到 50 时，
+ * 子项仍然是 15/15/10（上限只有 40），维度永远拿不满，分数与权重脱钩。
+ * 改成按占比缩放后，默认权重下数值与原先完全一致，调整权重时也不会失真。
+ */
+const scaleSubScore = (dimensionFull: number, subScore: number, baseFull: number): number =>
+  (dimensionFull * subScore) / baseFull;
+
 function containsAny(text: string, words: string[]): boolean {
   if (!text) return false;
   return words.some((w) => w && text.includes(w));
@@ -38,34 +49,40 @@ function scoreResponse(
   const avgResponseSec = rounds.avgResponseSec;
   const timeoutCount = rounds.timeoutCount;
 
-  // 首次响应 15 分：≤ 上限满分，每超 10 秒扣 2 分
-  let firstPart = 15;
+  // 子项满分随 weights.response 缩放（默认 40 → 15/15/10）
+  const responseFull = params.weights.response;
+  const firstFull = scaleSubScore(responseFull, 15, 40);
+  const avgFull = scaleSubScore(responseFull, 15, 40);
+  const rateFull = scaleSubScore(responseFull, 10, 40);
+
+  // 首次响应：≤ 上限满分，每超 10 秒扣 2 分
+  let firstPart = firstFull;
   if (firstResponseSec !== null) {
     const over = Math.max(0, firstResponseSec - params.firstResponseLimitSec);
-    firstPart = Math.max(0, 15 - 2 * Math.ceil(over / 10));
-    if (over > 0) deductions.push({ dimension: 'response', reason: `首次响应 ${Math.round(firstResponseSec)} 秒，超出上限 ${params.firstResponseLimitSec} 秒`, points: 15 - firstPart });
+    firstPart = Math.max(0, firstFull - 2 * Math.ceil(over / 10));
+    if (over > 0) deductions.push({ dimension: 'response', reason: `首次响应 ${Math.round(firstResponseSec)} 秒，超出上限 ${params.firstResponseLimitSec} 秒`, points: round1(firstFull - firstPart) });
   } else {
-    deductions.push({ dimension: 'response', reason: '本次接待无客服回复记录', points: 15 });
+    deductions.push({ dimension: 'response', reason: '本次接待无客服回复记录', points: round1(firstFull) });
     firstPart = 0;
   }
 
-  // 平均响应 15 分：每超 15 秒扣 2 分
-  let avgPart = 15;
+  // 平均响应：每超 15 秒扣 2 分
+  let avgPart = avgFull;
   if (avgResponseSec !== null) {
     const over = Math.max(0, avgResponseSec - params.avgResponseLimitSec);
-    avgPart = Math.max(0, 15 - 2 * Math.ceil(over / 15));
-    if (over > 0) deductions.push({ dimension: 'response', reason: `平均响应 ${Math.round(avgResponseSec)} 秒，超出上限 ${params.avgResponseLimitSec} 秒`, points: 15 - avgPart });
+    avgPart = Math.max(0, avgFull - 2 * Math.ceil(over / 15));
+    if (over > 0) deductions.push({ dimension: 'response', reason: `平均响应 ${Math.round(avgResponseSec)} 秒，超出上限 ${params.avgResponseLimitSec} 秒`, points: round1(avgFull - avgPart) });
   } else {
     avgPart = 0;
   }
 
-  // 3 分钟回复率 10 分：低于下限每 5 个百分点扣 2 分
+  // 3 分钟回复率：低于下限每 5 个百分点扣 2 分
   const replyRatePct = rounds.replyRatePct;
-  let ratePart = 10;
+  let ratePart = rateFull;
   if (replyRatePct < params.replyRateLimitPct) {
     const gap = params.replyRateLimitPct - replyRatePct;
-    ratePart = Math.max(0, 10 - 2 * Math.ceil(gap / 5));
-    deductions.push({ dimension: 'response', reason: `3 分钟回复率 ${round1(replyRatePct)}%，低于下限 ${params.replyRateLimitPct}%`, points: 10 - ratePart });
+    ratePart = Math.max(0, rateFull - 2 * Math.ceil(gap / 5));
+    deductions.push({ dimension: 'response', reason: `3 分钟回复率 ${round1(replyRatePct)}%，低于下限 ${params.replyRateLimitPct}%`, points: round1(rateFull - ratePart) });
   }
 
   // 未回复的轮次按官方口径记 600 秒，单独说明一句，避免客服看不懂平均响应为什么被拉高
@@ -190,22 +207,28 @@ function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: n
 function scoreWording(messages: ScoreMessage[], params: SystemParams): { score: number; deductions: Deduction[] } {
   const deductions: Deduction[] = [];
   const agentMessages = messages.filter((m) => m.sender === 'agent');
+  // 子项满分随 weights.wording 缩放（默认 15 → 3/3/5/4）
+  const wordingFull = params.weights.wording;
+  const greetingFull = scaleSubScore(wordingFull, 3, 15);
+  const closingFull = scaleSubScore(wordingFull, 3, 15);
+  const forbiddenFull = scaleSubScore(wordingFull, 5, 15);
+  const repeatFull = scaleSubScore(wordingFull, 4, 15);
   if (!agentMessages.length) {
-    return { score: 0, deductions: [{ dimension: 'wording', reason: '无客服回复，话术规范不得分', points: 15 }] };
+    return { score: 0, deductions: [{ dimension: 'wording', reason: '无客服回复，话术规范不得分', points: wordingFull }] };
   }
 
   let score = 0;
   const first = agentMessages[0].content || '';
-  if (containsAny(first, params.greetingWords)) score += 3;
-  else deductions.push({ dimension: 'wording', reason: '开场缺少问候语', points: 3 });
+  if (containsAny(first, params.greetingWords)) score += greetingFull;
+  else deductions.push({ dimension: 'wording', reason: '开场缺少问候语', points: greetingFull });
 
   const last = agentMessages[agentMessages.length - 1].content || '';
-  if (containsAny(last, params.closingWords)) score += 3;
-  else deductions.push({ dimension: 'wording', reason: '结束缺少收尾用语', points: 3 });
+  if (containsAny(last, params.closingWords)) score += closingFull;
+  else deductions.push({ dimension: 'wording', reason: '结束缺少收尾用语', points: closingFull });
 
   const banned = agentMessages.find((m) => containsAny(m.content || '', params.forbiddenWords));
-  if (banned) deductions.push({ dimension: 'wording', reason: `出现禁用词：${banned.content.slice(0, 20)}`, points: 5 });
-  else score += 5;
+  if (banned) deductions.push({ dimension: 'wording', reason: `出现禁用词：${banned.content.slice(0, 20)}`, points: forbiddenFull });
+  else score += forbiddenFull;
 
   let repeated = false;
   let streak = 1;
@@ -217,8 +240,8 @@ function scoreWording(messages: ScoreMessage[], params: SystemParams): { score: 
       streak = 1;
     }
   }
-  if (repeated) deductions.push({ dimension: 'wording', reason: '存在同一话术连续发送 3 次以上', points: 4 });
-  else score += 4;
+  if (repeated) deductions.push({ dimension: 'wording', reason: '存在同一话术连续发送 3 次以上', points: repeatFull });
+  else score += repeatFull;
 
   // 敷衍回复扣分（客户 2026-10-11 口径：敷衍只扣分、不追问，直接推进）。每条扣 2 分，扣到 0 为止。
   const perfunctoryCount = agentMessages.filter((m) => m.judgeSignal === 'perfunctory').length;
