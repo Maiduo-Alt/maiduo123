@@ -71,6 +71,8 @@ const NEGATED_TIMING = /不一定|不保证|无法|不能|不确定|可能不/u;
  * 与 delivery-time 的两段式口径（时长 + 到达动词）保持一致。
  */
 const SHIP_ACTION = '(?:发货|发出|出库)';
+/** 发货动作的正则对象，供上限式时长的「同句绑定」校验复用。 */
+const SHIP_ACTION_RE = new RegExp(SHIP_ACTION, 'u');
 const SHIP_GAP = '[^。；;！!？?\\n]{0,10}?';
 const SHIP_DURATION_RE = new RegExp(
   `\\d+\\s*(?:小时|天|日|个工作日)\\s*(?:内|左右|之内|以内)?${SHIP_GAP}${SHIP_ACTION}`,
@@ -80,7 +82,33 @@ const SHIP_DURATION_GLOBAL_RE = new RegExp(
   `(\\d+)\\s*(小时|天|日|个工作日)\\s*(?:内|左右|之内|以内)?${SHIP_GAP}${SHIP_ACTION}`,
   'gu'
 );
-const SHIP_NEGATED_RE = /不确定|不保证|不承诺|不一定|不能|无法|可能|或许|不发货|不发出|不出库/u;
+const SHIP_NEGATED_RE = /不确定|不保证|不承诺|不一定|不能|无法|可能|或许|不发货|不发出|不出库|不敢|没法|没保证|难以保证|说不好|不好说/u;
+
+/**
+ * BUG-L3-INFERRED-TIMING（L3 语义判定测试报告 2026-11-20 23:24 线上复现）。
+ *
+ * 线上误判原句：「一般当天就安排发出，最晚不超过48小时，您放心～」
+ * 老实现只认「阿拉伯数字+单位+动作」，两类语义正确的推断表达都拿不到证据：
+ *   1) 中文相对日 + 发货动作：「当天就安排发出」「今天给您发货」「当日出库」
+ *      ——「当天」是相对日而非 \d+，SHIP_DURATION_RE 无从匹配；
+ *   2) 明确上限式时长：「最晚不超过48小时」「最多3天」「至多2天」
+ *      ——数字后没有紧跟发货动作词（句子到此结束），同样匹配不上。
+ *
+ * 因此新增两条证据通道：
+ *   - 相对日类：相对日 + 发货动作（动作是核心信号，相对日替代数字时长）；
+ *   - 上限式类：必须有明确的上限引导词（最晚/最多/不超过…）+ 数字时长，
+ *     且句子不得指向到达（收到/送达…）——否则那是到货时效，不能冒充发货时效。
+ * 两类和老正则一样都经 SHIP_EXCLUDE_RE 排除否定 / 假设 / 疑问，守住准确率底线：
+ *   - 「当天不一定能发出」「最晚不超过48小时，但不敢保证」→ 否定词排除；
+ *   - 「最晚不超过48小时就能收到」→ 含到达动词，不算发货证据；
+ *   - 裸「48小时内」（无引导词）仍须靠发货动作作证，跨句不误吞。
+ */
+const SHIP_RELATIVE_DAY = '(?:今天|今日|当天|当日|明天|次日|隔天|后天|今晚)';
+const SHIP_RELATIVE_DAY_RE = new RegExp(`${SHIP_RELATIVE_DAY}${SHIP_GAP}${SHIP_ACTION}`, 'u');
+const SHIP_DURATION_CAP_RE = new RegExp(
+  `(?:最晚|最多|至多|不超过|不晚于|最迟)\\s*\\d+\\s*(?:小时|天|日|个工作日)\\s*(?:内|左右|之内|以内)?`,
+  'u'
+);
 /**
  * 不作为发货时效证据的句子：否定 / 不确定 / 假设 / 复述疑问。
  * 中文逗号是句内停顿，发货时效必须按「句」判断（见 shipSentences），
@@ -249,10 +277,24 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
       // 中文逗号是句内停顿，按逗号切分会把「48小时内，我们会尽快安排发货」拆成两段不完整的话，
       // 两段都匹配不上时长+动作。发货时效按「句」判断（句号/分号/问号/感叹号/换行才断句）。
       const shipSentences = ctx.reply.split(/[。；;！!？?\n]/u).map((s) => s.trim()).filter(Boolean);
-      const evidence = shipSentences.filter((s) => SHIP_DURATION_RE.test(s) && !SHIP_EXCLUDE_RE.test(s));
+      // 发货时效证据 = 老口径（数字+单位+动作） ∪ 中文相对日+动作 ∪ 上限式时长。
+      // 三类都必须先过 SHIP_EXCLUDE_RE（否定 / 假设 / 疑问 / 不确定）这道公共闸门；
+      // 上限式额外要求句子不指向到达动词，避免把到货时效当成发货时效。
+      const evidence = shipSentences.filter((s) => {
+        if (SHIP_EXCLUDE_RE.test(s)) return false;
+        if (SHIP_DURATION_RE.test(s)) return true;
+        if (SHIP_RELATIVE_DAY_RE.test(s)) return true;
+        // 上限式时长（如「最晚不超过48小时」）本身不含发货动作，
+        // 必须与发货动作同句出现才算证据，避免「最晚不超过48小时。我们会安排发货。」
+        // 这种跨句拼接被误当成一条完整时效；同时排除指向到达的到货时效。
+        const hasShipAction = SHIP_ACTION_RE.test(s);
+        return SHIP_DURATION_CAP_RE.test(s) && hasShipAction && !ARRIVAL_VERB.test(s);
+      });
       const durations = [...ctx.reply.matchAll(SHIP_DURATION_GLOBAL_RE)]
         .map((match) => Number(match[1]) * (match[2] === '小时' ? 1 : 24));
-      const contradictory = new Set(durations).size > 1 || /(?:不能|无法|不会|不(?:能)?保证).{0,12}(?:发货|发出|出库)/u.test(ctx.reply);
+      // 中文「当天/今天」与数字时长（48小时）视为同一时效，不算矛盾；
+      // 只有多个互不相同的数字时长才算矛盾。
+      const contradictory = new Set(durations).size > 1 || /(?:不能|无法|不会|不(?:能)?保证|不敢|没法).{0,12}(?:发货|发出|出库)/u.test(ctx.reply);
       return assessment(intent, contradictory ? [] : evidence, evidence.length && !contradictory ? [] : ['尚未明确发货时效'], pendingVerification);
     }
     if (intent === 'dry-clean-required' || intent === 'dry-clean-allowed') {
