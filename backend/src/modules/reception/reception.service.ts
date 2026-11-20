@@ -28,7 +28,7 @@ import { allocateStyles, normalizeRatios } from '../../domain/style-ratio';
 import { shouldAbortAsDisconnected } from '../../domain/disconnect';
 import { computeResponseRounds, weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
-import { isPendingVerification, judgeReply, supportsMachineWash } from '../../domain/reply-judge';
+import { isPendingVerification, supportsMachineWash } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
 import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef, inferQuantityFromTexts } from '../../domain/order';
 import {
@@ -1337,9 +1337,10 @@ export class ReceptionService implements OnModuleInit {
             (params.replyJudgmentVersion !== 2 || m.rule_result?.openerTiming !== true))
           ?.content || null,
     };
-    const ruleAssessment: ReplyAssessment = currentQuestion?.automaticEvaluation
-      ? assessAutomaticReply(replyContext, params.replyJudgmentVersion || 0)
-      : judgeReply(replyContext);
+    // 统一判定入口：所有题目一律走最新引擎 assessAutomaticReply。
+    // 旧引擎 judgeReply 不再作为独立判定支路存在——它仅作为新引擎内部的基础信号函数保留。
+    // automaticEvaluation 标记保留用于后续扣分/统计口径（reply-validity / scoring），但不再决定走哪套引擎。
+    const ruleAssessment: ReplyAssessment = assessAutomaticReply(replyContext, params.replyJudgmentVersion || 0);
     const pendingVerification = params.replyJudgmentVersion === 2 && 'status' in ruleAssessment
       ? ruleAssessment.status === 'pending' : isPendingVerification(text);
     const machineWashResolved = !!currentQuestion &&
