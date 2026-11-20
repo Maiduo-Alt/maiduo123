@@ -141,8 +141,11 @@ function scoreSolving(input: SessionScoreInput): { score: number; solvedCount: n
     }
     if (q.automaticEvaluation) {
       const partiallyAnswered = messages.some((message) => message.sender === 'agent' && message.questionSeq === q.seq && message.replyStatus === 'partial');
+      // 放宽口径（B-04）：signal='relaxed' 与 stance/key-point 一样代表本轮已解决，
+      // 必须计入 solved，否则「判定通过」与「计分扣分」不一致（放宽链在计分端断裂）。
+      const RESOLVED_SIGNALS: string[] = ['stance', 'key-point', 'relaxed'];
       const resolved = messages.some((message) => message.sender === 'agent' && message.questionSeq === q.seq &&
-        (message.judgeSignal === 'stance' || message.judgeSignal === 'key-point'));
+        RESOLVED_SIGNALS.includes(message.judgeSignal ?? ''));
       const factor = resolved ? 1 : pendingResponse || partiallyAnswered ? 0.5 : 0;
       score += perQuestion * factor;
       if (resolved) solvedCount += 1;

@@ -120,9 +120,34 @@ export function isPerfunctory(ctx: JudgeContext): boolean {
     if (buyer && stripped === buyer) return true;
   }
   // 与上一条客服回复完全重复（复制粘贴刷屏）
+  // 放宽口径（B-03）：同一道题玩家追问时，客服重复强调同一句「实质答复」是合理且常见的
+  // （如连续强调"48小时内发货"），不应算敷衍。纯语气词 / 无实质内容的复读仍照常拦截。
   const prev = String(ctx.prevAgentText || '').replace(/[\s~～!！?？。，,、.…—\-_=+*#@$%^&()（）\[\]【】"'’“”：:;；]/g, '');
-  if (prev && stripped === prev) return true;
+  if (prev && stripped === prev && !hasSubstantiveAnswer(reply, ctx.question)) return true;
   return false;
+}
+
+/**
+ * 判断一条回复是否包含「实质时效答复」（B-03 复读例外，仅此一档）。
+ *
+ * 只放宽一类场景：同一道题买家追问时，客服把同一句「数字时长 + 发货/到货动作」
+ * 再强调一遍（如"48小时内发货"）。这是合理且常见的，不应算复制粘贴敷衍。
+ *
+ * 不放宽（保持 R-10 / reply-judge.spec 既有底线）：
+ *  - 表态 / 服务动作类短答复（"可以机洗，放心"重复仍是敷衍）；
+ *  - 方向错：问到货却答发货（"48小时发货"回答"发出后多久能收到"）；
+ *  - 否定承诺 / 等待核对 / 纯语气词，由其他规则拦截。
+ */
+export function hasSubstantiveAnswer(reply: string, question?: string): boolean {
+  const text = String(reply || '');
+  const timingRe = /\d+\s*(?:小时|天|日|个工作日)[^。；;！!？?\n]{0,10}?(?:发货|发出|出库|送达|到货|收到)/u;
+  if (!timingRe.test(text)) return false;
+  // 方向一致性：问题问「到货」，回复却是「发货」→ 方向错，不算有效实质答复。
+  const q = String(question || '');
+  const qArrive = /多久.*(?:收到|到货|到达)|几天.*(?:到|收到)|什么时候.*(?:到|收到)|到货|收到/u.test(q);
+  const rShipOnly = /发货|发出|出库/u.test(text) && !/到货|到达|收到|送达/u.test(text);
+  if (qArrive && rShipOnly) return false;
+  return true;
 }
 
 /** 打太极判定：含搪塞话术即视为正常服务性回应（客户口径：放行）。 */

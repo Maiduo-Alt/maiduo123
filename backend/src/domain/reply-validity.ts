@@ -79,7 +79,7 @@ export function judgeValidReplies(
 
     // 该轮是否命中过要点（整轮取最大值：任一条命中即算解决）
     const hitAny = roundIndexes.some(({ m }) =>
-      m.pendingVerification || (automatic && (m.judgeSignal === 'stance' || m.judgeSignal === 'key-point' || m.replyStatus === 'partial')) ||
+      m.pendingVerification || (automatic && (m.judgeSignal === 'stance' || m.judgeSignal === 'key-point' || m.judgeSignal === 'relaxed' || m.replyStatus === 'partial')) ||
       (m.hitPoints || []).length > 0 || (m.goalMatches || []).some((match) => match.pointIds.length > 0)
     );
     const asked = roundIndexes.length > 0 || messages.some((m) =>

@@ -67,6 +67,35 @@ const SERVICE_REPLY_RE = new RegExp(
 /** 否定式承诺：明确否认能给出结论，即便提到时长/动作也不放行。 */
 const NEGATED_PROMISE_RE = /不保证|不承诺|不一定|不确定|不能保证|无法保证|不好说|说不好|可能不|发不了|不发出|不发货|没发货|不能发|无法发|没法发|不能出库/u;
 
+/** 实质时效证据（B-03 追问兜底）：明确的「数字时长 + 发货/到达动作」。
+ *  允许时长与动作之间夹少量非句末字符（"48小时内就能发货"），但不含否定承诺
+ *  （否定已在调用前拦截）。用于带追问前缀（"对了…一般什么时候发出呢"）时放行。 */
+const SUBSTANTIVE_TIMING_RE = new RegExp(
+  '\\d+\\s*(?:小时|天|日|个工作日)\\s*(?:内|左右|之内|以内)?[^。；;！!？?\\n]{0,6}?(?:发货|发出|出库|送达|到货|收到|到达)',
+  'u',
+);
+
+/** 时效问题的方向：ship=问发货，arrive=问到货；两者都出现或都不出现返回 null（方向不明，交给常规判定）。 */
+function timingDirection(text: string): 'ship' | 'arrive' | null {
+  const t = String(text || '');
+  const ship = /发货|发出|出库|寄出|几天发|什么时候发|多久发|多长时间发/u.test(t);
+  const arrive = /到货|到达|收到|送达|签收|几天到|什么时候到|多久到|多长时间到|送到/u.test(t);
+  if (ship && !arrive) return 'ship';
+  if (arrive && !ship) return 'arrive';
+  return null;
+}
+
+/** 是否给出互相矛盾的多个时效（与 strict 判定同口径：时长归一为小时后去重）。 */
+function hasContradictoryTiming(text: string): boolean {
+  const durations = [...text.matchAll(/(\d+)\s*(小时|天|日|个工作日)/gu)]
+    .map((m) => Number(m[1]) * (m[2] === '小时' ? 1 : 24));
+  return new Set(durations).size > 1;
+}
+
+/** 问题必须是「时效问句」（含多久/几天/什么时候等疑问词），避免仅因含"发出/发货"字样
+ *  就把物流查询等非时效问题（如"发出后在哪里查看物流进度"）误放行。 */
+const TIMING_QUESTION_RE = /多久|几天|多长时间|什么时候|何时|几时/u;
+
 /**
  * 有专属严格答案格式的意图不放宽。
  *
@@ -206,9 +235,6 @@ export function evaluateRelaxation(question: string, reply: string, intent?: str
   const text = String(reply || '').trim();
   if (!text) return { relaxed: false };
 
-  // 0) 有专属严格答案格式的意图不放宽（晾晒问机洗、换货问尺码表、物流问发货时间等）
-  if (intent && intent !== 'general' && STRICT_INTENTS.has(intent)) return { relaxed: false };
-
   // 1) 敷衍：永不放宽
   if (PERFUNCTORY_RE.test(text)) return { relaxed: false };
 
@@ -218,10 +244,27 @@ export function evaluateRelaxation(question: string, reply: string, intent?: str
   // 3) 否定式承诺：明确说不能保证/不确定，即便提到时长也不放行
   if (NEGATED_PROMISE_RE.test(text)) return { relaxed: false };
 
+  // 3.5) 实质时效证据兜底（B-03 追问）：问题与回复时效方向一致 + 回复给出明确数字时长 → 放行。
+  //      放在三类硬拦截之后、严格白名单之前，使 shipping-time / delivery-time 的追问写法也能放行；
+  //      方向不一致（问到货答发货）不放行，保持 B-01「方向错」语义错误拦截。
+  const qDir = timingDirection(question);
+  const rDir = timingDirection(text);
+  if (qDir && rDir === qDir && TIMING_QUESTION_RE.test(question) &&
+      SUBSTANTIVE_TIMING_RE.test(text) && !hasContradictoryTiming(text)) {
+    return {
+      relaxed: true,
+      topic: qDir === 'ship' ? 'shipping' : 'delivery',
+      reason: '回复给出了明确的发货/到达时效',
+    };
+  }
+
+  // 4) 有专属严格答案格式的意图不放宽（晾晒问机洗、换货问尺码表、物流问发货时间等）
+  if (intent && intent !== 'general' && STRICT_INTENTS.has(intent)) return { relaxed: false };
+
   const { similar, topic } = isSimilarTopic(question, text);
   if (!similar) return { relaxed: false, topic };
 
-  // 4) 与问题类似：放行。若回复里明确给出了服务性动作，依据更充分。
+  // 5) 与问题类似：放行。若回复里明确给出了服务性动作，依据更充分。
   const hasServiceAction = SERVICE_REPLY_RE.test(text);
   return {
     relaxed: true,
