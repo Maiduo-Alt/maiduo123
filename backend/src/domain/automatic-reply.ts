@@ -1,4 +1,5 @@
 import { JudgeContext, JudgeResult, isHedge, isPendingVerification, isPerfunctory, judgeReply } from './reply-judge';
+import { evaluateRelaxation } from './reply-relaxation';
 import { conversationTopic } from './semantic-goals';
 
 export type ReplyIntent = 'dry-clean-required' | 'dry-clean-allowed' | 'exchange' | 'media-location' | 'media-available' | 'color-difference' | 'compound' | 'size-recommendation' | 'delivery-time' | 'logistics-location' | 'drying-method' | 'shipping-time' | 'general';
@@ -57,6 +58,36 @@ const SHORT_DURATION_RE = new RegExp(
 const RELATIVE_DAY = /(?:今天|明天|后天|当日|次日|隔天)/u;
 const NEGATED_TIMING = /不一定|不保证|无法|不能|不确定|可能不/u;
 
+/**
+ * 发货时效（BUG-L2-SEMANTIC-002）。
+ *
+ * 原实现要求「时长 + 动作」首尾紧邻：`\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)`。
+ * 中间一旦插入主语或副词（"就给您""会""给您"），整条证据链断裂，
+ * "现货拍下48小时内就给您发出哦"这类完全正确的答复被判「尚未明确发货时效」→ unanswered，
+ * 连带扣「第 X 轮尚未确认解决」的解决率分。
+ *
+ * 这里允许时长与动作之间夹 0~10 个字符，但用 [^。；;！!？?\n] 阻止跨句误吞，
+ * 并用非贪婪 {0,10}? 优先匹配最近的动作词，避免把后一句的"出库"抢过来。
+ * 与 delivery-time 的两段式口径（时长 + 到达动词）保持一致。
+ */
+const SHIP_ACTION = '(?:发货|发出|出库)';
+const SHIP_GAP = '[^。；;！!？?\\n]{0,10}?';
+const SHIP_DURATION_RE = new RegExp(
+  `\\d+\\s*(?:小时|天|日|个工作日)\\s*(?:内|左右|之内|以内)?${SHIP_GAP}${SHIP_ACTION}`,
+  'u'
+);
+const SHIP_DURATION_GLOBAL_RE = new RegExp(
+  `(\\d+)\\s*(小时|天|日|个工作日)\\s*(?:内|左右|之内|以内)?${SHIP_GAP}${SHIP_ACTION}`,
+  'gu'
+);
+const SHIP_NEGATED_RE = /不确定|不保证|不承诺|不一定|不能|无法|可能|或许|不发货|不发出|不出库/u;
+/**
+ * 不作为发货时效证据的句子：否定 / 不确定 / 假设 / 复述疑问。
+ * 中文逗号是句内停顿，发货时效必须按「句」判断（见 shipSentences），
+ * 否则「48小时内，我们会尽快安排发货」会被逗号切成两段不完整的话而判失败。
+ */
+const SHIP_EXCLUDE_RE = new RegExp(`${SHIP_NEGATED_RE.source}|如果|假如|倘若|是否|[？?]`, 'u');
+
 function assessment(intent: ReplyIntent, evidence: string[], missing: string[], pending: boolean): ReplyAssessment {
   const resolved = evidence.length > 0 && missing.length === 0;
   return {
@@ -70,6 +101,37 @@ function assessment(intent: ReplyIntent, evidence: string[], missing: string[], 
 
 /** 新版特定意图以对应答复片段为证据；旧版本沿用原判断。 */
 export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string[]; productMaterialDetails?: string }, version: 0 | 1 | 2): ReplyAssessment {
+  const strict = assessAutomaticReplyStrict(ctx, version);
+  // 放宽口径（2026-11-20）：严格判定没匹配上时，若回复不是敷衍 / 等待 / 核对，
+  // 且内容与问题同话题，放行。语义错误类（unsupported）与部分命中（partial）不放宽。
+  return version === 2 ? relaxIfSimilar(ctx, strict) : strict;
+}
+
+/**
+ * 放宽兜底（2026-11-20 业务口径）。
+ *
+ * 仅作用于 status='unanswered'（完全没匹配上证据）这一档：
+ *  - 'partial'（部分命中，如只给了部分要点）不放宽，避免掩盖要点缺失；
+ *  - 'pending'（仍在核实）不放宽 —— 核对类由业务明确要求拦截；
+ *  - 'unsupported'（方向错 / 自相矛盾 / 数据缺失）不放宽 —— 那是答案错了，不是没识别出来。
+ */
+function relaxIfSimilar(ctx: JudgeContext, result: ReplyAssessment): ReplyAssessment {
+  if (result.pass) return result;
+  if (result.status !== 'unanswered') return result;
+  const relaxation = evaluateRelaxation(ctx.question, ctx.reply, result.intent);
+  if (!relaxation.relaxed) return result;
+  return {
+    ...result,
+    pass: true,
+    signal: 'relaxed',
+    status: 'resolved',
+    reason: relaxation.reason,
+    evidence: [ctx.reply],
+    missing: [],
+  };
+}
+
+function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[]; productMaterialDetails?: string }, version: 0 | 1 | 2): ReplyAssessment {
   const result = judgeReply(ctx);
   const pendingVerification = isPendingVerification(ctx.reply);
   if (version === 2) {
@@ -150,7 +212,7 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
         const relativeArrival = RELATIVE_DAY.test(part) && arrival;
         return ((duration && (arrival || shortDuration)) || relativeArrival) && !NEGATED_TIMING.test(part);
       });
-      const shippingOnly = /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(ctx.reply) && !evidence.length;
+      const shippingOnly = SHIP_DURATION_RE.test(ctx.reply) && !evidence.length;
       const result = assessment('delivery-time', evidence, evidence.length ? [] : ['尚未说明到货时效'], pendingVerification);
       return shippingOnly && !pendingVerification ? { ...result, status: 'unsupported', reason: '发货时间不能替代到货时间' } : result;
     }
@@ -184,9 +246,11 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
     }
     // 明确发货时效应独立于库存主题判断；保留不确定和矛盾的限制。
     if (/什么时候|多久|几天|多长时间/u.test(ctx.question) && /发货|发出|出库/u.test(ctx.question) && !/现货/u.test(ctx.question)) {
-      const evidence = statements.filter((s) => /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/u.test(s) &&
-        !/不确定|不保证|不承诺|不一定|不能|无法|可能|或许|不发货|不发出|不出库/u.test(s));
-      const durations = [...ctx.reply.matchAll(/(\d+)\s*(小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)/gu)]
+      // 中文逗号是句内停顿，按逗号切分会把「48小时内，我们会尽快安排发货」拆成两段不完整的话，
+      // 两段都匹配不上时长+动作。发货时效按「句」判断（句号/分号/问号/感叹号/换行才断句）。
+      const shipSentences = ctx.reply.split(/[。；;！!？?\n]/u).map((s) => s.trim()).filter(Boolean);
+      const evidence = shipSentences.filter((s) => SHIP_DURATION_RE.test(s) && !SHIP_EXCLUDE_RE.test(s));
+      const durations = [...ctx.reply.matchAll(SHIP_DURATION_GLOBAL_RE)]
         .map((match) => Number(match[1]) * (match[2] === '小时' ? 1 : 24));
       const contradictory = new Set(durations).size > 1 || /(?:不能|无法|不会|不(?:能)?保证).{0,12}(?:发货|发出|出库)/u.test(ctx.reply);
       return assessment(intent, contradictory ? [] : evidence, evidence.length && !contradictory ? [] : ['尚未明确发货时效'], pendingVerification);
@@ -242,7 +306,7 @@ export function assessAutomaticReply(ctx: JudgeContext & { buyerContext?: string
     if (intent === 'color-difference') {
       // “细微”等与“轻微”同样表示程度；价格、尺码等其他差异不能冒充色差。
       const colorStatements = statements.filter((part) => !/价格|运费|尺码|发货/u.test(part) || /颜色|色差|光线|屏幕/u.test(part));
-      const small = /(?:轻微|细微|略微|些微|微小)(?:的)?(?:色差|差异|差别)|(?:色差|颜色差异)(?:是|很|较|比较)?(?:轻微|细微|些微|微小|不大|很小|较小)|没有(?:明显)?色差|基本一样|差不多|不明显|有(?:一点|一点点|点区别)|多少.{0,5}一点/u;
+      const small = /(?:轻微|细微|略微|些微|微小)(?:的)?(?:色差|差异|差别)|(?:色差|颜色差异)(?:是|很|较|比较)?(?:轻微|细微|些微|微小|不大|很小|较小)|没有(?:明显)?色差|基本一样|基本没差别|差别不大|差不多|不明显|有(?:一点|一点点|点区别)|多少.{0,5}一点/u;
       const large = /(?:色差|颜色差异|颜色差别|(?:实物|颜色).{0,12}(?:差异|差别)).{0,5}(?:非常大|特别大|很大|较大|严重|很明显)|(?:非常大|特别大|很大|严重)(?:的)?色差/u;
       const hasSmall = colorStatements.some((part) => small.test(part) && !/(?:没有|并无|并非|不是|不算|不存在)(?:任何|所谓的?)?(?:轻微|细微|略微|些微|微小)(?:的)?(?:色差|差异|差别)/u.test(part));
       const hasLarge = colorStatements.some((part) => large.test(part) && !/(?:没有|并无|不存在)(?:任何|明显的?|严重的?)?(?:色差|颜色差异|颜色差别)/u.test(part));

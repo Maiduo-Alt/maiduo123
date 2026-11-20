@@ -136,3 +136,74 @@ describe('BUG-L2-SEMANTIC-001 负例：放宽后仍要拦得住', () => {
     expect(result.pass).toBe(false);
   });
 });
+
+/**
+ * BUG-L2-SEMANTIC-002 回归用例（对应《L2一般性测试报告》第三节 B-01 / B-02）。
+ *
+ * 缺陷定位：`automatic-reply.ts` 的「发货时效」证据判定要求「时长 + 动作」首尾紧邻，
+ * 中间插入主语或副词（"就给您""会安排""给您"）即失效，
+ * "现货拍下48小时内就给您发出哦"这类完全正确的答复被判「尚未明确发货时效」。
+ *
+ * 线上实测（attempt 287）：4 个「现货与发货时效」会话全部命中此缺陷，
+ * 每会话连带扣解决率 17.5 分、响应分 25 分。
+ */
+describe('BUG-L2-SEMANTIC-002 发货时效：时长与动作之间允许插入修饰语', () => {
+  const SHIP_Q = '那一般什么时候可以发出呢？';
+  const ship = (reply: string) => assess(reply, SHIP_Q);
+
+  it('原误判用例：48小时内就给您发出（"就给您"挡断）', () => {
+    const result = ship('亲，现货拍下48小时内就给您发出哦，发出后会短信通知单号。');
+    expect(result.intent).toBe('shipping-time');
+    expect(result.status).toBe('resolved');
+    expect(result.pass).toBe(true);
+  });
+
+  it('48小时内会安排发出（"会安排"挡断）', () => {
+    expect(ship('亲，48小时内会安排发出哦。').pass).toBe(true);
+  });
+
+  it('48小时内给您发出（"给您"挡断）', () => {
+    expect(ship('亲，现货拍下48小时内给您发出，后会短信通知单号。').pass).toBe(true);
+  });
+
+  it('无插入语的原写法仍然通过（防回归）', () => {
+    expect(ship('亲，48小时内发货哦。').pass).toBe(true);
+  });
+
+  it('带逗号的自然表达也通过', () => {
+    expect(ship('48小时内，我们会尽快安排发货').pass).toBe(true);
+  });
+
+  it('2天内给您安排出库 / 24小时左右就能发出去 / 3个工作日内安排发货', () => {
+    expect(ship('亲，2天内给您安排出库哦').pass).toBe(true);
+    expect(ship('一般24小时左右就能发出去').pass).toBe(true);
+    expect(ship('亲，3个工作日内安排发货').pass).toBe(true);
+  });
+
+  it('否认式发货承诺仍被判未解决（不放松拦截）', () => {
+    expect(ship('亲，48小时内不能保证发货哦。').pass).toBe(false);
+    expect(ship('亲，这个不确定什么时候发货。').pass).toBe(false);
+    expect(ship('具体发货时间无法确认。').pass).toBe(false);
+    expect(ship('亲，48小时内可能发不了。').pass).toBe(false);
+  });
+
+  it('只答发货时效不能替代到货时效（R-04 联动不回归）', () => {
+    const result = assess('亲，现货拍下48小时内就给您发出哦，发出后会短信通知单号。');
+    expect(result.status).toBe('unsupported');
+    expect(result.pass).toBe(false);
+  });
+
+  it('2天与48小时视为同一时效，不误判为矛盾', () => {
+    const result = ship('亲，2天内给您安排出库，也就是48小时内发货。');
+    expect(result.pass).toBe(true);
+  });
+
+  it('互相矛盾的两个发货时效仍判未解决', () => {
+    const result = ship('亲，48小时内发货，也可能会72小时内发出。');
+    expect(result.pass).toBe(false);
+  });
+
+  it('跨句不误吞：上一句的时长不能为下一句的发货作证', () => {
+    expect(ship('48小时内。我们会安排发货。').pass).toBe(false);
+  });
+});
