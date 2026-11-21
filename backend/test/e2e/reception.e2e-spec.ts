@@ -178,13 +178,19 @@ describe('在线模拟接待端到端链路', () => {
         VALUES ($1, 1, '语义买家', 'serving', 1, 1, $2::jsonb, now()) RETURNING id`,
       [attempt.id, JSON.stringify([{ seq: 1, question: '走线整齐吗？', keyPoints: ['走线'] }])],
     );
+    const addBuyer = (content: string, seq: number, rule = {}) => sharedDb.query(
+      "INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1, 'buyer', $2, $3, $4::jsonb)",
+      [session.id, content, seq, JSON.stringify(rule)]);
+    await addBuyer('上一题：多久发货？', 0);
+    await addBuyer('在吗？', 1, { responseRoundType: 'opener' });
+    await addBuyer('走线整齐吗？', 1, { responseRoundStart: true });
     const reception = app.get(ReceptionService);
     const oldMode = process.env.REPLY_JUDGMENT_MODE;
     process.env.REPLY_JUDGMENT_MODE = 'local';
     const fetchMock = jest.spyOn(global, 'fetch');
     const response = (resolved: boolean, evidence: string[]) => ({
       ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
-        resolved, evidence, reason: '测试判定', matchedPoints: [], buyerReply: '好的。',
+        resolved, evidence, reason: '测试判定', matchedPoints: [],
       }) } }] }),
     } as Response);
     try {
@@ -193,9 +199,21 @@ describe('在线模拟接待端到端链路', () => {
       fetchMock.mockResolvedValueOnce(response(false, []));
       const rejected = await reception.sendMessage(1, attempt.id, session.id, '走线可以帮您核实一下。');
       expect(rejected.ruleResult).toMatchObject({ semanticOnly: true, hitPoints: [], judge: { pass: false }, replyAssessment: { source: 'local' } });
+      const inputAt = (index: number) => {
+        const body = JSON.parse(String(fetchMock.mock.calls[index][1]?.body));
+        return JSON.parse(body.messages.at(-1).content);
+      };
+      expect(inputAt(1).history).toEqual([{ role: 'buyer', content: '走线整齐吗？' }]);
+      await addBuyer('袖口也整齐吗？', 1, { responseRoundStart: true });
       fetchMock.mockResolvedValueOnce(response(true, ['整齐的哦']));
       const accepted = await reception.sendMessage(1, attempt.id, session.id, '整齐的哦');
       expect(accepted.ruleResult).toMatchObject({ hitPoints: [], judge: { pass: true }, replyAssessment: { source: 'local' } });
+      expect(inputAt(2).history).toEqual([
+        { role: 'buyer', content: '走线整齐吗？' },
+        { role: 'agent', content: '走线可以帮您核实一下。' },
+        { role: 'buyer', content: '袖口也整齐吗？' },
+      ]);
+      expect(accepted.ruleResult.modelEvaluation?.buyerReply).toBe('');
       expect(fetchMock.mock.calls.every(([url]) => String(url).includes('/v1/chat/completions'))).toBe(true);
       await reception.finishSession(1, attempt.id, session.id);
       const score = await sharedDb.one<{ solving_score: string }>('SELECT solving_score FROM scores WHERE session_id = $1', [session.id]);

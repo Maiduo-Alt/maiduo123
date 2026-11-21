@@ -1056,6 +1056,11 @@ export class ReceptionService implements OnModuleInit {
     if (modelReply && !(latestRule?.judgmentVersion === 2 && latestAssessment?.intent === 'size-recommendation' && latestAssessment?.status === 'partial')) {
       const configuredLimit = question.conversationPlan?.maxFollowUps ?? 2;
       const limit = latestRule?.judgmentVersion === 2 ? Math.min(1, configuredLimit) : configuredLimit;
+      if (modelReply.provider === 'local') {
+        if (modelReply.resolved || (session.follow_ups || 0) >= limit) await this.pushNextQuestion(sessionId);
+        else await this.pushFollowUp(sessionId, session, question, session.follow_ups || 0);
+        return;
+      }
       if (modelReply.resolved || (session.follow_ups || 0) >= limit) {
         await this.pushNextQuestion(sessionId, modelReply.resolved ? modelReply.buyerReply : undefined);
       } else {
@@ -1294,6 +1299,11 @@ export class ReceptionService implements OnModuleInit {
       `SELECT sender, content, seq, response_sec, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
       [sessionId]
     );
+    const dialogue = historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent');
+    const currentDialogue = semanticMode === 'local' ? dialogue.filter((m) =>
+      m.seq === session.current_seq && !m.rule_result?.openerTiming &&
+      m.rule_result?.responseRoundType !== 'opener' && m.rule_result?.judge?.signal !== 'opener') : [];
+    const currentBuyerMessages = currentDialogue.filter((m) => m.sender === 'buyer');
     let modelResult: Awaited<ReturnType<typeof evaluateWithModels>> | null = null;
     try {
     modelResult = useModel ? await evaluateWithModels({
@@ -1307,7 +1317,10 @@ export class ReceptionService implements OnModuleInit {
       } } : {}),
       question: currentQuestion!.question,
       goals: (currentQuestion!.semanticGoals || []).map((goal) => ({ id: goal.id, points: goal.requiredPoints.map((point) => ({ id: point.id, label: point.label })) })),
-      history: historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent').slice(-12).map((m) => ({ role: m.sender, content: m.content })),
+      history: (semanticMode === 'local'
+        ? currentBuyerMessages.length > 1 ? currentDialogue : currentBuyerMessages
+        : dialogue.slice(-12)
+      ).map((m) => ({ role: m.sender, content: m.content })),
       reply: text,
     }, modelKeys) : null;
     } catch (error) {
