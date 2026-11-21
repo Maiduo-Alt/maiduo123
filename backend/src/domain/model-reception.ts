@@ -22,7 +22,7 @@ export interface ModelReceptionResult {
 /** 客服消息与剧本均为待分析数据，不作为模型的操作指令。 */
 export async function evaluateWithModels(
   input: ModelReceptionInput,
-  config: { glmKey?: string; deepseekKey?: string; local?: { url: string; model: string } },
+  config: { glmKey?: string; deepseekKey?: string; local?: { url: string; model: string; timeoutMs?: number; onFailure?: (reason: string) => void } },
   fetchImpl: typeof fetch = fetch,
 ): Promise<ModelReceptionResult> {
   const providers = config.local ? [{ name: 'local' as const, url: config.local.url, model: config.local.model, key: undefined }] : [
@@ -35,7 +35,7 @@ export async function evaluateWithModels(
       const response = await fetchImpl(provider.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(provider.key ? { Authorization: `Bearer ${provider.key}` } : {}) },
-        signal: AbortSignal.timeout(provider.name === 'local' ? 45000 : 15000),
+        signal: AbortSignal.timeout(provider.name === 'local' ? config.local?.timeoutMs ?? 45000 : 15000),
         body: JSON.stringify({
           model: provider.model,
           ...(provider.name === 'local' ? { temperature: 0, max_tokens: 512 } : {}),
@@ -53,9 +53,13 @@ export async function evaluateWithModels(
           ],
         }),
       });
-      if (!response.ok) throw new Error('模型接口请求失败');
+      if (!response.ok) throw new Error(`模型接口 HTTP ${response.status}`);
       const body = await response.json() as any;
-      const result = JSON.parse(body.choices[0].message.content);
+      const content = body?.choices?.[0]?.message?.content;
+      if (typeof content !== 'string') throw new Error('模型未返回文本');
+      let result;
+      try { result = JSON.parse(content); } catch { throw new Error('模型未返回有效 JSON'); }
+      if (!result || typeof result !== 'object') throw new Error('模型响应格式错误');
       if (typeof result.resolved !== 'boolean' || typeof result.reason !== 'string' ||
           typeof result.buyerReply !== 'string' || !result.buyerReply.trim() || !Array.isArray(result.matchedPoints)) {
         throw new Error('模型响应格式错误');
@@ -77,7 +81,14 @@ export async function evaluateWithModels(
         return { goalId: match.goalId as string, pointIds: [...new Set(match.pointIds)] as string[] };
       });
       return { provider: provider.name, resolved: result.resolved, reason: result.reason.slice(0, 500), matchedPoints, buyerReply: result.buyerReply.trim().slice(0, 500), ...(evidence ? { evidence } : {}) };
-    } catch {
+    } catch (error) {
+      if (provider.name === 'local' && config.local?.onFailure) {
+        const reason = error instanceof Error
+          ? error.name === 'TimeoutError' ? '请求超时'
+            : error instanceof TypeError ? '连接失败' : error.message
+          : '未知错误';
+        config.local.onFailure(reason);
+      }
       // 主服务失败时使用用户指定的备用服务；均失败时交给调用方处理。
     }
   }

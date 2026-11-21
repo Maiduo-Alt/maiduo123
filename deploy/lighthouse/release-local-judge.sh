@@ -15,7 +15,8 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
   for (const [reply, expected] of [['整齐的哦', true], ['我帮您查一下。', false]]) {
     const result = await evaluateWithModels(
       { question: '走线整齐吗？', goals: [], history: [], reply, judgmentVersion: 2 },
-      { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL } },
+      { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL, timeoutMs: 120000,
+        onFailure: reason => console.error('本地模型预检失败：' + reason) } },
     );
     if (result.resolved !== expected) throw Error('本地模型对部署样例的判定不符：' + JSON.stringify({reply, expected, result}));
   }
