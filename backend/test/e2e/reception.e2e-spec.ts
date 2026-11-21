@@ -168,6 +168,45 @@ describe('在线模拟接待端到端链路', () => {
     }
   });
 
+  it('本地语义模式只用模型判定，关键词命中无法覆盖模型结论', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-local-judge-test', JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [600, 600] })],
+    );
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+        VALUES ($1, 1, '语义买家', 'serving', 1, 1, $2::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question: '走线整齐吗？', keyPoints: ['走线'] }])],
+    );
+    const reception = app.get(ReceptionService);
+    const oldMode = process.env.REPLY_JUDGMENT_MODE;
+    process.env.REPLY_JUDGMENT_MODE = 'local';
+    const fetchMock = jest.spyOn(global, 'fetch');
+    const response = (resolved: boolean, evidence: string[]) => ({
+      ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+        resolved, evidence, reason: '测试判定', matchedPoints: [], buyerReply: '好的。',
+      }) } }] }),
+    } as Response);
+    try {
+      fetchMock.mockResolvedValueOnce({ ok: false } as Response);
+      await expect(reception.sendMessage(1, attempt.id, session.id, '走线')).rejects.toThrow('模型服务不可用');
+      fetchMock.mockResolvedValueOnce(response(false, []));
+      const rejected = await reception.sendMessage(1, attempt.id, session.id, '走线可以帮您核实一下。');
+      expect(rejected.ruleResult).toMatchObject({ semanticOnly: true, hitPoints: [], judge: { pass: false }, replyAssessment: { source: 'local' } });
+      fetchMock.mockResolvedValueOnce(response(true, ['整齐的哦']));
+      const accepted = await reception.sendMessage(1, attempt.id, session.id, '整齐的哦');
+      expect(accepted.ruleResult).toMatchObject({ hitPoints: [], judge: { pass: true }, replyAssessment: { source: 'local' } });
+      expect(fetchMock.mock.calls.every(([url]) => String(url).includes('/v1/chat/completions'))).toBe(true);
+      await reception.finishSession(1, attempt.id, session.id);
+      const score = await sharedDb.one<{ solving_score: string }>('SELECT solving_score FROM scores WHERE session_id = $1', [session.id]);
+      expect(Number(score?.solving_score)).toBe(35);
+    } finally {
+      fetchMock.mockRestore();
+      if (oldMode === undefined) delete process.env.REPLY_JUDGMENT_MODE; else process.env.REPLY_JUDGMENT_MODE = oldMode;
+      await sharedDb.query("UPDATE attempts SET status = 'finished' WHERE id = $1", [attempt.id]);
+    }
+  });
+
   it('模型备用接口参与回复判定，生成的买家消息按会话推送；失败可重试', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,

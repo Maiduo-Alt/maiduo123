@@ -1272,8 +1272,14 @@ export class ReceptionService implements OnModuleInit {
     const lastBuyerAt = inAgentCloseWindow ? null : session.last_buyer_at ? new Date(session.last_buyer_at).getTime() : null;
 
     const currentQuestion = session.questions.find((q) => q.seq === session.current_seq) || null;
-    const modelKeys = await this.credentials.getKeys();
-    const useModel = Boolean(currentQuestion && !session.opener_pending && !inAgentCloseWindow && (modelKeys.glmKey || modelKeys.deepseekKey));
+    const semanticMode = process.env.REPLY_JUDGMENT_MODE;
+    const semanticOnly = semanticMode === 'local' || semanticMode === 'external';
+    const modelKeys = semanticMode === 'local' ? { local: {
+      url: process.env.LOCAL_SEMANTIC_JUDGE_URL || 'http://semantic-judge:11434/v1/chat/completions',
+      model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL || 'qwen2.5:1.5b',
+    } } : await this.credentials.getKeys();
+    const judgingQuestion = Boolean(currentQuestion && session.current_seq > 0 && !session.opener_pending && !inAgentCloseWindow);
+    const useModel = judgingQuestion && (semanticOnly || Boolean('glmKey' in modelKeys && (modelKeys.glmKey || modelKeys.deepseekKey)));
     if (this.modelRequests.has(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复，请稍候');
     if (useModel) {
       const claimed = await this.db.one<{ id: number }>(
@@ -1291,7 +1297,7 @@ export class ReceptionService implements OnModuleInit {
     let modelResult: Awaited<ReturnType<typeof evaluateWithModels>> | null = null;
     try {
     modelResult = useModel ? await evaluateWithModels({
-      ...(params.replyJudgmentVersion === 2 ? { judgmentVersion: 2 as const, facts: {
+      ...(semanticOnly || params.replyJudgmentVersion === 2 ? { judgmentVersion: 2 as const, facts: {
         product: session.products[0] ? {
           title: session.products[0].title, attributes: session.products[0].attributes,
           services: session.products[0].services, stock: session.products[0].stock,
@@ -1348,8 +1354,9 @@ export class ReceptionService implements OnModuleInit {
     // 统一判定入口：所有题目一律走最新引擎 assessAutomaticReply。
     // 旧引擎 judgeReply 不再作为独立判定支路存在——它仅作为新引擎内部的基础信号函数保留。
     // automaticEvaluation 标记保留用于后续扣分/统计口径（reply-validity / scoring），但不再决定走哪套引擎。
-    const ruleAssessment: ReplyAssessment = assessAutomaticReply(replyContext, params.replyJudgmentVersion || 0);
-    const pendingVerification = params.replyJudgmentVersion === 2 && 'status' in ruleAssessment
+    const ruleAssessment: ReplyAssessment = semanticOnly ? { pass: false, signal: 'off-topic' }
+      : assessAutomaticReply(replyContext, params.replyJudgmentVersion || 0);
+    const pendingVerification = semanticOnly ? false : params.replyJudgmentVersion === 2 && 'status' in ruleAssessment
       ? ruleAssessment.status === 'pending' : isPendingVerification(text);
     const machineWashResolved = !!currentQuestion &&
       /^(?:亲|请问|这款|这件|衣服|可以|能|可不可以|能不能|支持|是不是|是否)*机洗(?:吗|嘛|么|呢)?[？?。！!\s]*$/u.test(currentQuestion.question.trim()) &&
@@ -1357,20 +1364,22 @@ export class ReceptionService implements OnModuleInit {
     const unsupportedFacts = 'status' in ruleAssessment && ruleAssessment.status === 'unsupported';
     const blockedAssessment = unsupportedFacts || (params.replyJudgmentVersion === 2 && (ruleAssessment.signal === 'perfunctory' || (ruleAssessment.intent === 'size-recommendation' && ruleAssessment.status === 'partial')));
     const useGuidance = ruleAssessment.acceptedGuidance === true;
-    const modelResolved = !!modelResult && (modelResult.resolved || (params.replyJudgmentVersion !== 2 && machineWashResolved)) && !pendingVerification && !blockedAssessment;
-    const hitPoints = blockedAssessment
+    const modelResolved = !!modelResult && (modelResult.resolved || (!semanticOnly && params.replyJudgmentVersion !== 2 && machineWashResolved)) && !pendingVerification && !blockedAssessment;
+    const hitPoints = semanticOnly || blockedAssessment
       ? []
       : modelResult && !useGuidance && currentQuestion && !(currentQuestion.semanticGoals || []).length
       ? (modelResolved ? [...currentQuestion.keyPoints] : [])
       : currentQuestion && !pendingVerification ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
-    const vectorCandidates = await findVectorCandidates(
+    const vectorCandidates = semanticOnly ? new Set<string>() : await findVectorCandidates(
       text,
       buildSemanticCandidates(session.questions),
       process.env.SEMANTIC_API_URL,
       Number(process.env.SEMANTIC_MATCH_THRESHOLD || 0.78)
     );
-    const semanticEvaluation = evaluateSemanticReply(text, session.questions, vectorCandidates);
-    if (modelResult) semanticEvaluation.goalMatches = modelResult.matchedPoints;
+    const semanticEvaluation = evaluateSemanticReply(text, semanticOnly ? session.questions.map((question) => ({
+      ...question, semanticGoals: question.semanticGoals?.map((goal) => ({ ...goal, requiredPoints: [] })),
+    })) : session.questions, vectorCandidates);
+    if (modelResult) semanticEvaluation.goalMatches = semanticOnly && !modelResolved ? [] : modelResult.matchedPoints;
     if ((pendingVerification || blockedAssessment) && currentQuestion) {
       const currentGoalIds = new Set((currentQuestion.semanticGoals || []).map((goal) => goal.id));
       semanticEvaluation.goalMatches = semanticEvaluation.goalMatches.filter((match) => !currentGoalIds.has(match.goalId));
@@ -1381,7 +1390,7 @@ export class ReceptionService implements OnModuleInit {
     // 开场回应归入 seq 1（与随后的题目同轮），避免产生 seq 0 的回复轮次干扰计分
     const insertSeq = openerStage ? 1 : session.current_seq;
 
-    const unifiedJudgment = params.replyJudgmentVersion !== undefined;
+    const unifiedJudgment = semanticOnly || params.replyJudgmentVersion !== undefined;
     const judgedReply = unifiedJudgment && inAgentCloseWindow
       ? { pass: false, signal: 'closing' as const }
       : openerStage
@@ -1398,6 +1407,7 @@ export class ReceptionService implements OnModuleInit {
       questionSeq: m.rule_result?.questionSeq ?? m.seq,
       hitPoints: m.rule_result?.hitPoints || [],
       pendingVerification: m.rule_result?.pendingVerification === true,
+      semanticOnly: m.rule_result?.semanticOnly === true,
       replyStatus: m.rule_result?.invalid ? undefined : m.rule_result?.replyAssessment?.status,
       judgeSignal: m.rule_result?.invalid ? null : m.rule_result?.judge?.signal,
       openerTiming: m.rule_result?.openerTiming === true,
@@ -1417,6 +1427,7 @@ export class ReceptionService implements OnModuleInit {
       // 业务动作话术不算敷衍：连点两次催付、或者模板话术与上一条相同，都不该判无效
       meta?.businessAction
         ? null
+        : semanticOnly && modelResolved ? null
         : unifiedJudgment && inAgentCloseWindow ? null
         : validityRounds.find((r) => r.seq === session.current_seq)?.reasons.find((r) => r.index === currentIndex)?.reason ||
           null;
@@ -1481,8 +1492,9 @@ export class ReceptionService implements OnModuleInit {
 
     const ruleResult = {
       questionSeq: insertSeq,
-      ...(unifiedJudgment ? { judgmentVersion: params.replyJudgmentVersion } : {}),
-      ...(params.replyJudgmentVersion === 2 && !openerStage && !inAgentCloseWindow ? {
+      ...(semanticOnly && judgingQuestion ? { semanticOnly: true } : {}),
+      ...(unifiedJudgment ? { judgmentVersion: semanticOnly ? 2 : params.replyJudgmentVersion } : {}),
+      ...((semanticOnly || params.replyJudgmentVersion === 2) && !openerStage && !inAgentCloseWindow ? {
         replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: missingReplyDetails } : modelResult && !blockedAssessment && !useGuidance
           ? { source: modelResult.provider, intent: ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
           : { ...ruleAssessment, source: 'rule' },
@@ -1492,7 +1504,7 @@ export class ReceptionService implements OnModuleInit {
       semanticEvaluation,
       goalProgress: getGoalProgress(session.questions, allSemanticEvaluations),
       conversationState,
-      ...(modelResult ? { modelEvaluation: { ...modelResult, resolved: modelResolved } } : {}),
+      ...(modelResult ? { modelEvaluation: { ...modelResult, resolved: modelResolved && !invalidReason } } : {}),
       ...(pendingVerification && !invalidReason && !openerStage && !(unifiedJudgment && inAgentCloseWindow) ? { pendingVerification: true } : {}),
       missingPoints: currentQuestion ? currentQuestion.keyPoints.filter((p) => !hitPoints.includes(p)) : [],
       emotionDelta: emotion.delta,
@@ -1770,6 +1782,7 @@ export class ReceptionService implements OnModuleInit {
         isTimeout: m.is_timeout,
         hitPoints: m.rule_result?.hitPoints || [],
         pendingVerification: m.rule_result?.pendingVerification === true,
+        semanticOnly: m.rule_result?.semanticOnly === true,
         replyStatus: m.rule_result?.invalid ? undefined : m.rule_result?.replyAssessment?.status,
         goalMatches: m.rule_result?.semanticEvaluation?.goalMatches || [],
         riskItems: m.rule_result?.semanticEvaluation?.riskItems || [],

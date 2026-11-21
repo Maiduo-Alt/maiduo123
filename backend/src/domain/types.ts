@@ -290,6 +290,7 @@ export interface SemanticGoal {
 
 /** 会话消息（评分输入）。 */
 export interface ScoreMessage {
+  semanticOnly?: boolean;
   sender: Sender;
   content: string;
   questionSeq?: number | null;
