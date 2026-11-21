@@ -209,6 +209,13 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
     if (materialDetails !== undefined && (cottonRatio || polyester || asksMaterial)) {
       const known = cottonRatio ? cottonAnswer.test(materialDetails)
         : polyester ? polyesterAnswer.test(materialDetails) || /100\s*[%％]|全棉|纯棉/u.test(materialDetails) : materialAnswer.test(materialDetails);
+      // 缺失本身是可回答的信息，后续核实承诺不改变这项事实。
+      const missingCotton = /(?:未(?:单独)?标(?:注|明)?|没(?:有)?(?:单独|明确|具体)?(?:标(?:注|明)?|给出)?|无(?:单独|具体)?).{0,6}(?:含棉量|棉含量|棉的比例|棉占比)/u;
+      if (cottonRatio && !known && missingCotton.test(ctx.reply) &&
+          /详情|商品页|资料|材质栏|标签|吊牌|洗标|数据/u.test(ctx.reply) &&
+          !cottonAnswer.test(ctx.reply)) {
+        return { ...assessment(intent, [ctx.reply], [], false), acceptedGuidance: true };
+      }
       const answer = cottonRatio ? cottonAnswer : polyester ? polyesterAnswer : materialAnswer;
       const evidence = ctx.reply.split(/[，。；;！!\n]/u).filter((part) => answer.test(part) &&
         !/是否|[？?]|不确定|不清楚|不知道|无法确认|不能确认|核实|查询|待确认|可能|如果/u.test(part));
@@ -231,6 +238,41 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
     const clauses = ctx.reply.split(/[，。；;！!\n]|但是|不过|但/u).map((s) => s.trim()).filter(Boolean);
     // 核实中的问题描述、引用问题和不确定断言，不作为已经给出结论的证据。
     const statements = clauses.filter((s) => !/不确定|不知道|不清楚|核实|未确认|没确认|确认一下|查一下|查询|是否|有没有|能不能|需不需要|要不要|如果|假如|倘若|[？?]/u.test(s));
+    if (/外套|开衫|风衣|夹克|西装/u.test(ctx.question) &&
+        /(?:什么|哪[种些个]).{0,5}(?:颜色|色系)|什么色/u.test(ctx.question)) {
+      const color = /米白|卡其|浅灰|深灰|藏青|深蓝|浅蓝|酒红|(?:米|灰|黑|白|蓝|奶油|棕|咖啡|驼|粉|红|绿|紫|黄)(?:色|系)/u;
+      const onlyColors = /^(?:米白|米|卡其|浅灰|深灰|灰|黑|白|藏青|深蓝|浅蓝|蓝|奶油|棕|咖啡|驼|粉|酒红|红|绿|紫|黄)(?:色|系)?(?:[哦呢哈呀～~\s]*)$/u;
+      const evidence = statements.filter((part) => part.split(/[、或／/]/u).every((option) => onlyColors.test(option.trim())) ||
+        (color.test(part) &&
+        !/不推荐|不建议|不适合|不搭|别选|不要选|不能搭|色差/u.test(part) &&
+        /推荐|建议|适合|可以(?:配|选|搭)|都.{0,3}搭|很搭|百搭|最搭/u.test(part)));
+      if (evidence.length) return { ...assessment(intent, evidence, [], false), acceptedGuidance: true };
+    }
+    // 允许客服设定合理的训练场景，条件和对应结论须出现在同一句。
+    const scenarioEvidence = ctx.reply.split(/[。；;！!？?\n]/u).filter((sentence) => {
+      const match = /^(?:亲[，,\s]*)?(?:如果|假如|若|按|以)([^，,]{2,28})[，,]([^，,].*)/u.exec(sentence.trim());
+      if (!match || /核实|不确定|不保证|无法|不能|不一定|说不好/u.test(sentence)) return false;
+      const [, condition, recommendation] = match;
+      if (intent === 'delivery-time') {
+        return /省内|同城|附近|地区|非偏远|普通快递|正常运输/u.test(condition) &&
+          DURATION_RE.test(recommendation) && ARRIVAL_VERB.test(recommendation) && !SHIP_ACTION_RE.test(recommendation);
+      }
+      if (intent === 'shipping-time') {
+        return /现货|有货|库存充足|付款|下单/u.test(condition) &&
+          (SHIP_DURATION_RE.test(recommendation) || SHIP_RELATIVE_DAY_RE.test(recommendation)) &&
+          !ARRIVAL_VERB.test(recommendation);
+      }
+      return /选码|尺码|穿.{0,5}码/u.test(ctx.question) &&
+        /合身|宽松|修身|偏紧|偏松|腰围|臀围|平时穿/u.test(condition) &&
+        /(?:参考|建议|推荐|适合|选)\s*(?:[SMLX]{1,4}|\d{2,3})\s*码/iu.test(recommendation);
+    });
+    if (scenarioEvidence.length && !/不能|无法|不一定|不保证|不承诺|说不好|不适合|不建议/u.test(ctx.reply)) {
+      // 一条答复可给出不同条件的建议；相同条件下的重复承诺由原逻辑继续处理。
+      const conditions = scenarioEvidence.map((sentence) => sentence.split(/[，,]/u).slice(-2, -1)[0]?.trim());
+      if (new Set(conditions).size === scenarioEvidence.length) {
+        return { ...assessment(intent, scenarioEvidence, [], false), acceptedGuidance: true };
+      }
+    }
     // 到货时效与物流查看路径优先于“发出后”等时间背景词。
     if (/什么时候|多久|几天|多长时间/u.test(ctx.question) && /收到|送达|到货|送到|抵达|到达|多久到|几天到/u.test(ctx.question)) {
       const evidence = statements.filter((part) => {

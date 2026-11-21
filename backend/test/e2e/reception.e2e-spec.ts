@@ -664,6 +664,9 @@ describe('在线模拟接待端到端链路', () => {
       ['发出后大概多久能收到呢？', '亲，发出后一般2到4天送达，偏远地区可能久一些。', true],
       ['发出后大概多久能收到呢？', '亲，付款后通常48小时内发货。', false],
       ['发出后在哪里查看物流进度呢？', '亲，在订单详情里选择查看物流，就可以看到物流进度。', true],
+      ['含棉量多少', '材质为其他纤维22%，商品详情未单独标注含棉量，可帮您确认。', true],
+      ['含棉量多少', '商品页只标注材质其他纤维22%，确实无单独含棉量数据，暂时无法给准确数字。', true],
+      ['适合搭配什么颜色的外套', '米色、卡其色、浅灰都很搭哦，温柔又显气质～', true],
       ['含棉量多少', '详情页没有明确含棉量，我可以核对成分标签后回复您。', true],
       ['走线整齐吗？', '现有资料无法确认，我帮您核对细节图上的缝线。', true],
       ['发出后在哪里查看物流进度呢？', '在我的订单打开这笔订单，点击查看物流，就能看到运单号和最新运输进度。', true],
@@ -681,6 +684,11 @@ describe('在线模拟接待端到端链路', () => {
           [attempt.id, JSON.stringify([{ seq: 1, question, keyPoints: question === '这条连衣裙搭配什么外套和鞋子好看' ? ['搭配'] : [], automaticEvaluation: true }]), new Date(Date.now() - 3000).toISOString()],
         );
         ids.push(session.id);
+        if (question === '含棉量多少') {
+          await sharedDb.query('UPDATE sessions SET products = $2::jsonb WHERE id = $1',
+            [session.id, JSON.stringify([{ title: '连衣裙', attributes: [{ name: '材质', value: '其他22%' }] }])]);
+        }
+
         await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`,
           [session.id, question, JSON.stringify({ responseRoundStart: true })]);
         if (question === '实物和详情页图片色差大吗') {
@@ -695,6 +703,15 @@ describe('在线模拟接待端到端链路', () => {
         if (pass) {
           expect((result.ruleResult as any).invalid).not.toBe(true);
           expect(result.responseSec).toBeGreaterThanOrEqual(2);
+        }
+        if (question === '含棉量多少' || question === '适合搭配什么颜色的外套') {
+          expect(result.ruleResult.replyAssessment?.status).toBe('resolved');
+          expect(result.ruleResult.conversationState.resolvedGoalIds).toContain('keyword-seq-1');
+          await reception.advanceAfterReply(session.id);
+          const followUp = await sharedDb.one<{ count: string }>(
+            "SELECT count(*) FROM messages WHERE session_id = $1 AND sender = 'buyer' AND content LIKE $2",
+            [session.id, `%我是想问%${question}%`]);
+          expect(Number(followUp?.count)).toBe(0);
         }
         if (question === '实物和详情页图片色差大吗') {
           expect(result.ruleResult.replyAssessment?.status).toBe('resolved');

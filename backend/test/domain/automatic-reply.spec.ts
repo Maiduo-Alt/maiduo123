@@ -2,6 +2,26 @@ import { assessAutomaticReply } from '../../src/domain/automatic-reply';
 const assess = (question: string, reply: string) => assessAutomaticReply({ question, reply, keyPoints: [], buyerText: question }, 2);
 
 describe('自动问答的意图与证据判断', () => {
+  it('只在商品缺少对应资料时，将明确说明缺失作为有效答复', () => {
+    const ctx = { question: '含棉量多少', reply: '商品详情未单独标注含棉量，可帮您确认', keyPoints: [], buyerText: '含棉量多少' };
+    expect(assessAutomaticReply({ ...ctx, productMaterialDetails: '其他22%' }, 2).acceptedGuidance).toBe(true);
+    expect(assessAutomaticReply({ ...ctx, productMaterialDetails: '棉100%' }, 2).acceptedGuidance).toBeUndefined();
+    expect(assessAutomaticReply({ ...ctx, reply: '我核实一下', productMaterialDetails: '其他22%' }, 2).pass).toBe(false);
+    expect(assess('适合搭配什么颜色的外套', '米色、卡其色、浅灰都很搭哦').pass).toBe(true);
+    expect(assess('适合搭配什么颜色的外套', '我先核实一下').pass).toBe(false);
+  });
+
+  it.each([
+    ['发出后多久能收到？', '如果在省内，预计两三天就能收到。', true],
+    ['什么时候能发货？', '如果有现货，通常24小时内就给您发出。', true],
+    ['我应该怎么选尺码？', '如果喜欢宽松一点，建议选M码。', true],
+    ['发出后多久能收到？', '如果有现货，24小时内发货。', false],
+    ['发出后多久能收到？', '如果在省内，不能保证两天收到。', false],
+    ['发出后多久能收到？', '如果在省内，先帮您核实一下。', false],
+  ])('模拟场景答复：%s → %s', (question, reply, pass) => {
+    expect(assess(question, reply).pass).toBe(pass);
+  });
+
   it.each([
     ['含棉量多少', '含棉量约70%。', '其他22%', true],
     ['是聚酯纤维吗？', '是聚酯纤维。', '', true],
