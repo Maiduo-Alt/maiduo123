@@ -20,6 +20,15 @@ const agent = (seq: number, content: string, hitPoints: string[] = ['要点']): 
 const roundOf = (result: ReturnType<typeof judgeValidReplies>, seq: number) => result.find((r) => r.seq === seq)!;
 
 describe('无效 / 敷衍回复判定（客户新增需求 C6）', () => {
+  it('有效模板允许在新买家消息后复用，同一次买家消息下的连发仍判无效', () => {
+    const reply: ScoreMessage = { ...agent(1, '亲，鞋子配乐福鞋或短靴都很搭', []), judgeSignal: 'key-point' };
+    const repeated = [buyer(1), reply, buyer(1), reply, reply];
+    const params = on({ replyJudgmentVersion: 2, invalidReplyDuplicateMode: 'identical', banalWords: ['亲'] });
+    expect(roundOf(judgeValidReplies(repeated, questions, params), 1).invalidReplyIndexes).toEqual([4]);
+    const hollow: ScoreMessage = { ...reply, content: '亲，我帮您确认一下', judgeSignal: 'hedge' };
+    expect(roundOf(judgeValidReplies([buyer(1), hollow, buyer(1), hollow], questions, params), 1).invalidReplyIndexes).toEqual([1, 3]);
+  });
+
   it('自动判断命中可重置未解决计数，未提问的轮次不累计', () => {
     const auto = [1, 2, 3, 4].map((seq) => ({ seq, question: `第 ${seq} 问`, keyPoints: [], automaticEvaluation: true }));
     const params = on({ replyJudgmentVersion: 1, invalidReplyUnresolvedEnabled: true, invalidReplyUnresolvedStreak: 2 });

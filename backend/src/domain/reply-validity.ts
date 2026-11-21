@@ -68,6 +68,7 @@ export function judgeValidReplies(
   // 全局顺序遍历客服回复，维护「连发重复」与「连续未命中」两个游标
   let previousContent = '';
   let sameContentRun = 0;
+  let previousReplyIndex = -1;
   let unresolvedRun = 0;
 
   for (const seq of seqs) {
@@ -93,13 +94,18 @@ export function judgeValidReplies(
       const content = String(m.content || '').trim();
       const reasons: string[] = [];
 
+      const substantive = params.replyJudgmentVersion === 2 &&
+        (m.judgeSignal === 'key-point' || m.judgeSignal === 'relaxed' || m.judgeSignal === 'stance');
+      const freshBuyerTurn = messages.slice(previousReplyIndex + 1, index).some((message) =>
+        message.sender === 'buyer' && message.questionSeq === seq);
       if (rule.enabled) {
-        if (content && content === previousContent) {
+        if (content && content === previousContent && !(substantive && freshBuyerTurn)) {
           sameContentRun += 1;
         } else {
           sameContentRun = 1;
         }
         previousContent = content;
+        previousReplyIndex = index;
 
         if (content && sameContentRun >= 2 && rule.duplicateMode === 'identical') {
           reasons.push(`与上一条回复完全相同`);
@@ -108,10 +114,10 @@ export function judgeValidReplies(
           reasons.push(`同一内容连续发送 ${sameContentRun} 次（阈值 ${rule.duplicateStreak}）`);
         }
         const banal = rule.banalWords.find((word) => word && content.includes(word));
-        if (banal) reasons.push(`命中敷衍词表：${banal}`);
+        if (banal && !substantive) reasons.push(`命中敷衍词表：${banal}`);
       }
 
-      if (unresolvedInvalid) {
+      if (unresolvedInvalid && !substantive) {
         reasons.push(`连续 ${unresolvedRun} 轮命中要点为 0（近似官方「买家要求后仍未改善」）`);
       }
 

@@ -1324,6 +1324,7 @@ export class ReceptionService implements OnModuleInit {
         .filter((attribute) => /材质|面料|成分|含棉/u.test(String(attribute.name || '')))
         .map((attribute) => `${attribute.name}：${attribute.value || ''}`),
     ].join('；') : undefined;
+    const latestBuyerIndex = historyRows.reduce((last, message, index) => message.sender === 'buyer' ? index : last, -1);
     const replyContext = {
       productMaterialDetails,
       buyerContext: historyRows.filter((m) => m.sender === 'buyer').map((m) => m.content),
@@ -1338,7 +1339,7 @@ export class ReceptionService implements OnModuleInit {
       // 「与上一条重复」只在同一道题内比较：不同问题回同样的短句（如都是「可以的哈」）是正常的，
       // 上一轮跨题比较会把正常回复误判成敷衍（2026-10-11 沙箱实测发现的误伤）
       prevAgentText:
-        [...historyRows]
+        (params.replyJudgmentVersion === 2 ? historyRows.slice(latestBuyerIndex + 1) : [...historyRows])
           .reverse()
           .find((m) => m.sender === 'agent' && (m.rule_result?.questionSeq ?? m.seq) === session.current_seq &&
             (params.replyJudgmentVersion !== 2 || m.rule_result?.openerTiming !== true))
@@ -1412,13 +1413,18 @@ export class ReceptionService implements OnModuleInit {
       session.questions,
       params
     );
-    const invalidReason =
+    const validityReason =
       // 业务动作话术不算敷衍：连点两次催付、或者模板话术与上一条相同，都不该判无效
       meta?.businessAction
         ? null
         : unifiedJudgment && inAgentCloseWindow ? null
         : validityRounds.find((r) => r.seq === session.current_seq)?.reasons.find((r) => r.index === currentIndex)?.reason ||
           null;
+
+    const missingReplyDetails = ruleAssessment.missing?.length ? ruleAssessment.missing : currentQuestion ? [currentQuestion.question] : [];
+    const invalidReason = validityReason && params.replyJudgmentVersion === 2 && missingReplyDetails.length
+      ? `${validityReason}。请先给出针对本题的具体答复：${missingReplyDetails.join('、')}`
+      : validityReason;
 
     // 抖店口径 / 方案 4.2：同一轮多条回复只计首条。
     // 先看这一轮是否已经计过时长；计过就记 null，避免「连发多条各计一次」把平均响应算歪。
@@ -1477,7 +1483,7 @@ export class ReceptionService implements OnModuleInit {
       questionSeq: insertSeq,
       ...(unifiedJudgment ? { judgmentVersion: params.replyJudgmentVersion } : {}),
       ...(params.replyJudgmentVersion === 2 && !openerStage && !inAgentCloseWindow ? {
-        replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: [] } : modelResult && !blockedAssessment && !useGuidance
+        replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: missingReplyDetails } : modelResult && !blockedAssessment && !useGuidance
           ? { source: modelResult.provider, intent: ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
           : { ...ruleAssessment, source: 'rule' },
       } : {}),

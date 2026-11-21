@@ -320,12 +320,19 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
       const evidence = statements.filter((part) => /订单|详情页|物流页|快递单号|物流信息/u.test(part) &&
         /物流|快递|进度|查询|查看/u.test(part) && !/不能|无法|不支持|不提供/u.test(part));
       if (!evidence.length) {
+        evidence.push(...ctx.reply.split(/[。；;！？!?\n]/u).filter((part) =>
+          /(?:物流|快递|运单)单?号/u.test(part) &&
+          /(?:可|能|随时|用|凭|输入).{0,12}(?:查|跟踪)|(?:查|跟踪).{0,8}(?:进度|轨迹)/u.test(part) &&
+          !/不能|无法|不支持|不提供|没有|是否|核实/u.test(part)));
+      }
+      if (!evidence.length) {
         const paths = ctx.reply.split(/[。；;！？!?\n]/u);
         evidence.push(...paths.filter((part) =>
           /(?:订单(?:详情|页)?|物流页).{0,24}(?:点击|点开|选择|进入|打开).{0,8}(?:查看物流|物流详情|物流跟踪|查看快递)/u.test(part) &&
           !/不能|无法|不支持|不提供|不知道|不确定|核实|是否|能不能|如果|假如/u.test(part)));
       }
-      return assessment('logistics-location', evidence, evidence.length ? [] : ['尚未说明物流查询路径'], pendingVerification);
+      const result = assessment('logistics-location', evidence, evidence.length ? [] : ['尚未说明物流查询路径'], pendingVerification);
+      return result.pass ? { ...result, acceptedGuidance: true } : result;
     }
     if (intent === 'drying-method') {
       const evidence = statements.filter((part) =>
