@@ -273,6 +273,24 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
         return { ...assessment(intent, scenarioEvidence, [], false), acceptedGuidance: true };
       }
     }
+    // 训练中允许口语建议或简短答复，只要给到了本题需要的信息。
+    const practicalEvidence = statements.filter((part) => {
+      if (/不建议|不适合|答不上|说不好|别选|不能|不支持|无法/u.test(part)) return false;
+      if (/鞋子|配什么鞋|鞋怎么搭/u.test(ctx.question) && /搭配|怎么搭|配什么/u.test(ctx.question) && !/外套/u.test(ctx.question)) {
+        return /板鞋|帆布鞋|球鞋|小白鞋|运动鞋|休闲鞋|乐福鞋|平底鞋|短靴|老爹鞋/u.test(part) && !/没有|没货|不搭/u.test(part);
+      }
+      if (/尺码|选码|码表/u.test(ctx.question) && /哪些围度|什么围度|量哪里|量哪些/u.test(ctx.question)) {
+        return /腰围|臀围|胸围|肩宽|腰臀围|量腰|量胯|量.{0,5}腰.{0,5}胯/u.test(part);
+      }
+      if (/走线|缝线/u.test(ctx.question) && /整齐|怎么样|如何|线头/u.test(ctx.question)) {
+        return !/不整齐|不平整|不均匀/u.test(part) && /针脚.{0,8}(?:均匀|细密|平整|整齐)|(?:走线|缝线).{0,6}(?:平整|整齐|均匀)|(?:没有|没什么|很少有)线头/u.test(part);
+      }
+      if (/售后/u.test(ctx.question) && /怎么|如何|处理/u.test(ctx.question)) {
+        return /订单.{0,12}(?:申请|售后|退换)|(?:拍照|拍图|拍.{0,4}照片|发照片).{0,12}(?:联系|发给|找)|(?:联系|找).{0,8}客服/u.test(part);
+      }
+      return false;
+    });
+    if (practicalEvidence.length) return { ...assessment(intent, practicalEvidence, [], false), acceptedGuidance: true };
     // 到货时效与物流查看路径优先于“发出后”等时间背景词。
     if (/什么时候|多久|几天|多长时间/u.test(ctx.question) && /收到|送达|到货|送到|抵达|到达|多久到|几天到/u.test(ctx.question)) {
       const evidence = statements.filter((part) => {
@@ -362,6 +380,12 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
         { name: '视频', topic: /视频|短片/u, location: /详情|主图|轮播|视频页|商品页/u },
         { name: '实拍图片', topic: /图片|照片|实拍(?!视频)/u, location: /详情|商品页|主图|轮播/u },
       ];
+      const noRequestedMedia = /买家秀.{0,8}(?:视频|短片)|(?:视频|短片).{0,8}买家秀/u;
+      if (/或者|或是|或/u.test(ctx.question) && noRequestedMedia.test(ctx.question) && statements.some((part) =>
+        noRequestedMedia.test(part) && /(?:都|均|两种|这两样).{0,6}(?:没有|暂无|未提供|不提供)/u.test(part)) &&
+        !statements.some((part) => /(?:有|可看|可以看).{0,4}(?:买家秀|实拍视频)/u.test(part) && !/没有|暂无|未提供|不提供/u.test(part))) {
+        return { ...assessment(intent, [ctx.reply], [], false), acceptedGuidance: true };
+      }
       const requested = resources.filter((r) => r.topic.test(ctx.question));
       const evidence: string[] = []; const missing: string[] = [];
       let alternativeSatisfied = false;

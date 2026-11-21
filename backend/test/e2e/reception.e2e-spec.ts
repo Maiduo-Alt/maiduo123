@@ -664,6 +664,7 @@ describe('在线模拟接待端到端链路', () => {
       ['发出后大概多久能收到呢？', '亲，发出后一般2到4天送达，偏远地区可能久一些。', true],
       ['发出后大概多久能收到呢？', '亲，付款后通常48小时内发货。', false],
       ['发出后在哪里查看物流进度呢？', '亲，在订单详情里选择查看物流，就可以看到物流进度。', true],
+      ['走线整齐吗？', '针脚挺均匀的。', true],
       ['含棉量多少', '材质为其他纤维22%，商品详情未单独标注含棉量，可帮您确认。', true],
       ['含棉量多少', '商品页只标注材质其他纤维22%，确实无单独含棉量数据，暂时无法给准确数字。', true],
       ['适合搭配什么颜色的外套', '米色、卡其色、浅灰都很搭哦，温柔又显气质～', true],
@@ -703,6 +704,15 @@ describe('在线模拟接待端到端链路', () => {
         if (pass) {
           expect((result.ruleResult as any).invalid).not.toBe(true);
           expect(result.responseSec).toBeGreaterThanOrEqual(2);
+        }
+        if (content === '针脚挺均匀的。') {
+          expect(result.ruleResult.replyAssessment).toMatchObject({ status: 'resolved', acceptedGuidance: true });
+          await sharedDb.query(
+            `UPDATE messages SET rule_result = $2::jsonb WHERE session_id = $1 AND sender = 'agent'`,
+            [session.id, JSON.stringify({ ...result.ruleResult, modelEvaluation: { resolved: false, buyerReply: '我是想问走线整齐吗？' } })]);
+          await reception.advanceAfterReply(session.id);
+          const state = await sharedDb.one<{ follow_ups: number }>('SELECT follow_ups FROM sessions WHERE id = $1', [session.id]);
+          expect(Number(state?.follow_ups)).toBe(0);
         }
         if (question === '含棉量多少' || question === '适合搭配什么颜色的外套') {
           expect(result.ruleResult.replyAssessment?.status).toBe('resolved');

@@ -1048,10 +1048,16 @@ export class ReceptionService implements OnModuleInit {
       await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0, followUp);
       return;
     }
+    if (latestAssessment?.status === 'resolved' && latestAssessment.acceptedGuidance === true) {
+      await this.pushNextQuestion(sessionId);
+      return;
+    }
     const modelReply = judgedReplies[judgedReplies.length - 1]?.rule_result?.modelEvaluation;
     if (modelReply && !(latestRule?.judgmentVersion === 2 && latestAssessment?.intent === 'size-recommendation' && latestAssessment?.status === 'partial')) {
-      if (modelReply.resolved || (session.follow_ups || 0) >= (question.conversationPlan?.maxFollowUps ?? 2)) {
-        await this.pushNextQuestion(sessionId, modelReply.buyerReply);
+      const configuredLimit = question.conversationPlan?.maxFollowUps ?? 2;
+      const limit = latestRule?.judgmentVersion === 2 ? Math.min(1, configuredLimit) : configuredLimit;
+      if (modelReply.resolved || (session.follow_ups || 0) >= limit) {
+        await this.pushNextQuestion(sessionId, modelReply.resolved ? modelReply.buyerReply : undefined);
       } else {
         await this.pushMissingPointFollowUp(sessionId, session, question, [], session.follow_ups || 0, modelReply.buyerReply);
       }
@@ -1150,7 +1156,8 @@ export class ReceptionService implements OnModuleInit {
     // 敷衍回复维持“扣分后推进”的既有训练口径；答非所问/打太极则继续追问。
     const judged = judgedReplies.map((r) => r.rule_result?.judge?.signal ?? null).filter((s) => s !== null);
     const perfunctoryOnly = !resolved && !actionResolved && judged.length > 0 && judged.every((s) => s === 'perfunctory');
-    if (perfunctoryOnly || decidePush(resolved, actionResolved, followUps, maxFollowUps) === 'advance') {
+    const repeatLimit = latestRule?.judgmentVersion === 2 ? Math.min(1, maxFollowUps ?? 2) : maxFollowUps;
+    if (perfunctoryOnly || decidePush(resolved, actionResolved, followUps, repeatLimit) === 'advance') {
       await this.pushNextQuestion(sessionId);
       return;
     }
