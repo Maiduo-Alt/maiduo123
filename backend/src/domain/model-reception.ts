@@ -66,7 +66,18 @@ export async function evaluateWithModels(
       }
       const goals = new Map(input.goals.map((goal) => [goal.id, new Set(goal.points.map((point) => point.id))]));
       let evidence: string[] | undefined;
-      if (input.judgmentVersion === 2) {
+      if (input.judgmentVersion === 2 && provider.name === 'local') {
+        // A small model can get the verdict right while omitting or paraphrasing its quote.
+        // Only display actual reply text. For a positive verdict without a valid quote,
+        // show the whole reply and identify that it is supplied by the application.
+        evidence = (Array.isArray(result.evidence) ? result.evidence : []).filter((value: unknown): value is string =>
+          typeof value === 'string' && !!value.trim() && input.reply.includes(value));
+        if (result.resolved && !evidence.length) {
+          if (!input.reply.trim()) throw new Error('客服答复为空');
+          evidence = [input.reply];
+          result.reason += '（证据显示客服整句原文）';
+        }
+      } else if (input.judgmentVersion === 2) {
         if (!Array.isArray(result.evidence) || result.evidence.some((value: unknown) =>
           typeof value !== 'string' || !value.trim() || !input.reply.includes(value)) || (result.resolved && !result.evidence.length)) {
           throw new Error('模型判定缺少有效答复证据');

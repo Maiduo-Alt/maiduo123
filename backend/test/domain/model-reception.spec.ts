@@ -33,3 +33,14 @@ it('新版模型判定必须引用真实答复证据，缺证据时切换备用�
     .mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(valid) } }] }) });
   expect(await evaluateWithModels(modern, { glmKey: 'test', deepseekKey: 'test' }, mock as any)).toMatchObject({ provider: 'deepseek', evidence: ['不需要专门干洗'] });
 });
+
+it.each([[[]], [['不是客服原话']]])('本地模型无法引用有效片段时显示完整答复原文：%j', async (evidence) => {
+  const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ ...result, evidence }) } }],
+  }) });
+  const judged = await evaluateWithModels({ ...input, judgmentVersion: 2 },
+    { local: { url: 'http://local.test/v1/chat/completions', model: 'qwen' } }, fetchMock as any);
+  expect(judged).toMatchObject({ provider: 'local', resolved: true, evidence: [input.reply] });
+  expect(judged.reason).toContain('客服整句原文');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
