@@ -1355,11 +1355,11 @@ export class ReceptionService implements OnModuleInit {
       supportsMachineWash(text);
     const unsupportedFacts = 'status' in ruleAssessment && ruleAssessment.status === 'unsupported';
     const blockedAssessment = unsupportedFacts || (params.replyJudgmentVersion === 2 && (ruleAssessment.signal === 'perfunctory' || (ruleAssessment.intent === 'size-recommendation' && ruleAssessment.status === 'partial')));
-    const useGuidance = ruleAssessment.acceptedGuidance === true && !modelResult?.resolved;
+    const useGuidance = ruleAssessment.acceptedGuidance === true;
     const modelResolved = !!modelResult && (modelResult.resolved || (params.replyJudgmentVersion !== 2 && machineWashResolved)) && !pendingVerification && !blockedAssessment;
     const hitPoints = blockedAssessment
       ? []
-      : modelResult && currentQuestion && !(currentQuestion.semanticGoals || []).length
+      : modelResult && !useGuidance && currentQuestion && !(currentQuestion.semanticGoals || []).length
       ? (modelResolved ? [...currentQuestion.keyPoints] : [])
       : currentQuestion && !pendingVerification ? this.matchKeyPoints(text, currentQuestion.keyPoints) : [];
     const vectorCandidates = await findVectorCandidates(

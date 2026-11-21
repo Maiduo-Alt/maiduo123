@@ -216,6 +216,10 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
           !cottonAnswer.test(ctx.reply)) {
         return { ...assessment(intent, [ctx.reply], [], false), acceptedGuidance: true };
       }
+      if (polyester && !known && /(?:详情|商品页|资料|标签|洗标)/u.test(ctx.reply) &&
+          /(?:未|没有|没)(?:单独|明确)?(?:标注|注明|说明|写明).{0,12}(?:聚酯纤维|涤纶|材质|成分)/u.test(ctx.reply)) {
+        return { ...assessment(intent, [ctx.reply], [], false), acceptedGuidance: true };
+      }
       const answer = cottonRatio ? cottonAnswer : polyester ? polyesterAnswer : materialAnswer;
       const evidence = ctx.reply.split(/[，。；;！!\n]/u).filter((part) => answer.test(part) &&
         !/是否|[？?]|不确定|不清楚|不知道|无法确认|不能确认|核实|查询|待确认|可能|如果/u.test(part));
@@ -282,8 +286,15 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
       if (/尺码|选码|码表/u.test(ctx.question) && /哪些围度|什么围度|量哪里|量哪些/u.test(ctx.question)) {
         return /腰围|臀围|胸围|肩宽|腰臀围|量腰|量胯|量.{0,5}腰.{0,5}胯/u.test(part);
       }
-      if (/走线|缝线/u.test(ctx.question) && /整齐|怎么样|如何|线头/u.test(ctx.question)) {
-        return !/不整齐|不平整|不均匀/u.test(part) && /针脚.{0,8}(?:均匀|细密|平整|整齐)|(?:走线|缝线).{0,6}(?:平整|整齐|均匀)|(?:没有|没什么|很少有)线头/u.test(part);
+      if (/质量.{0,5}(?:怎么样|如何|好吗|有保障)|做工.{0,5}(?:怎么样|如何|好吗)/u.test(ctx.question) &&
+          !/走线|缝线|包边|锁边/u.test(ctx.question)) {
+        return /(?:出厂|发货)前.{0,12}(?:质检|检查)|经过.{0,8}质检|质量保证|质保/u.test(part);
+      }
+      if (/走线|缝线|车线/u.test(ctx.question) && /整齐|怎么样|如何|线头/u.test(ctx.question)) {
+        const stitchingAnswer = /(?:针脚|走线|缝线|车线).{0,8}(?:均匀|细密|平整|整齐|工整)|(?:没有|没什么|很少有)线头/u;
+        const directAnswer = /(?:是)?(?:整齐|工整|平整|均匀)(?:的)?[哦哈呢呀啦～~\s]*(?:亲亲?)?$/u;
+        return !/尺码|颜色|包装|不(?:太|够|算)?(?:整齐|平整|均匀|工整)/u.test(part) &&
+          (stitchingAnswer.test(part) || directAnswer.test(part));
       }
       if (/售后/u.test(ctx.question) && /怎么|如何|处理/u.test(ctx.question)) {
         return /订单.{0,12}(?:申请|售后|退换)|(?:拍照|拍图|拍.{0,4}照片|发照片).{0,12}(?:联系|发给|找)|(?:联系|找).{0,8}客服/u.test(part);
@@ -302,7 +313,8 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
       });
       const shippingOnly = SHIP_DURATION_RE.test(ctx.reply) && !evidence.length;
       const result = assessment('delivery-time', evidence, evidence.length ? [] : ['尚未说明到货时效'], pendingVerification);
-      return shippingOnly && !pendingVerification ? { ...result, status: 'unsupported', reason: '发货时间不能替代到货时间' } : result;
+      return shippingOnly && !pendingVerification ? { ...result, status: 'unsupported', reason: '发货时间不能替代到货时间' }
+        : result.pass ? { ...result, acceptedGuidance: true } : result;
     }
     if (/物流|快递/u.test(ctx.question) && /哪里|在哪|如何查看|怎么查看|怎么查|查询|查看/u.test(ctx.question)) {
       const evidence = statements.filter((part) => /订单|详情页|物流页|快递单号|物流信息/u.test(part) &&
@@ -423,7 +435,8 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
         if (/(?:没有|并无|并非|不是|不算|不存在)(?:任何|所谓的?)?(?:轻微|细微|略微|些微|微小)(?:的)?(?:色差|差异|差别)/u.test(part)) return false;
         return /色差(?:并)?(?:不大|很小|较小|明显|较大|很大|非常大|特别大)|(?:轻微|细微|略微|些微|微小|明显|严重)(?:的)?色差|没有(?:明显)?色差|颜色.{0,8}(?:接近|一致|差别不大)|(?:只有|会有|有)(?:轻微|细微|略微|些微|微小|较小)(?:的)?(?:差异|差别)|基本一样|差不多|不明显|有(?:一点|一点点|点区别)|多少.{0,5}一点/u.test(part);
       });
-      return assessment(intent, evidence, evidence.length ? [] : ['尚未说明颜色差异的程度'], pendingVerification);
+      const result = assessment(intent, evidence, evidence.length ? [] : ['尚未说明颜色差异的程度'], pendingVerification);
+      return result.pass ? { ...result, acceptedGuidance: true } : result;
     }
   }
   const judged = legacyAutomaticReply(ctx, version, result, pendingVerification);

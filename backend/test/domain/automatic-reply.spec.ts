@@ -12,6 +12,31 @@ describe('自动问答的意图与证据判断', () => {
   });
 
   it.each([
+    ['走线整齐吗？', '走线是整齐的哈', true],
+    ['走线整齐吗？', '整齐的哦', true],
+    ['走线整齐吗？', '整齐的亲亲', true],
+    ['走线整齐吗？', '是整齐的呢', true],
+    ['走线整齐吗？', '您不用担心，整齐的哈', true],
+    ['走线整齐吗？', '您好亲亲 这款商品是整齐的呢', true],
+    ['走线整齐吗？', '出厂前都有质检 整齐的', true],
+    ['走线整齐吗？', '质量请您放心，出厂前都有质检', false],
+    ['质量有保障吗？', '亲，质量请您放心哈，我们所有商品出厂前都经过严格质检的。', true],
+    ['发货后多久可以收到？', '亲，中小件商品发货后同城的一般隔天可以收到，省外的一般2-4天左右。', true],
+    ['发货后多久可以收到？', '亲，48小时内发货。', false],
+    ['色差大吗？', '亲，图片光线和屏幕可能产生细微色差，我们家支持7天无理由的。', true],
+  ])('报告证据回归：%s → %s', (question, reply, pass) => {
+    const actual = assess(question, reply);
+    expect(actual.pass).toBe(pass);
+    expect(assess(question, reply)).toEqual(actual);
+  });
+
+  it('商品未标注聚酯成分时接受如实说明', () => {
+    const ctx = { question: '是聚酯纤维吗？', reply: '商品页未明确标注成分，请以洗水标为准。', keyPoints: [], buyerText: '是聚酯纤维吗？' };
+    expect(assessAutomaticReply({ ...ctx, productMaterialDetails: '其他22%' }, 2).acceptedGuidance).toBe(true);
+    expect(assessAutomaticReply({ ...ctx, productMaterialDetails: '聚酯纤维100%' }, 2).acceptedGuidance).toBeUndefined();
+  });
+
+  it.each([
     ['如果想穿得休闲一些，鞋子可以怎么搭配呢？', '浅色帆布鞋就很合适。', true],
     ['买家秀或者实拍视频在哪里可以看？', '买家秀和实拍视频都没有。', true],
     ['有没有买家秀或者实拍视频可以看', '买家秀和实拍视频都没有。', true],
