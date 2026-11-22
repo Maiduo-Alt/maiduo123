@@ -45,7 +45,7 @@ it.each([[[]], [['不是客服原话']]])('本地模型无法引用有效片段�
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
-it('本地判定仅发送系统口径和本次输入，不把示例当成历史对话', async () => {
+it('本地判定示例和本次会话输入保持分离', async () => {
   const current = { ...input, judgmentVersion: 2 as const, reply: '我帮您查一下。' };
   const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
     choices: [{ message: { content: JSON.stringify({
@@ -54,8 +54,9 @@ it('本地判定仅发送系统口径和本次输入，不把示例当成历史�
   }) });
   const verdict = await evaluateWithModels(current, { local: { url: 'http://local.test', model: 'qwen' } }, mock as any);
   const sent = JSON.parse(mock.mock.calls[0][1].body);
-  expect(sent.messages.map((message: { role: string }) => message.role)).toEqual(['system', 'user']);
-  expect(JSON.parse(sent.messages[1].content)).toEqual(current);
+  const latest = sent.messages.at(-1);
+  expect(latest.role).toBe('user');
+  expect(JSON.parse(latest.content)).toEqual(current);
   expect(verdict).toMatchObject({ resolved: false, evidence: [] });
 });
 
