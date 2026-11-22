@@ -225,6 +225,37 @@ describe('在线模拟接待端到端链路', () => {
     }
   });
 
+  it('本地判定未解决且没有明确缺项时推进题目，不复述原题', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-local-no-repeat-test', JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [600, 600] })],
+    );
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+        VALUES ($1, 1, '语义买家', 'waiting_buyer', 1, 2, $2::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question: '能机洗吗？', keyPoints: [] },
+        { seq: 2, question: '这款什么时候发货？', keyPoints: [] }])],
+    );
+    const reception = app.get(ReceptionService);
+    try {
+      await sharedDb.query(
+        `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1, 'agent', '我核实一下', 1, $2::jsonb)`,
+        [session.id, JSON.stringify({ judgmentVersion: 2, semanticOnly: true,
+          judge: { pass: false, signal: 'hedge' }, replyAssessment: { status: 'unanswered' },
+          modelEvaluation: { provider: 'local', resolved: false, matchedPoints: [] } })],
+      );
+      await reception.advanceAfterReply(session.id);
+      const state = await sharedDb.one<{ current_seq: number; follow_ups: number }>(
+        'SELECT current_seq, follow_ups FROM sessions WHERE id = $1', [session.id]);
+      expect(state).toMatchObject({ current_seq: 2, follow_ups: 0 });
+      const replies = await sharedDb.many<{ seq: number }>(
+        "SELECT seq FROM messages WHERE session_id = $1 AND sender = 'buyer'", [session.id]);
+      expect(replies.every((reply) => reply.seq !== 1)).toBe(true);
+    } finally {
+      await sharedDb.query("UPDATE attempts SET status = 'finished' WHERE id = $1", [attempt.id]);
+    }
+  });
+
   it('模型备用接口参与回复判定，生成的买家消息按会话推送；失败可重试', async () => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,

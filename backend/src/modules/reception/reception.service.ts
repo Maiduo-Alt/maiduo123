@@ -1057,8 +1057,25 @@ export class ReceptionService implements OnModuleInit {
       const configuredLimit = question.conversationPlan?.maxFollowUps ?? 2;
       const limit = latestRule?.judgmentVersion === 2 ? Math.min(1, configuredLimit) : configuredLimit;
       if (modelReply.provider === 'local') {
-        if (modelReply.resolved || (session.follow_ups || 0) >= limit) await this.pushNextQuestion(sessionId);
-        else await this.pushFollowUp(sessionId, session, question, session.follow_ups || 0);
+        // A missing answer alone does not justify repeating the original question.
+        // Clarify only when the model identified some of the configured points.
+        const goals = question.semanticGoals || [];
+        const covered = new Set((modelReply.matchedPoints || []).flatMap((match: { goalId: string; pointIds: string[] }) =>
+          match.pointIds.map((pointId) => `${match.goalId}:${pointId}`)));
+        const points = goals.flatMap((goal) => goal.requiredPoints.map((point) =>
+          ({ key: `${goal.id}:${point.id}`, label: point.label })));
+        const missing = points.filter((point) => !covered.has(point.key) && point.label.trim());
+        if (!modelReply.resolved && !latestRule?.invalid && (session.follow_ups || 0) < limit &&
+            points.some((point) => covered.has(point.key)) && missing.length) {
+          const label = missing[0].label;
+          const normalize = (value: string) => value.replace(/[\p{P}\s]/gu, '');
+          if (normalize(label) !== normalize(question.question)) {
+            await this.pushMissingPointFollowUp(sessionId, session, question, [label], session.follow_ups || 0,
+              `这部分明白了，还想了解${label}，能再说明一下吗？`);
+            return;
+          }
+        }
+        await this.pushNextQuestion(sessionId);
         return;
       }
       if (modelReply.resolved || (session.follow_ups || 0) >= limit) {
@@ -1282,6 +1299,7 @@ export class ReceptionService implements OnModuleInit {
     const modelKeys = semanticMode === 'local' ? { local: {
       url: process.env.LOCAL_SEMANTIC_JUDGE_URL || 'http://semantic-judge:11434/v1/chat/completions',
       model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL || 'qwen2.5:1.5b',
+      onFailure: (reason: string) => this.logger.warn(`本地判定失败 attempt=${attemptId} session=${sessionId} seq=${session.current_seq}：${reason}`),
     } } : await this.credentials.getKeys();
     const judgingQuestion = Boolean(currentQuestion && session.current_seq > 0 && !session.opener_pending && !inAgentCloseWindow);
     const useModel = judgingQuestion && (semanticOnly || Boolean('glmKey' in modelKeys && (modelKeys.glmKey || modelKeys.deepseekKey)));
