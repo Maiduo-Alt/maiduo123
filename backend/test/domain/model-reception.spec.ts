@@ -72,8 +72,12 @@ it('本地判定使用固定采样设置，单次请求保留模型的未解决�
   expect(verdict).toMatchObject({ resolved: false, matchedPoints: [], evidence: [] });
   expect(mock).toHaveBeenCalledTimes(1);
   const sent = JSON.parse(mock.mock.calls[0][1].body);
-  expect(sent).toMatchObject({ temperature: 0, seed: 42, max_tokens: 128 });
+  expect(sent).toMatchObject({ temperature: 0, seed: 42, max_tokens: 192 });
   expect(sent.messages[0].content).toContain('确认前轻柔手洗');
+  expect(sent.response_format).toMatchObject({
+    type: 'json_schema',
+    json_schema: { schema: { required: ['resolved', 'reason', 'evidence'], additionalProperties: false } },
+  });
 });
 
 it.each([[undefined], [[{ goalId: 'invented', pointIds: ['invented'] }]]])(
@@ -98,4 +102,14 @@ it('本地有目标的题仍拒绝未知目标', async () => {
   }) });
   await expect(evaluateWithModels({ ...input, judgmentVersion: 2 },
     { local: { url: 'http://local.test', model: 'qwen' } }, mock as any)).rejects.toThrow('模型服务不可用');
+});
+
+it('本地 JSON 生成被截断时保留具体失败原因', async () => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ finish_reason: 'length', message: { content: '{"resolved":false' } }],
+  }) });
+  const onFailure = jest.fn();
+  await expect(evaluateWithModels({ ...input, goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen', onFailure } }, mock as any)).rejects.toThrow('模型服务不可用');
+  expect(onFailure).toHaveBeenCalledWith(expect.stringContaining('达到长度上限'));
 });
