@@ -37,12 +37,12 @@ it('新版模型判定必须引用真实答复证据，缺证据时切换备用�
 it.each([[[]], [['不是客服原话']]])('本地模型无法引用有效片段时显示完整答复原文：%j', async (evidence) => {
   const fetchMock = jest.fn().mockResolvedValueOnce({ ok: true, json: async () => ({
     choices: [{ message: { content: JSON.stringify({ ...result, evidence }) } }],
-  }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ choices: [{ message: { content: '{"answered":true}' } }] }) });
+  }) });
   const judged = await evaluateWithModels({ ...input, judgmentVersion: 2 },
     { local: { url: 'http://local.test/v1/chat/completions', model: 'qwen' } }, fetchMock as any);
   expect(judged).toMatchObject({ provider: 'local', resolved: true, evidence: [input.reply] });
   expect(judged.reason).toContain('客服整句原文');
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
 it('本地判定示例和本次会话输入保持分离', async () => {
@@ -60,34 +60,17 @@ it('本地判定示例和本次会话输入保持分离', async () => {
   expect(verdict).toMatchObject({ resolved: false, evidence: [] });
 });
 
-it('本地复核可以否决错误放行，且不继承首判理由', async () => {
-  const current = { ...input, judgmentVersion: 2 as const, reply: '我帮您查一下。' };
-  const response = (value: unknown) => ({ ok: true, json: async () => ({
-    choices: [{ message: { content: JSON.stringify(value) } }],
+it('本地判定使用固定采样设置，单次请求保留模型的未解决结论', async () => {
+  const current = { ...input, goals: [], judgmentVersion: 2 as const, reply: '我帮您查一下。' };
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({
+      resolved: false, reason: '只承诺查询', evidence: [], matchedPoints: [],
+    }) } }],
   }) });
-  const mock = jest.fn()
-    .mockResolvedValueOnce(response({ ...result, reason: '错误的首判理由', evidence: [] }))
-    .mockResolvedValueOnce(response({ answered: false }));
-  expect(await evaluateWithModels(current, { local: { url: 'http://local.test', model: 'qwen' } }, mock as any))
-    .toMatchObject({ resolved: false, matchedPoints: [], evidence: [] });
-  expect(mock.mock.calls[1][1].body).not.toContain('错误的首判理由');
-  expect(mock.mock.calls[1][1].signal).toBe(mock.mock.calls[0][1].signal);
-});
-
-it.each([
-  ['确认前建议轻柔手洗', true],
-  ['可以直接机洗', false],
-])('本地复核只以实际答复中的具体建议纠正首判：%s', async (advice, expected) => {
-  const current = { ...input, goals: [], judgmentVersion: 2 as const,
-    reply: '详情页没标注，请以洗标为准，确认前建议轻柔手洗。' };
-  const response = (value: unknown) => ({ ok: true, json: async () => ({
-    choices: [{ message: { content: JSON.stringify(value) } }],
-  }) });
-  const mock = jest.fn().mockResolvedValueOnce(response({
-    resolved: false, reason: '没有明确机洗结论', matchedPoints: [], evidence: [],
-  })).mockResolvedValueOnce(response({ answered: true, advice }));
   const verdict = await evaluateWithModels(current, { local: { url: 'http://local.test', model: 'qwen' } }, mock as any);
-  expect(verdict.resolved).toBe(expected);
-  expect(verdict.evidence).toEqual(expected ? [advice] : []);
-  expect(mock.mock.calls[1][1].signal).toBe(mock.mock.calls[0][1].signal);
+  expect(verdict).toMatchObject({ resolved: false, matchedPoints: [], evidence: [] });
+  expect(mock).toHaveBeenCalledTimes(1);
+  const sent = JSON.parse(mock.mock.calls[0][1].body);
+  expect(sent).toMatchObject({ temperature: 0, seed: 42, max_tokens: 256 });
+  expect(sent.messages[0].content).toContain('确认前轻柔手洗');
 });

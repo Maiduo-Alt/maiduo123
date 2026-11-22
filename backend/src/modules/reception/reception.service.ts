@@ -788,7 +788,7 @@ export class ReceptionService implements OnModuleInit {
     }
 
     const priorMessages = await this.db.many<any>(
-      `SELECT content, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
+      `SELECT content, seq, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
       [sessionId]
     );
     const evaluations = priorMessages.map((row) => row.rule_result?.semanticEvaluation).filter(Boolean);
@@ -807,6 +807,27 @@ export class ReceptionService implements OnModuleInit {
     const previousQuestion = session.questions.find((question) => question.seq === session.current_seq) || null;
     const previousTopic = conversationTopic(previousQuestion);
     const alreadyAnswered = [...(session.skipped_seqs || [])];
+    const passedLocalSeqs = new Set(priorMessages.filter((message) =>
+      message.rule_result?.modelEvaluation?.provider === 'local' &&
+      message.rule_result?.judge?.pass === true && !message.rule_result?.invalid,
+    ).map((message) => message.rule_result.questionSeq ?? message.seq));
+    if (passedLocalSeqs.size) {
+      const questionKey = (question: ScriptQuestion) => JSON.stringify([
+        question.stage, question.orderStage,
+        question.question.replace(/[，。！？、：；!?\s]/gu, '')
+          .replace(/^(?:对了|我还想顺便问一下|请问)+/u, ''),
+      ]);
+      const answeredKeys = new Set(session.questions.filter((question) =>
+        passedLocalSeqs.has(question.seq) && !(question.semanticGoals?.length) && !question.needTransfer,
+      ).map(questionKey));
+      for (const question of session.questions) {
+        if (question.seq > session.current_seq && !question.semanticGoals?.length && !question.needTransfer &&
+            !alreadyAnswered.includes(question.seq) && answeredKeys.has(questionKey(question))) {
+          alreadyAnswered.push(question.seq);
+        }
+      }
+    }
+
     const shippingAnswered = previousQuestion?.automaticEvaluation && priorMessages.some((message) =>
       message.rule_result?.judgmentVersion >= 1 && message.rule_result?.judge?.pass === true && !message.rule_result?.invalid &&
       shippingConditionsCompatible(

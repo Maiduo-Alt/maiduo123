@@ -17,14 +17,17 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
     ['走线整齐吗？', '我帮您查一下。', false],
     ['可以机洗吗？', '详情页没标注，请以洗标为准，确认前建议轻柔手洗。', true],
     ['可以机洗吗？', '没标注机洗，不过用洗衣袋就一定能机洗。', false],
+    ['这款连衣裙可以机洗吗？', '亲，这款商品页没有明确标注是否可机洗或需干洗哦。稳妥起见建议轻柔手洗，或洗衣袋机洗选轻柔模式，水温30度以下，洗后自然晾干避免暴晒烘干～收到后也可以看洗水标确认哦。', false],
   ];
   for (const [question, reply, expected] of cases) {
+    const started = Date.now();
     const result = await evaluateWithModels(
-      { question, goals: [], history: [], reply, judgmentVersion: 2 },
-      { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL, timeoutMs: 120000,
+      { question, goals: [], history: [{ role: 'buyer', content: question }], reply, judgmentVersion: 2 },
+      { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL,
         onFailure: reason => console.error('本地模型预检失败：' + reason) } },
     );
     if (result.resolved !== expected) throw Error('本地模型对部署样例的判定不符：' + JSON.stringify({question, reply, expected, result}));
+    console.log('本地预检耗时 ' + (Date.now() - started) + ' ms：' + question);
   }
   console.log('本地模型通过有效答复和空泛答复检查');
 })().catch(e=>{console.error(e.message); process.exitCode=1});

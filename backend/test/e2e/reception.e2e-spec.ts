@@ -196,9 +196,7 @@ describe('在线模拟接待端到端链路', () => {
     try {
       fetchMock.mockResolvedValueOnce({ ok: false } as Response);
       await expect(reception.sendMessage(1, attempt.id, session.id, '走线')).rejects.toThrow('模型服务不可用');
-      fetchMock.mockResolvedValueOnce(response(false, [])).mockResolvedValueOnce({
-        ok: true, json: async () => ({ choices: [{ message: { content: '{"answered":false}' } }] }),
-      } as Response);
+      fetchMock.mockResolvedValueOnce(response(false, []));
       const rejected = await reception.sendMessage(1, attempt.id, session.id, '走线可以帮您核实一下。');
       expect(rejected.ruleResult).toMatchObject({ semanticOnly: true, hitPoints: [], judge: { pass: false }, replyAssessment: { source: 'local' } });
       const inputAt = (index: number) => {
@@ -207,12 +205,10 @@ describe('在线模拟接待端到端链路', () => {
       };
       expect(inputAt(1).history).toEqual([{ role: 'buyer', content: '走线整齐吗？' }]);
       await addBuyer('袖口也整齐吗？', 1, { responseRoundStart: true });
-      fetchMock.mockResolvedValueOnce(response(true, ['整齐的哦'])).mockResolvedValueOnce({
-        ok: true, json: async () => ({ choices: [{ message: { content: '{"answered":true}' } }] }),
-      } as Response);
+      fetchMock.mockResolvedValueOnce(response(true, ['整齐的哦']));
       const accepted = await reception.sendMessage(1, attempt.id, session.id, '整齐的哦');
       expect(accepted.ruleResult).toMatchObject({ hitPoints: [], judge: { pass: true }, replyAssessment: { source: 'local' } });
-      expect(inputAt(3).history).toEqual([
+      expect(inputAt(2).history).toEqual([
         { role: 'buyer', content: '走线整齐吗？' },
         { role: 'agent', content: '走线可以帮您核实一下。' },
         { role: 'buyer', content: '袖口也整齐吗？' },
@@ -229,29 +225,32 @@ describe('在线模拟接待端到端链路', () => {
     }
   });
 
-  it('本地判定未解决且没有明确缺项时推进题目，不复述原题', async () => {
+  it.each([
+    [false, '这款该怎么手洗？', 2, []],
+    [true, '对了，我还想顺便问一下：请问能机洗吗!', 3, [2]],
+  ])('本地判定推进按已回答状态处理后续重复题：%s', async (passed, secondQuestion, expectedSeq, skipped) => {
     const attempt = await sharedDb.one<{ id: number }>(
       `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
-      ['AT-local-no-repeat-test', JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [600, 600] })],
+      [`AT-local-no-repeat-${passed}`, JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [600, 600] })],
     );
     const session = await sharedDb.one<{ id: number }>(
       `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
-        VALUES ($1, 1, '语义买家', 'waiting_buyer', 1, 2, $2::jsonb, now()) RETURNING id`,
+        VALUES ($1, 1, '语义买家', 'waiting_buyer', 1, 3, $2::jsonb, now()) RETURNING id`,
       [attempt.id, JSON.stringify([{ seq: 1, question: '能机洗吗？', keyPoints: [] },
-        { seq: 2, question: '这款什么时候发货？', keyPoints: [] }])],
+        { seq: 2, question: secondQuestion, keyPoints: [] }, { seq: 3, question: '面料厚吗？', keyPoints: [] }])],
     );
     const reception = app.get(ReceptionService);
     try {
       await sharedDb.query(
-        `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1, 'agent', '我核实一下', 1, $2::jsonb)`,
+        `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1, 'agent', $3, 1, $2::jsonb)`,
         [session.id, JSON.stringify({ judgmentVersion: 2, semanticOnly: true,
-          judge: { pass: false, signal: 'hedge' }, replyAssessment: { status: 'unanswered' },
-          modelEvaluation: { provider: 'local', resolved: false, matchedPoints: [] } })],
+          judge: { pass: passed, signal: passed ? 'key-point' : 'hedge' }, replyAssessment: { status: passed ? 'resolved' : 'unanswered' },
+          modelEvaluation: { provider: 'local', resolved: passed, matchedPoints: [] } }), passed ? '可以机洗' : '我核实一下'],
       );
       await reception.advanceAfterReply(session.id);
       const state = await sharedDb.one<{ current_seq: number; follow_ups: number }>(
-        'SELECT current_seq, follow_ups FROM sessions WHERE id = $1', [session.id]);
-      expect(state).toMatchObject({ current_seq: 2, follow_ups: 0 });
+        'SELECT current_seq, follow_ups, skipped_seqs FROM sessions WHERE id = $1', [session.id]);
+      expect(state).toMatchObject({ current_seq: expectedSeq, follow_ups: 0, skipped_seqs: skipped });
       const replies = await sharedDb.many<{ seq: number }>(
         "SELECT seq FROM messages WHERE session_id = $1 AND sender = 'buyer'", [session.id]);
       expect(replies.every((reply) => reply.seq !== 1)).toBe(true);
