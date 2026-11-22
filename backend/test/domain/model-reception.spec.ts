@@ -133,3 +133,18 @@ it.each([
   expect(review.messages[1].content).toBe(reply);
   expect(review.messages[0].content).not.toContain('首判通过');
 });
+
+it('本地 Qwen3 关闭思考模式，使用单次结构化判定', async () => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({
+      resolved: true, reason: '已回答', evidence: [input.reply],
+    }) } }],
+  }) });
+  const judged = await evaluateWithModels({ ...input, goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(judged.resolved).toBe(true);
+  expect(mock).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(mock.mock.calls[0][1].body)).toMatchObject({
+    reasoning_effort: 'none', response_format: { type: 'json_schema' },
+  });
+});
