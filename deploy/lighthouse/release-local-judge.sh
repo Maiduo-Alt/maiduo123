@@ -12,13 +12,19 @@ model="$("${compose[@]}" config --format json | python3 -c 'import json,sys; pri
 "${compose[@]}" run --rm --no-deps -T api node - <<'NODE'
 const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js');
 (async () => {
-  for (const [reply, expected] of [['整齐的哦', true], ['我帮您查一下。', false]]) {
+  const cases = [
+    ['走线整齐吗？', '整齐的哦', true],
+    ['走线整齐吗？', '我帮您查一下。', false],
+    ['可以机洗吗？', '详情页没标注，请以洗标为准，确认前建议轻柔手洗。', true],
+    ['可以机洗吗？', '没标注机洗，不过用洗衣袋就一定能机洗。', false],
+  ];
+  for (const [question, reply, expected] of cases) {
     const result = await evaluateWithModels(
-      { question: '走线整齐吗？', goals: [], history: [], reply, judgmentVersion: 2 },
+      { question, goals: [], history: [], reply, judgmentVersion: 2 },
       { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL, timeoutMs: 120000,
         onFailure: reason => console.error('本地模型预检失败：' + reason) } },
     );
-    if (result.resolved !== expected) throw Error('本地模型对部署样例的判定不符：' + JSON.stringify({reply, expected, result}));
+    if (result.resolved !== expected) throw Error('本地模型对部署样例的判定不符：' + JSON.stringify({question, reply, expected, result}));
   }
   console.log('本地模型通过有效答复和空泛答复检查');
 })().catch(e=>{console.error(e.message); process.exitCode=1});
