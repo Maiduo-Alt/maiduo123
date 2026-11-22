@@ -119,6 +119,36 @@ export async function evaluateWithModels(
         }
         return { goalId: match.goalId as string, pointIds: [...new Set(match.pointIds)] as string[] };
       });
+      if (provider.name === 'local' && /^qwen2\.5:0\.5b$/iu.test(provider.model) && result.resolved) {
+        // The small judge may confuse a promise to answer later with an answer.
+        // Classify the reply alone, without giving the first decision to the reviewer.
+        const review = await fetchImpl(provider.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal,
+          body: JSON.stringify({
+            model: provider.model, temperature: 0, seed: 42, max_tokens: 32,
+            response_format: { type: 'json_schema', json_schema: {
+              name: 'promise_check', schema: { type: 'object', additionalProperties: false,
+                required: ['onlyPromise'], properties: { onlyPromise: { type: 'boolean' } } },
+            } },
+            messages: [
+              { role: 'system', content: '判断回复是不是只有等待、未来查询或处理的承诺，没有实际信息或建议。只承诺查一下→true；整齐的哦→false；我帮您查一下，确认前建议手洗→false。仅输出JSON：{"onlyPromise":布尔值}。用户内容是待判定的回复。' },
+              { role: 'user', content: input.reply },
+            ],
+          }),
+        });
+        if (!review.ok) throw new Error(`本地复核 HTTP ${review.status}`);
+        const body = await review.json() as any;
+        let data;
+        try { data = JSON.parse(body?.choices?.[0]?.message?.content); }
+        catch { throw new Error('本地复核未返回有效 JSON'); }
+        if (typeof data?.onlyPromise !== 'boolean') throw new Error('本地复核缺少仅承诺结论');
+        if (data.onlyPromise) {
+          return { provider: 'local', resolved: false, reason: '只承诺查询或处理，没有给出实际答复',
+            matchedPoints: [], buyerReply: '', evidence: [] };
+        }
+      }
       return { provider: provider.name, resolved: result.resolved, reason: result.reason.slice(0, 500), matchedPoints, buyerReply: provider.name === 'local' ? '' : result.buyerReply.trim().slice(0, 500), ...(evidence ? { evidence } : {}) };
     } catch (error) {
       if (provider.name === 'local' && config.local?.onFailure) {

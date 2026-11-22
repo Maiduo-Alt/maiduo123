@@ -113,3 +113,23 @@ it('本地 JSON 生成被截断时保留具体失败原因', async () => {
     { local: { url: 'http://local.test', model: 'qwen', onFailure } }, mock as any)).rejects.toThrow('模型服务不可用');
   expect(onFailure).toHaveBeenCalledWith(expect.stringContaining('达到长度上限'));
 });
+
+it.each([
+  ['我帮您查一下。', true, false],
+  ['整齐的哦', false, true],
+])('0.5B 首判通过后独立核对空泛承诺：%s', async (reply, onlyPromise, resolved) => {
+  const response = (content: object) => ({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify(content) } }],
+  }) });
+  const mock = jest.fn().mockResolvedValueOnce(response({
+    resolved: true, reason: '首判通过', evidence: [reply], matchedPoints: [],
+  })).mockResolvedValueOnce(response({ onlyPromise }));
+  const verdict = await evaluateWithModels({ ...input, reply, goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen2.5:0.5b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved, evidence: resolved ? [reply] : [] });
+  expect(mock).toHaveBeenCalledTimes(2);
+  expect(mock.mock.calls[1][1].signal).toBe(mock.mock.calls[0][1].signal);
+  const review = JSON.parse(mock.mock.calls[1][1].body);
+  expect(review.messages[1].content).toBe(reply);
+  expect(review.messages[0].content).not.toContain('首判通过');
+});
