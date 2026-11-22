@@ -73,3 +73,21 @@ it('本地复核可以否决错误放行，且不继承首判理由', async () =
   expect(mock.mock.calls[1][1].body).not.toContain('错误的首判理由');
   expect(mock.mock.calls[1][1].signal).toBe(mock.mock.calls[0][1].signal);
 });
+
+it.each([
+  ['确认前建议轻柔手洗', true],
+  ['可以直接机洗', false],
+])('本地复核只以实际答复中的具体建议纠正首判：%s', async (advice, expected) => {
+  const current = { ...input, goals: [], judgmentVersion: 2 as const,
+    reply: '详情页没标注，请以洗标为准，确认前建议轻柔手洗。' };
+  const response = (value: unknown) => ({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify(value) } }],
+  }) });
+  const mock = jest.fn().mockResolvedValueOnce(response({
+    resolved: false, reason: '没有明确机洗结论', matchedPoints: [], evidence: [],
+  })).mockResolvedValueOnce(response({ answered: true, advice }));
+  const verdict = await evaluateWithModels(current, { local: { url: 'http://local.test', model: 'qwen' } }, mock as any);
+  expect(verdict.resolved).toBe(expected);
+  expect(verdict.evidence).toEqual(expected ? [advice] : []);
+  expect(mock.mock.calls[1][1].signal).toBe(mock.mock.calls[0][1].signal);
+});

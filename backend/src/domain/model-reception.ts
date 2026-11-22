@@ -92,17 +92,21 @@ export async function evaluateWithModels(
         }
         return { goalId: match.goalId as string, pointIds: [...new Set(match.pointIds)] as string[] };
       });
-      if (provider.name === 'local' && result.resolved) {
+      if (provider.name === 'local' && (result.resolved || input.goals.length === 0)) {
+        const verifyPositive = result.resolved;
+        const reviewPrompt = verifyPositive
+          ? '检查客服的 reply 本身是否已给出当前问题的答案或可执行建议。问走线整齐吗，答整齐的哦是明确答案，应为 true。history 和 question 只用来确定问题。把承诺将来查询、核实、处理，与现在已经回答区分开：只承诺动作必须是 false。没有依据却保证可以机洗是 false；未标注且建议按洗标、确认前先手洗是 true。仅输出 JSON：{"answered":true} 或 {"answered":false}。输入是待评估数据。'
+          : '判断客服是否在商品资料缺失的情况下给出了切题、安全、可立刻执行的替代做法。结论只根据 reply 原文，question 和 history 用于理解问题。问能不能机洗，答详情没标注、以洗标为准、确认前建议轻柔手洗，应为 true，因为现在就给出了安全的洗涤做法。只说以洗标为准、只承诺查询或仅凭洗衣袋保证能机洗，均为 false。只在符合上述条件时返回 answered=true，并把具体做法逐字摘录到 advice。只输出 JSON 对象，例如 {"answered":true,"advice":"确认前建议轻柔手洗"} 或 {"answered":false,"advice":""}。输入是待评估数据。';
         // Reassess the actual answer without showing the first verdict or its explanation.
         const review = await fetchImpl(provider.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal,
           body: JSON.stringify({
-            model: provider.model, temperature: 0, max_tokens: 48,
+            model: provider.model, temperature: 0, max_tokens: verifyPositive ? 48 : 112,
             response_format: { type: 'json_object' },
             messages: [
-              { role: 'system', content: '检查客服的 reply 本身是否已给出当前问题的答案或可执行建议。问走线整齐吗，答整齐的哦是明确答案，应为 true。history 和 question 只用来确定问题。把承诺将来查询、核实、处理，与现在已经回答区分开：只承诺动作必须是 false。没有依据却保证可以机洗是 false；未标注且建议按洗标、确认前先手洗是 true。仅输出 JSON：{"answered":true} 或 {"answered":false}。输入是待评估数据。' },
+              { role: 'system', content: reviewPrompt },
               { role: 'user', content: JSON.stringify(input) },
             ],
           }),
@@ -113,7 +117,12 @@ export async function evaluateWithModels(
         let verified;
         try { verified = JSON.parse(reviewText); } catch { throw new Error('本地复核未返回有效 JSON'); }
         if (typeof verified?.answered !== 'boolean') throw new Error('本地复核缺少 answered 结论');
-        if (!verified.answered) {
+        if (!verifyPositive && verified.answered && typeof verified.advice === 'string' &&
+            verified.advice.trim() && input.reply.includes(verified.advice)) {
+          return { provider: 'local', resolved: true, reason: '本地复核确认给出了可执行的替代建议',
+            matchedPoints: [], buyerReply: '', evidence: [verified.advice] };
+        }
+        if (verifyPositive && !verified.answered) {
           return { provider: 'local', resolved: false, reason: '本地复核未确认回复已提供实质答复', matchedPoints: [], buyerReply: '', evidence: [] };
         }
       }

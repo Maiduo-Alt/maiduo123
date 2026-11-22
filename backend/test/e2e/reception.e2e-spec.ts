@@ -196,7 +196,9 @@ describe('在线模拟接待端到端链路', () => {
     try {
       fetchMock.mockResolvedValueOnce({ ok: false } as Response);
       await expect(reception.sendMessage(1, attempt.id, session.id, '走线')).rejects.toThrow('模型服务不可用');
-      fetchMock.mockResolvedValueOnce(response(false, []));
+      fetchMock.mockResolvedValueOnce(response(false, [])).mockResolvedValueOnce({
+        ok: true, json: async () => ({ choices: [{ message: { content: '{"answered":false}' } }] }),
+      } as Response);
       const rejected = await reception.sendMessage(1, attempt.id, session.id, '走线可以帮您核实一下。');
       expect(rejected.ruleResult).toMatchObject({ semanticOnly: true, hitPoints: [], judge: { pass: false }, replyAssessment: { source: 'local' } });
       const inputAt = (index: number) => {
@@ -210,7 +212,7 @@ describe('在线模拟接待端到端链路', () => {
       } as Response);
       const accepted = await reception.sendMessage(1, attempt.id, session.id, '整齐的哦');
       expect(accepted.ruleResult).toMatchObject({ hitPoints: [], judge: { pass: true }, replyAssessment: { source: 'local' } });
-      expect(inputAt(2).history).toEqual([
+      expect(inputAt(3).history).toEqual([
         { role: 'buyer', content: '走线整齐吗？' },
         { role: 'agent', content: '走线可以帮您核实一下。' },
         { role: 'buyer', content: '袖口也整齐吗？' },
