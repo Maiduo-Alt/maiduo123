@@ -75,3 +75,27 @@ it('本地判定使用固定采样设置，单次请求保留模型的未解决�
   expect(sent).toMatchObject({ temperature: 0, seed: 42, max_tokens: 128 });
   expect(sent.messages[0].content).toContain('确认前轻柔手洗');
 });
+
+it.each([[undefined], [[{ goalId: 'invented', pointIds: ['invented'] }]]])(
+  '本地无目标题忽略多余目标输出：%j', async (matchedPoints) => {
+    const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+      choices: [{ message: { content: JSON.stringify({
+        resolved: true, reason: '有实质答复', evidence: [input.reply], matchedPoints,
+      }) } }],
+    }) });
+    const parsed = await evaluateWithModels({ ...input, goals: [], judgmentVersion: 2 },
+      { local: { url: 'http://local.test', model: 'qwen' } }, mock as any);
+    expect(parsed).toMatchObject({ resolved: true, matchedPoints: [], evidence: [input.reply] });
+    expect(JSON.parse(mock.mock.calls[0][1].body).messages[0].content).not.toContain('matchedPoints');
+  }
+);
+
+it('本地有目标的题仍拒绝未知目标', async () => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({
+      ...result, matchedPoints: [{ goalId: 'unknown', pointIds: ['label'] }],
+    }) } }],
+  }) });
+  await expect(evaluateWithModels({ ...input, judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen' } }, mock as any)).rejects.toThrow('模型服务不可用');
+});
