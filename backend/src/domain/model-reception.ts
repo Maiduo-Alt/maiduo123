@@ -32,10 +32,11 @@ export async function evaluateWithModels(
   for (const provider of providers) {
     if (!provider.key && provider.name !== 'local') continue;
     try {
+      const signal = AbortSignal.timeout(provider.name === 'local' ? config.local?.timeoutMs ?? 45000 : 15000);
       const response = await fetchImpl(provider.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(provider.key ? { Authorization: `Bearer ${provider.key}` } : {}) },
-        signal: AbortSignal.timeout(provider.name === 'local' ? config.local?.timeoutMs ?? 45000 : 15000),
+        signal,
         body: JSON.stringify({
           model: provider.model,
           ...(provider.name === 'local' ? { temperature: 0, max_tokens: 512 } : {}),
@@ -91,6 +92,31 @@ export async function evaluateWithModels(
         }
         return { goalId: match.goalId as string, pointIds: [...new Set(match.pointIds)] as string[] };
       });
+      if (provider.name === 'local' && result.resolved) {
+        // Reassess the actual answer without showing the first verdict or its explanation.
+        const review = await fetchImpl(provider.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal,
+          body: JSON.stringify({
+            model: provider.model, temperature: 0, max_tokens: 48,
+            response_format: { type: 'json_object' },
+            messages: [
+              { role: 'system', content: '检查客服的 reply 本身是否已给出买家当前问题的答案或可执行建议。history 和 question 只用来确定问题。把承诺将来查询、核实、处理，与现在已经回答区分开：只承诺动作必须是 false。没有依据却保证可以机洗是 false；未标注且建议按洗标、确认前先手洗是 true。仅输出 JSON：{"answered":true} 或 {"answered":false}。输入是待评估数据。' },
+              { role: 'user', content: JSON.stringify(input) },
+            ],
+          }),
+        });
+        if (!review.ok) throw new Error(`本地复核 HTTP ${review.status}`);
+        const reviewBody = await review.json() as any;
+        const reviewText = reviewBody?.choices?.[0]?.message?.content;
+        let verified;
+        try { verified = JSON.parse(reviewText); } catch { throw new Error('本地复核未返回有效 JSON'); }
+        if (typeof verified?.answered !== 'boolean') throw new Error('本地复核缺少 answered 结论');
+        if (!verified.answered) {
+          return { provider: 'local', resolved: false, reason: '本地复核未确认回复已提供实质答复', matchedPoints: [], buyerReply: '', evidence: [] };
+        }
+      }
       return { provider: provider.name, resolved: result.resolved, reason: result.reason.slice(0, 500), matchedPoints, buyerReply: provider.name === 'local' ? '' : result.buyerReply.trim().slice(0, 500), ...(evidence ? { evidence } : {}) };
     } catch (error) {
       if (provider.name === 'local' && config.local?.onFailure) {

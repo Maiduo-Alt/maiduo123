@@ -205,7 +205,9 @@ describe('在线模拟接待端到端链路', () => {
       };
       expect(inputAt(1).history).toEqual([{ role: 'buyer', content: '走线整齐吗？' }]);
       await addBuyer('袖口也整齐吗？', 1, { responseRoundStart: true });
-      fetchMock.mockResolvedValueOnce(response(true, ['整齐的哦']));
+      fetchMock.mockResolvedValueOnce(response(true, ['整齐的哦'])).mockResolvedValueOnce({
+        ok: true, json: async () => ({ choices: [{ message: { content: '{"answered":true}' } }] }),
+      } as Response);
       const accepted = await reception.sendMessage(1, attempt.id, session.id, '整齐的哦');
       expect(accepted.ruleResult).toMatchObject({ hitPoints: [], judge: { pass: true }, replyAssessment: { source: 'local' } });
       expect(inputAt(2).history).toEqual([
