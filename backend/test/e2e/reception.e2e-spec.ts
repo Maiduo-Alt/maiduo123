@@ -203,7 +203,8 @@ describe('在线模拟接待端到端链路', () => {
         const body = JSON.parse(String(fetchMock.mock.calls[index][1]?.body));
         return JSON.parse(body.messages.at(-1).content);
       };
-      expect(inputAt(1).history).toEqual([{ role: 'buyer', content: '走线整齐吗？' }]);
+      expect(inputAt(1)).toMatchObject({ question: '走线整齐吗？' });
+      expect(inputAt(1).history).toBeUndefined();
       await addBuyer('袖口也整齐吗？', 1, { responseRoundStart: true });
       fetchMock.mockResolvedValueOnce(response(true, ['整齐的哦']));
       const accepted = await reception.sendMessage(1, attempt.id, session.id, '整齐的哦');

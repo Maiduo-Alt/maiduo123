@@ -56,7 +56,8 @@ it('本地判定示例和本次会话输入保持分离', async () => {
   const sent = JSON.parse(mock.mock.calls[0][1].body);
   const latest = sent.messages.at(-1);
   expect(latest.role).toBe('user');
-  expect(JSON.parse(latest.content)).toEqual(current);
+  expect(JSON.parse(latest.content)).toEqual({ question: current.question, reply: current.reply, goals: current.goals });
+  expect(sent.messages).toHaveLength(2);
   expect(verdict).toMatchObject({ resolved: false, evidence: [] });
 });
 
@@ -71,6 +72,6 @@ it('本地判定使用固定采样设置，单次请求保留模型的未解决�
   expect(verdict).toMatchObject({ resolved: false, matchedPoints: [], evidence: [] });
   expect(mock).toHaveBeenCalledTimes(1);
   const sent = JSON.parse(mock.mock.calls[0][1].body);
-  expect(sent).toMatchObject({ temperature: 0, seed: 42, max_tokens: 256 });
+  expect(sent).toMatchObject({ temperature: 0, seed: 42, max_tokens: 128 });
   expect(sent.messages[0].content).toContain('确认前轻柔手洗');
 });
