@@ -244,6 +244,38 @@ it.each([
 });
 
 const declaredBlend = { product: { title: '棉感衬衫', attributes: [{ name: '成分', value: '65%棉，35%聚酯纤维' }] } };
+const partlyDeclaredMaterial = { product: { title: '棉感衬衫', attributes: [{ name: '材质', value: '其他纤维22%' }] } };
+
+it.each([
+  ['含棉量多少？', '商品页只标注材质其他纤维22%，确实无单独含棉量数据，暂时无法给准确数字。'],
+  ['含棉量大概多少呀？', '详情页没有明确含棉量，我可以核对成分标签后回复您。'],
+  ['还有个问题，麻烦直接说下：这款是聚酯纤维的吗？', '商品详情没有注明是否含聚酯纤维，可以帮您核对标签。'],
+  ['还有，含棉量大概多少呢？', '商品详情未单独标注含棉量，可帮您确认。'],
+])('商品资料缺项与系统转场问法仍按实际成分问题判断：%s %s', async (question, reply) => {
+  const mock = jest.fn();
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts: partlyDeclaredMaterial },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved: true, decisionSource: 'material-details' });
+  expect(verdict.evidence?.every((part) => reply.includes(part))).toBe(true);
+  expect(mock).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['是聚酯纤维吗？', '我帮您看标签确认是否含聚酯纤维。', partlyDeclaredMaterial],
+  ['是聚酯纤维吗？', '商品详情没有明确含棉量，我帮您确认。', partlyDeclaredMaterial],
+  ['是聚酯纤维吗？', '商品详情没有注明是否含聚酯纤维。', declaredBlend],
+  ['是聚酯纤维吗？', '我看了商品详情，没有注明含有聚酯纤维。', declaredBlend],
+  ['含棉量多少？', '商品页可能没有标注含棉量。', partlyDeclaredMaterial],
+  ['还有，含棉量多少，另外多久发货？', '详情页没有明确含棉量。', partlyDeclaredMaterial],
+])('查标签承诺、不同成分问题或已标注内容不由缺项规则放行：%s %s', async (question, reply, facts) => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '模拟模型判定', evidence: [] }) } }],
+  }) });
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict.decisionSource).toBeUndefined();
+  expect(mock).toHaveBeenCalledTimes(1);
+});
 
 it.each([
   ['这款含多少棉呢？', '大约65%。', declaredBlend],

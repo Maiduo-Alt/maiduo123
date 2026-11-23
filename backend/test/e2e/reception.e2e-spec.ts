@@ -2617,6 +2617,52 @@ describe('在线模拟接待端到端链路', () => {
     }
   });
 
+  it('本地判定按当前成分问题推进两轮，并保留规则依据和解决分', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ('AT-material-disclosure-rounds', 1, 'L1', 'free', $1::jsonb) RETURNING id`,
+      [JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [600, 600] })],
+    );
+    const questions = [
+      { seq: 1, question: '含棉量大概多少呢？', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '这款是聚酯纤维吗？', keyPoints: [], automaticEvaluation: true, topicTransition: true },
+    ];
+    const products = [{ id: 1, title: '棉感衬衫', attributes: [{ name: '材质', value: '其他纤维22%' }] }];
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, style_code, state, current_seq, total_questions, questions, products, last_buyer_at)
+       VALUES ($1, 1, '成分测试买家', 'impatient', 'serving', 1, 2, $2::jsonb, $3::jsonb, now()) RETURNING id`,
+      [attempt.id, JSON.stringify(questions), JSON.stringify(products)],
+    );
+    await sharedDb.query(
+      `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1, 'buyer', $2, 1, $3::jsonb)`,
+      [session.id, questions[0].question, JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' })],
+    );
+    const reception = app.get(ReceptionService);
+    const oldMode = process.env.REPLY_JUDGMENT_MODE;
+    process.env.REPLY_JUDGMENT_MODE = 'local';
+    const fetchMock = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('本地模型不可用'));
+    try {
+      const first = await reception.submitMessage(1, attempt.id, session.id,
+        '商品页只标注材质其他纤维22%，确实无单独含棉量数据，暂时无法给准确数字。', true);
+      expect(first.ruleResult).toMatchObject({ judge: { pass: true }, replyAssessment: { source: 'rule' } });
+      await reception.advanceAfterReply(session.id);
+      const pushed = await reception.snapshot(1, attempt.id);
+      expect(pushed.messages.at(-1)?.content).toBe('还有个问题，麻烦直接说下：这款是聚酯纤维吗？');
+      const second = await reception.submitMessage(1, attempt.id, session.id,
+        '商品详情没有注明是否含聚酯纤维，可以帮您核对标签。', true);
+      expect(second.ruleResult).toMatchObject({ judge: { pass: true }, replyAssessment: { source: 'rule' } });
+      expect(fetchMock).not.toHaveBeenCalled();
+      await reception.finishSession(1, attempt.id, session.id);
+      const result = await reception.attemptResult(attempt.id);
+      expect(result.sessions[0].metrics.solvedCount).toBe(2);
+    } finally {
+      fetchMock.mockRestore();
+      if (oldMode === undefined) delete process.env.REPLY_JUDGMENT_MODE; else process.env.REPLY_JUDGMENT_MODE = oldMode;
+      (reception as any).scheduler.cancel(`next:${session.id}`);
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  });
+
   it('服务重启恢复：进行中的接待不被中止，待接入队列保留且能继续补位', async () => {
     // 自由练习只对管理员/主管开放（客户新增需求）
     const token = await login('admin', 'Admin@123');

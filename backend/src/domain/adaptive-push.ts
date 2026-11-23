@@ -69,6 +69,14 @@ export function buildTopicTransitionText(styleCode: string, question: string): s
   return template.replace('{q}', text);
 }
 
+/** Remove only wording the simulator adds before a new buyer question. */
+export function stripTopicTransitionText(question: string): string {
+  const prefix = Object.values(TOPIC_TRANSITION_TEMPLATES)
+    .map((template) => template.split('{q}')[0])
+    .find((candidate) => question.startsWith(candidate));
+  return prefix ? question.slice(prefix.length) : question;
+}
+
 /**
  * 生成追问话术（1 条）。
  * @param styleCode 沟通风格编码

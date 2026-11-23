@@ -1,4 +1,5 @@
 import { assessAutomaticReply, replyIntent } from './automatic-reply';
+import { stripTopicTransitionText } from './adaptive-push';
 import { assessLocalWashGuidance, hasWashInformation } from './local-wash-guidance';
 import type { ModelReceptionInput, ModelReceptionResult } from './model-reception';
 
@@ -39,6 +40,16 @@ function assessMediaLocation(input: ModelReceptionInput): ModelReceptionResult |
 
 const COTTON_RATIO = /含棉量|棉含量|棉的比例|棉占比|棉成分/u;
 const POLYESTER = /聚酯纤维|涤纶/u;
+const MATERIAL_UNCERTAINTY = /也许|或许|估计|不敢保证|不确定|说不准|(?:可能|是否|如果|不能说|不代表|没说|未说|不排除)[^。！？]*?(?:棉|聚酯纤维|涤纶)/u;
+
+function materialDisclosure(clauses: string[], cotton: boolean): string[] {
+  const source = /详情|商品页|资料|材质栏|标签|吊牌|洗标/u;
+  const unlistedCotton = /(?:未|没有|没|无)(?:(?:单独|明确|具体|准确)*(?:标注|写明|注明|给出|说明)|(?:单独|明确|具体|准确)+).{0,8}(?:含棉量|棉含量|棉的比例|棉占比)/u;
+  const unlistedPolyester = /(?:未|没有|没)(?:单独|明确|具体)*(?:标注|写明|注明|给出|说明)\s*(?:(?:是否)?(?:含有|含|是|为)?(?:聚酯纤维|涤纶)|(?:具体)?(?:面料)?(?:材质|成分))/u;
+  const pattern = cotton ? unlistedCotton : unlistedPolyester;
+  return clauses.filter((part) => source.test(part) && pattern.test(part) &&
+    !/如果|假如|可能|好像|不确定|不清楚|不知道|并非|不是说|不代表|是否(?:没有|未|没)|确认(?:一下|下).{0,8}(?:没有|未|没)/u.test(part));
+}
 
 function cottonPercents(text: string, standalone = false): number[] {
   const values = [...text.matchAll(/(?:棉(?:纤维)?(?:含量|占比|比例|成分)?)(?:大约|大概|约|是|为|占|有|\s)*(\d{1,3}(?:\.\d+)?)\s*[%％]|(?<![\d.−-])(\d{1,3}(?:\.\d+)?)\s*[%％]\s*(?:的)?\s*棉/gu)]
@@ -51,8 +62,8 @@ function cottonPercents(text: string, standalone = false): number[] {
 }
 
 function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult | undefined {
-  const question = input.question.replace(/[？?]麻烦直接说一下。?$/u, '').replace(/[？?。\s]+$/u, '');
-  const cotton = /(?:含棉量|棉含量|棉的比例|棉占比)(?:是)?(?:多少|有多少|高吗|多少呢)$|(?:含多少棉|棉占多少|棉成分(?:有|是)?多少)(?:呢|啊)?$/u.test(question);
+  const question = stripTopicTransitionText(input.question.trim()).replace(/[？?]麻烦直接说一下。?$/u, '').replace(/[？?。\s]+$/u, '');
+  const cotton = /(?:含棉量|棉含量|棉的比例|棉占比)(?:大概|大约|约)?(?:是|有)?(?:多少|几成|百分之几|高吗)(?:呢|啊|呀)?$|(?:含(?:有)?(?:多少|几成)棉|棉占多少|棉成分(?:有|是)?多少)(?:呢|啊|呀)?$/u.test(question);
   const polyester = /(?:是|是不是|是否是|是否为|属于|含有|有没有)(?:聚酯纤维|涤纶)(?:的面料|面料|的)?(?:吗|呢|啊)?$/u.test(question);
   if ((!cotton && !polyester) || /[\n；;？?]|(?:吗|呢|嘛|么)[，,]|还有|以及|并且|还是|注意事项|怎么洗|缩水|透气|会不会|色差|尺码|发货|退换|什么(?:面料|材质|成分)/u.test(question)) return undefined;
   const product = input.facts?.product;
@@ -67,12 +78,17 @@ function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult
     : /纯棉|全棉/u.test(title) && !/仿|棉感|手感/u.test(title) ? '纯棉' : '';
   const details = [declaredTitle, ...material.map((row) => row.value)];
   const reply = input.reply;
-  if (/也许|或许|估计|不敢保证|不确定|说不准|(?:可能|是否|如果|不能说|不代表|没说|未说|不排除)[^。！？]*?(?:棉|聚酯纤维|涤纶)|[？?]/u.test(reply)) return undefined;
+  if (/[？?]/u.test(reply)) return undefined;
   const clauses = reply.split(/[，,。；;！!\n]|但是|不过|但(?=不|要|有|含|是)|且(?=不|有|含|是)/u).map((part) => part.trim()).filter(Boolean);
+  // A disclosure can refer back to the source in the preceding clause of the same reply.
+  const disclosure = materialDisclosure(reply.split(/[。；;！!\n]/u), cotton);
+  if (!disclosure.length && MATERIAL_UNCERTAINTY.test(reply)) return undefined;
+  const directClauses = clauses.filter((part) => !MATERIAL_UNCERTAINTY.test(part) &&
+    !/核实|查一下|待确认|确认后|(?:未|没有|没)(?:明确|单独|具体)*(?:标注|写明|注明|给出|说明)/u.test(part));
   let evidence: string[];
   if (cotton) {
     if (/棉[^，,。；;]*不含棉|不含棉[^，,。；;]*(?:棉.{0,4}\d|\d+\s*[%％]\s*棉)|(?:不是|并非|不等于)[^，,。；;]*(?:棉|[%％])/u.test(reply)) return undefined;
-    const replies = clauses.map((part) => ({ part, percents: cottonPercents(part, true) }))
+    const replies = directClauses.map((part) => ({ part, percents: cottonPercents(part, true) }))
       .filter((item) => item.percents.length);
     const known = [...cottonPercents(declaredTitle), ...material.flatMap((row) => cottonPercents(row.value, COTTON_RATIO.test(row.name)))];
     if (details.some((value) => /(?:100\s*[%％]\s*|全|纯)(?:聚酯纤维|涤纶)/u.test(value))) known.push(0);
@@ -80,21 +96,19 @@ function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult
     if (new Set([...known, ...stated]).size > 1 || [...known, ...stated].some((value) => value > 100) ||
         (stated.includes(0) && !known.length && details.some((value) => /棉/u.test(value) && !/棉感|仿棉|不含棉/u.test(value)))) return undefined;
     evidence = replies.map((item) => item.part);
-    if (!evidence.length && !known.length && /详情|商品页|资料|材质栏|标签|吊牌|洗标/u.test(reply) &&
-        /(?:未|没有|没)(?:单独|明确|具体)?(?:标注|写明|注明|给出|说明).{0,8}(?:含棉量|棉含量|棉的比例|棉占比)/u.test(reply)) evidence = [reply];
+    if (!evidence.length && !known.length) evidence = disclosure;
   } else {
     const deny = /(?:不是|不含|没有)(?:任何|用)?(?:聚酯纤维|涤纶)/u;
     const yes = /(?:是|采用|使用|用的是|主要为|含有|含)(?:的|用的)?(?:聚酯纤维|涤纶)|(?:聚酯纤维|涤纶)(?:的)?(?:面料|材质|成分)[的哦哈呢呀\s]*$|^(?:聚酯纤维|涤纶|是的|对的)[的哦哈呢呀\s]*$/u;
-    const positive = clauses.filter((part) => yes.test(part) && !deny.test(part));
-    const negative = clauses.filter((part) => deny.test(part) || /^(?:不是的?|没有)[哦哈呢呀\s]*$/u.test(part));
+    const positive = directClauses.filter((part) => yes.test(part) && !deny.test(part));
+    const negative = directClauses.filter((part) => deny.test(part) || /^(?:不是的?|没有)[哦哈呢呀\s]*$/u.test(part));
     const knownPositive = details.some((value) => POLYESTER.test(value) && !deny.test(value) && !/样|仿|未标|暂无/u.test(value));
     const knownNegative = details.some((value) => deny.test(value) || cottonPercents(value).includes(100) ||
       /100\s*[%％]\s*(?:锦纶|羊毛|真丝|亚麻)/u.test(value));
     if ((knownPositive || positive.length) && (knownNegative || negative.length)) return undefined;
     if (knownPositive && positive.some((part) => /[%％]|百分之|全(?:聚酯纤维|涤纶)|纯(?:聚酯纤维|涤纶)/u.test(part))) return undefined;
     evidence = [...positive, ...negative];
-    if (!evidence.length && !knownPositive && !knownNegative && /详情|商品页|资料|标签|洗标/u.test(reply) &&
-        /(?:未|没有|没)(?:单独|明确)?(?:标注|注明|说明|写明).{0,12}(?:聚酯纤维|涤纶|材质|成分)/u.test(reply)) evidence = [reply];
+    if (!evidence.length && !knownPositive && !knownNegative) evidence = disclosure;
   }
   if (!evidence.length) return undefined;
   return { provider: 'local', decisionSource: 'material-details', resolved: true,
