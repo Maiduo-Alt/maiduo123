@@ -137,7 +137,7 @@ it.each([
 it('本地 Qwen3 关闭思考模式，使用单次结构化判定', async () => {
   const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
     choices: [{ message: { content: JSON.stringify({
-      resolution: 'direct_answer', reason: '已回答', evidence: [input.reply],
+      resolved: true, reason: '已回答', evidence: [input.reply],
     }) } }],
   }) });
   const judged = await evaluateWithModels({ ...input, goals: [], judgmentVersion: 2 },
@@ -150,15 +150,20 @@ it('本地 Qwen3 关闭思考模式，使用单次结构化判定', async () => 
 });
 
 it.each([
-  ['safe_alternative', ['确认前建议轻柔手洗'], true],
-  ['safe_alternative', ['建议直接机洗'], false],
-  ['unanswered', [], false],
-])('本地 Qwen3 作答类别 %s 按证据转换为通过状态', async (resolution, evidence, resolved) => {
-  const reply = '详情没标注，请以洗标为准，确认前建议轻柔手洗。';
-  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
-    choices: [{ message: { content: JSON.stringify({ resolution, reason: '资料有限', evidence }) } }],
+  ['详情没标注，确认前建议轻柔手洗。', ['建议轻柔手洗'], true, '建议轻柔手洗', true, 2],
+  ['详情没标注，确认前建议轻柔手洗。', ['建议轻柔手洗'], true, '建议机洗', false, 2],
+  ['未确认，建议手洗或用洗衣袋机洗。', ['建议手洗'], false, '', false, 2],
+  ['我帮您查一下。', [], true, '我帮您查一下', false, 1],
+])('本地 Qwen3 只复核有原文依据的被拒答复：%s', async (reply, evidence, safe, quote, expected, calls) => {
+  const response = (value: object) => ({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify(value) } }],
   }) });
-  const judged = await evaluateWithModels({ ...input, question: '可以机洗吗？', reply, goals: [], judgmentVersion: 2 },
+  const mock = jest.fn().mockResolvedValueOnce(response({
+    resolved: false, reason: '未给机洗结论', evidence,
+  })).mockResolvedValueOnce(response({ safe, quote }));
+  const verdict = await evaluateWithModels({ ...input, question: '可以机洗吗？', reply, goals: [], judgmentVersion: 2 },
     { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
-  expect(judged.resolved).toBe(resolved);
+  expect(verdict.resolved).toBe(expected);
+  expect(mock).toHaveBeenCalledTimes(calls);
+  if (calls === 2) expect(mock.mock.calls[1][1].signal).toBe(mock.mock.calls[0][1].signal);
 });
