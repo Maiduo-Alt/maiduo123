@@ -150,20 +150,41 @@ it('本地 Qwen3 关闭思考模式，使用单次结构化判定', async () => 
 });
 
 it.each([
-  ['详情没标注，确认前建议轻柔手洗。', ['建议轻柔手洗'], true, '建议轻柔手洗', true, 2],
-  ['详情没标注，确认前建议轻柔手洗。', ['建议轻柔手洗'], true, '建议机洗', false, 2],
-  ['未确认，建议手洗或用洗衣袋机洗。', ['建议手洗'], false, '', false, 2],
-  ['我帮您查一下。', [], true, '我帮您查一下', false, 1],
-])('本地 Qwen3 只复核有原文依据的被拒答复：%s', async (reply, evidence, safe, quote, expected, calls) => {
+  ['详情没标注，确认前建议轻柔手洗。', ['建议轻柔手洗'], 'alternative', 1, true, 2],
+  ['详情没标注，确认前建议轻柔手洗。', ['建议轻柔手洗'], 'alternative', 2, false, 2],
+  ['未确认，建议手洗或用洗衣袋机洗。', ['建议手洗'], 'none', 0, false, 2],
+  ['我帮您查一下。', [], 'direct', 1, false, 1],
+])('本地 Qwen3 只复核有原文依据的被拒答复：%s', async (reply, evidence, kind, index, expected, calls) => {
   const response = (value: object) => ({ ok: true, json: async () => ({
     choices: [{ message: { content: JSON.stringify(value) } }],
   }) });
   const mock = jest.fn().mockResolvedValueOnce(response({
     resolved: false, reason: '未给机洗结论', evidence,
-  })).mockResolvedValueOnce(response({ safe, quote }));
+  })).mockResolvedValueOnce(response({ kind, index }));
   const verdict = await evaluateWithModels({ ...input, question: '可以机洗吗？', reply, goals: [], judgmentVersion: 2 },
     { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
   expect(verdict.resolved).toBe(expected);
   expect(mock).toHaveBeenCalledTimes(calls);
   if (calls === 2) expect(mock.mock.calls[1][1].signal).toBe(mock.mock.calls[0][1].signal);
+});
+
+it.each([
+  ['图片光线和屏幕可能产生细微色差', 'direct', 2, true],
+  ['这款用的是聚酯纤维', 'none', 0, false],
+] as const)('色差复核区分程度说明和无关信息：%s', async (firstClause, kind, index, expected) => {
+  const question = '实物和详情页图片色差大吗？';
+  const serviceClause = '如果收到不合适可以联系客服';
+  const reply = `${firstClause}，${serviceClause}。`;
+  const evidence = [serviceClause, firstClause];
+  const response = (value: object) => ({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify(value) } }],
+  }) });
+  const mock = jest.fn()
+    .mockResolvedValueOnce(response({ resolved: false, reason: reply, evidence }))
+    .mockResolvedValueOnce(response({ kind, index }));
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved: expected, evidence: expected ? [firstClause] : evidence });
+  const review = JSON.parse(mock.mock.calls[1][1].body);
+  expect(JSON.parse(review.messages[1].content)).toEqual({ question, reply, quotes: evidence });
 });

@@ -129,35 +129,39 @@ export async function evaluateWithModels(
       });
       if (provider.name === 'local' && /^qwen3(?::|$)/iu.test(provider.model) &&
           !hasScoringGoals && !result.resolved && evidence?.length) {
-        // Only reconsider a rejected answer when the first pass found genuine text to inspect.
+        // Review only genuine quotes, without showing the reviewer the original verdict.
         const review = await fetchImpl(provider.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal,
           body: JSON.stringify({
-            model: provider.model, temperature: 0, seed: 42, reasoning_effort: 'none', max_tokens: 64,
+            model: provider.model, temperature: 0, seed: 42, reasoning_effort: 'none', max_tokens: 48,
             response_format: { type: 'json_schema', json_schema: {
-              name: 'safe_alternative', schema: { type: 'object', additionalProperties: false,
-                required: ['safe', 'quote'], properties: { safe: { type: 'boolean' }, quote: { type: 'string', maxLength: 40 } } },
+              name: 'grounded_answer_review', schema: { type: 'object', additionalProperties: false,
+                required: ['kind', 'index'], properties: {
+                  kind: { type: 'string', enum: ['direct', 'alternative', 'none'] },
+                  index: { type: 'integer', minimum: 0, maximum: evidence.length },
+                } },
             } },
             messages: [
-              { role: 'system', content: '只判断资料不足时，客服是否给出了切题且现在可做的安全替代建议。机洗未标注，确认前建议轻柔手洗→safe=true；仅承诺查询→false；未确认却建议用洗衣袋机洗（即使也建议手洗）→false。若为true，quote逐字引用reply中的安全做法，否则quote为空。仅输出JSON。' },
-              { role: 'user', content: JSON.stringify({ question: input.question, reply: input.reply,
+              { role: 'system', content: '判断quotes中是否有一句回答了question。direct=直接回答，例如问色差大不大，“可能有细微色差”说明程度，另提售后不影响。alternative=未确认但给出切题安全做法，例如确认前轻柔手洗。只介绍材质、售后、承诺查询，或回复有冲突、未确认仍建议机洗，选none。结合完整reply，index从1开始，none填0。仅输出JSON。' },
+              { role: 'user', content: JSON.stringify({ question: input.question, reply: input.reply, quotes: evidence,
                 ...(hasLocalHistory ? { history: input.history } : {}), ...(input.facts ? { facts: input.facts } : {}) }) },
             ],
           }),
         });
-        if (!review.ok) throw new Error(`本地替代建议复核 HTTP ${review.status}`);
+        if (!review.ok) throw new Error(`本地答复复核 HTTP ${review.status}`);
         const reviewed = await review.json() as any;
         let decision;
         try { decision = JSON.parse(reviewed?.choices?.[0]?.message?.content); }
-        catch { throw new Error('本地替代建议复核未返回有效 JSON'); }
-        if (typeof decision?.safe !== 'boolean' || typeof decision.quote !== 'string') {
-          throw new Error('本地替代建议复核缺少结论或引用');
+        catch { throw new Error('本地答复复核未返回有效 JSON'); }
+        if (!['direct', 'alternative', 'none'].includes(decision?.kind) || !Number.isInteger(decision.index)) {
+          throw new Error('本地答复复核缺少结论或引用编号');
         }
-        if (decision.safe && decision.quote.trim() && input.reply.includes(decision.quote)) {
-          return { provider: 'local', resolved: true, reason: '本地复核确认有可执行的安全替代建议',
-            matchedPoints: [], buyerReply: '', evidence: [decision.quote] };
+        const quote = decision.index > 0 ? evidence[decision.index - 1] : undefined;
+        if (decision.kind !== 'none' && quote) {
+          const reason = decision.kind === 'direct' ? '本地复核确认原话已回答当前问题' : '本地复核确认有可执行的安全替代建议';
+          return { provider: 'local', resolved: true, reason, matchedPoints: [], buyerReply: '', evidence: [quote] };
         }
       }
       if (provider.name === 'local' && /^qwen2\.5:0\.5b$/iu.test(provider.model) && result.resolved) {
