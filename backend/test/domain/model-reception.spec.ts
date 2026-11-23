@@ -137,7 +137,7 @@ it.each([
 it('本地 Qwen3 关闭思考模式，使用单次结构化判定', async () => {
   const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
     choices: [{ message: { content: JSON.stringify({
-      resolved: true, reason: '已回答', evidence: [input.reply],
+      resolution: 'direct_answer', reason: '已回答', evidence: [input.reply],
     }) } }],
   }) });
   const judged = await evaluateWithModels({ ...input, goals: [], judgmentVersion: 2 },
@@ -147,4 +147,18 @@ it('本地 Qwen3 关闭思考模式，使用单次结构化判定', async () => 
   expect(JSON.parse(mock.mock.calls[0][1].body)).toMatchObject({
     reasoning_effort: 'none', response_format: { type: 'json_schema' },
   });
+});
+
+it.each([
+  ['safe_alternative', ['确认前建议轻柔手洗'], true],
+  ['safe_alternative', ['建议直接机洗'], false],
+  ['unanswered', [], false],
+])('本地 Qwen3 作答类别 %s 按证据转换为通过状态', async (resolution, evidence, resolved) => {
+  const reply = '详情没标注，请以洗标为准，确认前建议轻柔手洗。';
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolution, reason: '资料有限', evidence }) } }],
+  }) });
+  const judged = await evaluateWithModels({ ...input, question: '可以机洗吗？', reply, goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(judged.resolved).toBe(resolved);
 });
