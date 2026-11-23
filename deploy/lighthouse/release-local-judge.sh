@@ -21,17 +21,19 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
     ['走线整齐吗？', '我帮您查一下。', false],
     ['实物和详情页图片色差大吗？', '图片光线和屏幕可能产生细微色差，如果收到不合适可以联系客服。', true],
     ['实物和详情页图片色差大吗？', '这款用的是聚酯纤维，收到不合适可以联系客服。', false],
+    ['买家秀在哪里看？', '在评价区选择晒图就能看。', true, 'media-location'],
+    ['是聚酯纤维吗？', '是的哈，聚酯纤维的面料。', true, 'material-details'],
     ['可以机洗吗？', '详情页没标注，请以洗标为准，确认前建议轻柔手洗。', true],
     ['可以机洗吗？', '没标注机洗，不过用洗衣袋就一定能机洗。', false],
     ['这款连衣裙可以机洗吗？', '亲，这款商品页没有明确标注是否可机洗或需干洗哦。稳妥起见建议轻柔手洗，或洗衣袋机洗选轻柔模式，水温30度以下，洗后自然晾干避免暴晒烘干～收到后也可以看洗水标确认哦。', false],
   ];
-  for (const [question, reply, expected] of cases) {
+  for (const [question, reply, expected, rule] of cases) {
     const washingCase = question.includes('机洗');
-    const expectedSource = washingCase ? 'wash-guidance' : question.includes('色差') ? 'color-difference' : undefined;
+    const expectedSource = rule || (washingCase ? 'wash-guidance' : question.includes('色差') ? 'color-difference' : undefined);
     const started = Date.now();
     const result = await evaluateWithModels(
       { question, goals: [], history: [{ role: 'buyer', content: question }], reply, judgmentVersion: 2,
-        ...(washingCase ? { facts: { product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } } } : {}) },
+        ...(washingCase || rule === 'material-details' ? { facts: { product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } } } : {}) },
       { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL,
         onFailure: reason => console.error('本地模型预检失败：' + reason) } },
     );

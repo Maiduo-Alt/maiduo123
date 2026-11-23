@@ -76,7 +76,9 @@ export function judgeValidReplies(
     const automatic = params.replyJudgmentVersion !== undefined && questions.some((q) => q.seq === seq && q.automaticEvaluation);
     const roundIndexes = messages
       .map((m, index) => ({ m, index }))
-      .filter(({ m }) => m.sender === 'agent' && m.questionSeq === seq && (!automatic || !m.openerTiming));
+      .filter(({ m }) => m.sender === 'agent' && m.questionSeq === seq &&
+        m.judgeSignal !== 'closing' && (!(automatic || m.semanticOnly) || !m.openerTiming));
+    const semanticRound = roundIndexes.some(({ m }) => m.semanticOnly);
 
     // 该轮是否命中过要点（整轮取最大值：任一条命中即算解决）
     const hitAny = roundIndexes.some(({ m }) =>
@@ -85,16 +87,19 @@ export function judgeValidReplies(
     );
     const asked = roundIndexes.length > 0 || messages.some((m) =>
       m.sender === 'buyer' && m.questionSeq === seq && m.responseRoundType !== 'opener');
-    if (rule.unresolvedEnabled && (!automatic || asked)) {
+    // 语义轮次没有关键词命中数据，不能作为连续零命中的一轮。
+    if (semanticRound) {
+      unresolvedRun = 0;
+    } else if (rule.unresolvedEnabled && (!automatic || asked)) {
       unresolvedRun = hitAny ? 0 : unresolvedRun + 1;
     }
-    const unresolvedInvalid = rule.unresolvedEnabled && !hitAny && unresolvedRun >= rule.unresolvedStreak;
+    const unresolvedInvalid = rule.unresolvedEnabled && !semanticRound && !hitAny && unresolvedRun >= rule.unresolvedStreak;
 
     for (const { m, index } of roundIndexes) {
       const content = String(m.content || '').trim();
       const reasons: string[] = [];
 
-      const substantive = params.replyJudgmentVersion === 2 &&
+      const substantive = (params.replyJudgmentVersion === 2 || m.semanticOnly) &&
         (m.judgeSignal === 'key-point' || m.judgeSignal === 'relaxed' || m.judgeSignal === 'stance');
       const freshBuyerTurn = messages.slice(previousReplyIndex + 1, index).some((message) =>
         message.sender === 'buyer' && message.questionSeq === seq);

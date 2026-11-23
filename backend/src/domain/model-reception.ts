@@ -14,7 +14,7 @@ export interface ModelReceptionInput {
 
 export interface ModelReceptionResult {
   provider: 'glm' | 'deepseek' | 'local';
-  decisionSource?: 'wash-guidance' | 'color-difference';
+  decisionSource?: 'wash-guidance' | 'color-difference' | 'media-location' | 'material-details';
   resolved: boolean;
   reason: string;
   matchedPoints: { goalId: string; pointIds: string[] }[];

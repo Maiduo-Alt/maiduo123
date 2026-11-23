@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { DbService } from '../../src/db/db.service';
 import { ReceptionService } from '../../src/modules/reception/reception.service';
+import { ReceptionGateway } from '../../src/modules/reception/reception.gateway';
 import { AuthService } from '../../src/modules/auth/auth.service';
 import { ModelCredentialsService } from '../../src/modules/settings/model-credentials.service';
 import { DEFAULT_PARAMS } from '../../src/domain/types';
@@ -2535,6 +2536,45 @@ describe('在线模拟接待端到端链路', () => {
 
   // 放在最后：本用例会关闭当前实例，用同一个数据库重新起一个实例来模拟服务重启。
   // 覆盖两件事：①方案 5.11「重启后接待状态可恢复」；②客户需求 C5「重启后待接入队列要能恢复并继续补位」。
+  it('买家收尾通知发出时已进入整理阶段，标准收尾语不参与问答判定或扣收尾分', async () => {
+    const params = { ...DEFAULT_PARAMS, replyJudgmentVersion: 2, invalidReplyEnabled: true,
+      invalidReplyUnresolvedEnabled: true, invalidReplyUnresolvedStreak: 1, banalWords: ['祝购物愉快'] };
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ('AT-closing-message-order', 1, 'L1', 'free', $1::jsonb) RETURNING id`, [JSON.stringify(params)],
+    );
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions)
+       VALUES ($1, 1, '收尾买家', 'waiting_buyer', 1, 1, $2::jsonb) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question: '面料是什么？', keyPoints: ['面料'] }])],
+    );
+    const reception = app.get(ReceptionService);
+    const gateway = app.get(ReceptionGateway);
+    let stateWhenNotified: Promise<{ state: string } | null> | undefined;
+    const emit = jest.spyOn(gateway, 'emitToUser').mockImplementation((_accountId, event, payload: any) => {
+      if (event === 'buyer.message' && payload.naturalEnding) {
+        stateWhenNotified = sharedDb.one(`SELECT state FROM sessions WHERE id = $1`, [session.id]);
+      }
+    });
+    try {
+      await (reception as any).closeWithBuyerMessage({ id: session.id, attempt_id: attempt.id, current_seq: 1 }, {
+        unresolvedGoalIds: [], satisfaction: 75,
+      });
+      expect(await stateWhenNotified).toEqual({ state: 'awaiting_agent_close' });
+      const closing = await reception.sendMessage(1, attempt.id, session.id, '感谢咨询，祝购物愉快');
+      expect(closing.ruleResult.judge.signal).toBe('closing');
+      expect(closing.ruleResult.invalid).toBeUndefined();
+      await reception.finishSession(1, attempt.id, session.id);
+      const score = await sharedDb.one<{ deductions: { reason: string }[] }>(
+        `SELECT deductions FROM scores WHERE session_id = $1`, [session.id],
+      );
+      expect(score.deductions.some((item) => item.reason === '结束缺少收尾用语')).toBe(false);
+    } finally {
+      emit.mockRestore();
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  });
+
   it('服务重启恢复：进行中的接待不被中止，待接入队列保留且能继续补位', async () => {
     // 自由练习只对管理员/主管开放（客户新增需求）
     const token = await login('admin', 'Admin@123');
@@ -2633,4 +2673,5 @@ describe('在线模拟接待端到端链路', () => {
       await restarted.close();
     }
   }, 60000);
+
 });

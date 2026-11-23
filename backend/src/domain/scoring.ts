@@ -226,8 +226,10 @@ function scoreWording(messages: ScoreMessage[], params: SystemParams): { score: 
   if (containsAny(first, params.greetingWords)) score += greetingFull;
   else deductions.push({ dimension: 'wording', reason: '开场缺少问候语', points: greetingFull });
 
-  const last = agentMessages[agentMessages.length - 1].content || '';
-  if (containsAny(last, params.closingWords)) score += closingFull;
+  const last = agentMessages[agentMessages.length - 1];
+  const naturalClosing = last.judgeSignal === 'closing' &&
+    /(?:感谢|谢谢)(?:您(?:的)?)?咨询|祝(?:您)?购物愉快/u.test(last.content || '');
+  if (containsAny(last.content || '', params.closingWords) || naturalClosing) score += closingFull;
   else deductions.push({ dimension: 'wording', reason: '结束缺少收尾用语', points: closingFull });
 
   const banned = agentMessages.find((m) => containsAny(m.content || '', params.forbiddenWords));

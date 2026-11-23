@@ -44,6 +44,16 @@ describe('无效 / 敷衍回复判定（客户新增需求 C6）', () => {
     expect(roundOf(result, 1).validReplyIndex).toBe(1);
   });
 
+  it('语义轮次按语义结论统计，收尾不参与旧的判零与重复校验', () => {
+    const params = on({ invalidReplyUnresolvedEnabled: true, invalidReplyUnresolvedStreak: 3, banalWords: ['祝购物愉快'] });
+    const closing: ScoreMessage = { ...agent(3, '感谢咨询，祝购物愉快', []), judgeSignal: 'closing' };
+    const semantic: ScoreMessage[] = [1, 2, 3].map((seq) => ({
+      ...agent(seq, `本轮答复 ${seq}`, []), semanticOnly: true, judgeSignal: seq === 2 ? 'key-point' : 'hedge',
+    }));
+    const result = judgeValidReplies([...semantic, closing], questions, params);
+    expect(roundOf(result, 3)).toMatchObject({ validReplyIndex: 2, invalidReplyIndexes: [] });
+  });
+
   it('「完全相同」模式：与上一条客服回复一模一样即判无效', () => {
     const messages = [buyer(1), agent(1, '亲，您好'), agent(1, '亲，您好')];
     const result = judgeValidReplies(messages, questions, on({ invalidReplyDuplicateMode: 'identical' }));

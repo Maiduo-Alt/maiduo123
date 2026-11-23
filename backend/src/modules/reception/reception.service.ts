@@ -661,10 +661,6 @@ export class ReceptionService implements OnModuleInit {
       conversationStage: 'closing',
       shouldClose: true,
     };
-    await this.db.query(`UPDATE sessions SET conversation_state = $2::jsonb WHERE id = $1`, [
-      session.id,
-      JSON.stringify(finalState),
-    ]);
     const replies = await this.db.many<{ seq: number; rule_result: any }>(
       `SELECT seq, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`, [session.id],
     );
@@ -680,19 +676,33 @@ export class ReceptionService implements OnModuleInit {
     const text = awaitingVerification
       ? '好的，这次还没有确认具体结果，我先不继续追问了。'
       : this.buyerClosingText(session.style_code, finalState.satisfaction);
-    const lastBuyer = await this.db.one<{ content: string }>(
-      `SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`,
-      [session.id],
+    const attempt = await this.db.one<{ account_id: number; level: string }>(
+      `SELECT account_id, level FROM attempts WHERE id = $1`, [session.attempt_id],
     );
-    if (!lastBuyer || lastBuyer.content !== text) {
-      await this.db.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
-        session.id,
-        text,
-        session.current_seq,
+    if (!attempt) return;
+    const deadline = new Date(Date.now() + this.agentCloseWindowMs(attempt.level));
+    // The UI can reply as soon as it sees the closing message.
+    const closing = await this.db.tx(async (client) => {
+      const claimed = await client.query(
+        `UPDATE sessions SET state = 'awaiting_agent_close', close_deadline_at = $2, conversation_state = $3::jsonb
+         WHERE id = $1 AND current_seq = $4 AND state NOT IN ('finished','transferred','aborted','awaiting_agent_close')
+         RETURNING id`,
+        [session.id, deadline.toISOString(), JSON.stringify(finalState), session.current_seq],
+      );
+      if (!claimed.rows.length) return null;
+      const lastBuyer = await client.query<{ content: string }>(
+        `SELECT content FROM messages WHERE session_id = $1 AND sender = 'buyer' ORDER BY id DESC LIMIT 1`,
+        [session.id],
+      );
+      if (lastBuyer.rows[0]?.content === text) return { message: false };
+      await client.query(`INSERT INTO messages (session_id, sender, content, seq) VALUES ($1,'buyer',$2,$3)`, [
+        session.id, text, session.current_seq,
       ]);
-      const attempt = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
-        session.attempt_id,
-      ]);
+      return { message: true };
+    });
+    if (!closing) return;
+    this.scheduleAgentClose(session.id, deadline.getTime());
+    if (closing.message) {
       this.gateway.emitToUser(attempt.account_id, 'buyer.message', {
         attemptId: session.attempt_id,
         sessionId: session.id,
@@ -704,7 +714,6 @@ export class ReceptionService implements OnModuleInit {
         sentAt: new Date().toISOString(),
       });
     }
-    await this.enterAgentCloseWindow(session.id);
   }
 
   private scheduleAgentClose(sessionId: number, deadlineMs: number): void {
@@ -1539,8 +1548,9 @@ export class ReceptionService implements OnModuleInit {
     const currentIndex = historyMessages.length;
     const validityRounds = judgeValidReplies(
       [...historyMessages, { sender: 'agent', content: text, questionSeq: session.current_seq, hitPoints, pendingVerification,
+        semanticOnly: semanticOnly && judgingQuestion,
         replyStatus: 'status' in ruleAssessment ? ruleAssessment.status : undefined,
-        judgeSignal: judgedReply.pass ? judgedReply.signal : null, ...semanticEvaluation }],
+        judgeSignal: judgedReply.pass || judgedReply.signal === 'closing' ? judgedReply.signal : null, ...semanticEvaluation }],
       session.questions,
       params
     );
@@ -1617,7 +1627,7 @@ export class ReceptionService implements OnModuleInit {
       ...(unifiedJudgment ? { judgmentVersion: semanticOnly ? 2 : params.replyJudgmentVersion } : {}),
       ...((semanticOnly || params.replyJudgmentVersion === 2) && !openerStage && !inAgentCloseWindow ? {
         replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: missingReplyDetails } : modelResult && !blockedAssessment && !useGuidance
-          ? { source: modelResult.decisionSource ? 'rule' : modelResult.provider, intent: modelResult.decisionSource === 'color-difference' ? 'color-difference' : ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
+          ? { source: modelResult.decisionSource ? 'rule' : modelResult.provider, intent: modelResult.decisionSource === 'color-difference' || modelResult.decisionSource === 'media-location' ? modelResult.decisionSource : ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
           : { ...ruleAssessment, source: 'rule' },
       } : {}),
       ...(openerStage ? { openerTiming: true } : {}),

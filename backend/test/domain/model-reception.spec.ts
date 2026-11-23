@@ -187,3 +187,39 @@ it.each([
   expect(verdict.decisionSource).toBeUndefined();
   expect(mock).toHaveBeenCalledTimes(1);
 });
+
+const trainingProduct = { product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } };
+
+it.each([
+  ['买家秀在哪里看？', '在评价区选择晒图就能看。', 'media-location'],
+  ['实拍视频在哪里看？', '商品详情页的主图轮播里可以看实拍视频。', 'media-location'],
+  ['买家秀或实拍视频在哪里看？', '详情页下滑看实拍，评价区选晒图；视频以实际页面为准。', 'media-location'],
+  ['是聚酯纤维吗？', '是的哈，聚酯纤维的面料。', 'material-details'],
+  ['含棉量多少？', '这款用的是聚酯纤维，不含棉。', 'material-details'],
+])('明确的查看路径或成分回答直接通过：%s %s', async (question, reply, decisionSource) => {
+  const mock = jest.fn();
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts: trainingProduct },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved: true, decisionSource });
+  expect(mock).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['买家秀在哪里看？', '有的哦。', trainingProduct],
+  ['实拍视频在哪里看？', '主图里有几张实拍照片。', trainingProduct],
+  ['实拍视频在哪里看？', '物流信息在订单详情页看。', trainingProduct],
+  ['实拍视频在哪里看？', '如果有实拍视频，可以在商品详情页看视频。', trainingProduct],
+  ['买家秀以及实拍视频分别在哪里看？', '买家秀在评价区找晒图。', trainingProduct],
+  ['是聚酯纤维吗？', '聚酯纤维的价格更贵。', trainingProduct],
+  ['是聚酯纤维吗？', '我查一下是否是聚酯纤维。', trainingProduct],
+  ['是聚酯纤维吗？', '是聚酯纤维的面料。', { product: { attributes: [{ name: '面料', value: '100%棉' }] } }],
+])('缺少针对性证据、复合问题或有明确材质资料时不直接放行：%s %s', async (question, reply, facts) => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '模型判定', evidence: [] }) } }],
+  }) });
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved: false });
+  expect(verdict.decisionSource).toBeUndefined();
+  expect(mock).toHaveBeenCalledTimes(1);
+});
