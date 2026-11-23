@@ -5,7 +5,10 @@ test -f .env
 compose=(sudo docker compose --env-file .env -f deploy/lighthouse/docker-compose.yml -f deploy/lighthouse/compose.semantic.yml -f deploy/lighthouse/compose.local-judge.yml --profile semantic)
 "${compose[@]}" up -d --no-deps semantic-judge
 model="$("${compose[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["api"]["environment"]["LOCAL_SEMANTIC_JUDGE_MODEL"])')"
-"${compose[@]}" exec -T semantic-judge ollama pull "$model"
+echo "本地判定模型：$model"
+if ! "${compose[@]}" exec -T semantic-judge ollama show "$model" >/dev/null 2>&1; then
+  "${compose[@]}" exec -T semantic-judge ollama pull "$model"
+fi
 
 # Test the actual judge in the new image before replacing the running API.
 "${compose[@]}" build api
@@ -20,13 +23,16 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
     ['这款连衣裙可以机洗吗？', '亲，这款商品页没有明确标注是否可机洗或需干洗哦。稳妥起见建议轻柔手洗，或洗衣袋机洗选轻柔模式，水温30度以下，洗后自然晾干避免暴晒烘干～收到后也可以看洗水标确认哦。', false],
   ];
   for (const [question, reply, expected] of cases) {
+    const washingCase = question.includes('机洗');
     const started = Date.now();
     const result = await evaluateWithModels(
-      { question, goals: [], history: [{ role: 'buyer', content: question }], reply, judgmentVersion: 2 },
+      { question, goals: [], history: [{ role: 'buyer', content: question }], reply, judgmentVersion: 2,
+        ...(washingCase ? { facts: { product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } } } : {}) },
       { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL,
         onFailure: reason => console.error('本地模型预检失败：' + reason) } },
     );
     if (result.resolved !== expected) throw Error('本地模型对部署样例的判定不符：' + JSON.stringify({question, reply, expected, result}));
+    if (washingCase && result.decisionSource !== 'wash-guidance') throw Error('洗涤样例未命中已批准的业务规则');
     console.log('本地预检耗时 ' + (Date.now() - started) + ' ms：' + question);
   }
   console.log('本地模型通过有效答复和空泛答复检查');

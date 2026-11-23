@@ -1548,7 +1548,7 @@ export class ReceptionService implements OnModuleInit {
       ...(unifiedJudgment ? { judgmentVersion: semanticOnly ? 2 : params.replyJudgmentVersion } : {}),
       ...((semanticOnly || params.replyJudgmentVersion === 2) && !openerStage && !inAgentCloseWindow ? {
         replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: missingReplyDetails } : modelResult && !blockedAssessment && !useGuidance
-          ? { source: modelResult.provider, intent: ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
+          ? { source: modelResult.decisionSource === 'wash-guidance' ? 'rule' : modelResult.provider, intent: ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
           : { ...ruleAssessment, source: 'rule' },
       } : {}),
       ...(openerStage ? { openerTiming: true } : {}),

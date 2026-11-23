@@ -14,6 +14,6 @@ services:
     environment:
       REPLY_JUDGMENT_MODE: local
       LOCAL_SEMANTIC_JUDGE_URL: http://semantic-judge:11434/v1/chat/completions
-      LOCAL_SEMANTIC_JUDGE_MODEL: ${LOCAL_SEMANTIC_JUDGE_MODEL:-qwen2.5:1.5b}
+      LOCAL_SEMANTIC_JUDGE_MODEL: ${LOCAL_SEMANTIC_JUDGE_MODEL:-qwen3:0.6b}
 volumes:
   semantic-judge-models:

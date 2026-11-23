@@ -1,3 +1,5 @@
+import { assessLocalWashGuidance } from './local-wash-guidance';
+
 export interface ModelReceptionInput {
   question: string;
   goals: { id: string; points: { id: string; label: string }[] }[];
@@ -12,6 +14,7 @@ export interface ModelReceptionInput {
 
 export interface ModelReceptionResult {
   provider: 'glm' | 'deepseek' | 'local';
+  decisionSource?: 'wash-guidance';
   resolved: boolean;
   reason: string;
   matchedPoints: { goalId: string; pointIds: string[] }[];
@@ -44,6 +47,9 @@ export async function evaluateWithModels(
   config: { glmKey?: string; deepseekKey?: string; local?: { url: string; model: string; timeoutMs?: number; onFailure?: (reason: string) => void } },
   fetchImpl: typeof fetch = fetch,
 ): Promise<ModelReceptionResult> {
+  const washDecision = config.local ? assessLocalWashGuidance(input) : undefined;
+  if (washDecision) return washDecision;
+
   const providers = config.local ? [{ name: 'local' as const, url: config.local.url, model: config.local.model, key: undefined }] : [
     { name: 'glm' as const, key: config.glmKey, url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4.7-flash' },
     { name: 'deepseek' as const, key: config.deepseekKey, url: 'https://api.deepseek.com/chat/completions', model: 'deepseek-chat' },
