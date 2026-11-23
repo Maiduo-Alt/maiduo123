@@ -1,5 +1,5 @@
 import { assessAutomaticReply, replyIntent } from './automatic-reply';
-import { assessLocalWashGuidance } from './local-wash-guidance';
+import { assessLocalWashGuidance, hasWashInformation } from './local-wash-guidance';
 import type { ModelReceptionInput, ModelReceptionResult } from './model-reception';
 
 function assessColorDifference(input: ModelReceptionInput): ModelReceptionResult | undefined {
@@ -60,7 +60,45 @@ function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult
     reason: '答复直接说明了买家询问的成分或资料缺项', evidence: assessment.evidence || [], matchedPoints: [], buyerReply: '' };
 }
 
+function assessDryCleanRequirement(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  const question = input.question.replace(/[？?]麻烦直接说一下。?$/u, '').replace(/[？?。\s]+$/u, '');
+  if (!/(?:要不要|需不需要|是否需要|用不用|需要|必须)(?:专门)?干洗(?:吗|呢)?$/u.test(question) ||
+      /[\n；;？?]|以及|还有|或者|并且|机洗|手洗|水洗|怎么洗/u.test(question) ||
+      hasWashInformation(input) || input.history.some(({ content }) =>
+        /(?:洗标|洗水标).{0,12}(?:写着|写了|显示|标明|标注了)/u.test(content)) ||
+      /如果|假如|要是|可能|也许|或许|是否|不确定|未确认|说不准|没法保证/u.test(input.reply)) return undefined;
+
+  const clauses = input.reply.split(/[，,。；;！!\n]|但是|不过/u).map((part) => part.trim());
+  const notRequired = /(?:不需要|无需|不用|不必|没有必要)(?:专门|进行)?干洗|^(?:亲)?(?:不需要|不用|不必)[的哦哈呢呀啊～~\s]*$/u;
+  const required = /(?:需要|必须|只能)(?:专门|进行)?干洗|^(?:亲)?(?:需要|必须)[的哦哈呢呀啊～~\s]*$/u;
+  const negative = clauses.filter((part) => notRequired.test(part));
+  const positive = clauses.filter((part) => required.test(part.replace(notRequired, '').trim()) &&
+    !/不一定|不代表|不是|并非|不建议|没说|未说|别/u.test(part));
+  if ((negative.length > 0) === (positive.length > 0)) return undefined;
+
+  const assessment = assessAutomaticReply({ question: '要不要干洗', buyerText: input.question, keyPoints: [], reply: input.reply }, 2);
+  if (!assessment.pass) return undefined;
+  return { provider: 'local', decisionSource: 'dry-clean-required', resolved: true,
+    reason: '答复明确说明是否需要干洗', evidence: negative.length ? negative : positive, matchedPoints: [], buyerReply: '' };
+}
+
+function assessShoeStyling(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  const question = input.question.replace(/[？?]麻烦直接说一下。?$/u, '').replace(/[？?。\s]+$/u, '');
+  if (!/鞋/u.test(question) || !/休闲/u.test(question) || !/搭配|怎么搭|配什么|穿什么/u.test(question) ||
+      /[\n；;？?]|外套|上衣|裤子|包包|以及|还有|并且|尺码|发货|换货/u.test(question)) return undefined;
+
+  const assessment = assessAutomaticReply({ question, buyerText: input.question, keyPoints: [], reply: input.reply }, 2);
+  const footwear = /乐福鞋|帆布鞋|运动鞋|小白鞋|球鞋|板鞋|平底鞋|短靴|老爹鞋/u;
+  const evidence = assessment.evidence?.filter((part) => footwear.test(part) &&
+    /配|搭|推荐|建议|合适|适合|可以选/u.test(part) &&
+    !/不建议|不推荐|不适合|不合适|不搭|不配|不想|不宜|别选|别穿|别搭|避免|不要|不能|没有|不确定|没货/u.test(part));
+  if (!assessment.pass || !assessment.acceptedGuidance || !evidence?.length) return undefined;
+  return { provider: 'local', decisionSource: 'shoe-styling', resolved: true,
+    reason: '答复给出了具体的休闲鞋搭配', evidence, matchedPoints: [], buyerReply: '' };
+}
+
 export function assessLocalTrainingRules(input: ModelReceptionInput): ModelReceptionResult | undefined {
   if (input.judgmentVersion !== 2 || input.goals.length) return undefined;
-  return assessLocalWashGuidance(input) ?? assessColorDifference(input) ?? assessMediaLocation(input) ?? assessMaterialDetails(input);
+  return assessLocalWashGuidance(input) ?? assessColorDifference(input) ?? assessMediaLocation(input) ??
+    assessMaterialDetails(input) ?? assessDryCleanRequirement(input) ?? assessShoeStyling(input);
 }

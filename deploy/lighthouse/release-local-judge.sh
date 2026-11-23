@@ -23,6 +23,8 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
     ['实物和详情页图片色差大吗？', '这款用的是聚酯纤维，收到不合适可以联系客服。', false],
     ['买家秀在哪里看？', '在评价区选择晒图就能看。', true, 'media-location'],
     ['是聚酯纤维吗？', '是的哈，聚酯纤维的面料。', true, 'material-details'],
+    ['要不要干洗？', '不需要专门干洗，可以按洗标要求轻柔清洗。', true, 'dry-clean-required'],
+    ['如果想穿得休闲一些，鞋子可以怎么搭配呢？', '鞋子配乐福鞋、尖头平底鞋或短靴都很搭。', true, 'shoe-styling'],
     ['可以机洗吗？', '详情页没标注，请以洗标为准，确认前建议轻柔手洗。', true],
     ['可以机洗吗？', '没标注机洗，不过用洗衣袋就一定能机洗。', false],
     ['这款连衣裙可以机洗吗？', '亲，这款商品页没有明确标注是否可机洗或需干洗哦。稳妥起见建议轻柔手洗，或洗衣袋机洗选轻柔模式，水温30度以下，洗后自然晾干避免暴晒烘干～收到后也可以看洗水标确认哦。', false],
@@ -33,7 +35,7 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
     const started = Date.now();
     const result = await evaluateWithModels(
       { question, goals: [], history: [{ role: 'buyer', content: question }], reply, judgmentVersion: 2,
-        ...(washingCase || rule === 'material-details' ? { facts: { product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } } } : {}) },
+        ...(washingCase || rule === 'material-details' || rule === 'dry-clean-required' ? { facts: { product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } } } : {}) },
       { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL,
         onFailure: reason => console.error('本地模型预检失败：' + reason) } },
     );

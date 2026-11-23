@@ -2575,6 +2575,48 @@ describe('在线模拟接待端到端链路', () => {
     }
   });
 
+  it('商品链接开场回复直接推进首个问题，模型故障也不影响推送', async () => {
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot)
+       VALUES ('AT-product-link-opener', 1, 'L1', 'free', $1::jsonb) RETURNING id`,
+      [JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [0, 0] })],
+    );
+    const question = '如果想穿得休闲一些，鞋子可以怎么搭配呢？';
+    const session = await sharedDb.one<{ id: number }>(
+      `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, opener_pending, last_buyer_at)
+       VALUES ($1, 1, '链接买家', 'serving', 0, 1, $2::jsonb, true, now()) RETURNING id`,
+      [attempt.id, JSON.stringify([{ seq: 1, question, keyPoints: [] }])],
+    );
+    await sharedDb.query(
+      `INSERT INTO messages (session_id, sender, content, seq, rule_result)
+       VALUES ($1, 'buyer', $2, 1, $3::jsonb)`,
+      [session.id, '【商品链接】https://haohuo.jinritemai.com/views/product/item2?id=1',
+        JSON.stringify({ responseRoundStart: true, responseRoundType: 'opener' })],
+    );
+    const reception = app.get(ReceptionService);
+    const emit = jest.spyOn(app.get(ReceptionGateway), 'emitToUser');
+    const model = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('本地模型不可用'));
+    const oldMode = process.env.REPLY_JUDGMENT_MODE;
+    process.env.REPLY_JUDGMENT_MODE = 'local';
+    try {
+      const saved = await reception.submitMessage(1, attempt.id, session.id, '亲您好，有什么可以帮您？', true);
+      expect(saved.ruleResult).toMatchObject({ judge: { pass: true, signal: 'opener' } });
+      await waitFor(() => emit.mock.calls.some(([, event, payload]) =>
+        event === 'buyer.message' && !!payload && typeof payload === 'object' &&
+        'sessionId' in payload && payload.sessionId === session.id && 'question' in payload));
+      const snapshot = await reception.snapshot(1, attempt.id);
+      expect(snapshot.sessions[0]).toMatchObject({ state: 'serving', seq: 1, timerPausedAt: null });
+      expect(snapshot.messages).toHaveLength(3);
+      expect(snapshot.messages.at(-1)).toMatchObject({ sender: 'buyer', content: question });
+      expect(model).not.toHaveBeenCalled();
+    } finally {
+      if (oldMode === undefined) delete process.env.REPLY_JUDGMENT_MODE; else process.env.REPLY_JUDGMENT_MODE = oldMode;
+      model.mockRestore();
+      emit.mockRestore();
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  });
+
   it('服务重启恢复：进行中的接待不被中止，待接入队列保留且能继续补位', async () => {
     // 自由练习只对管理员/主管开放（客户新增需求）
     const token = await login('admin', 'Admin@123');

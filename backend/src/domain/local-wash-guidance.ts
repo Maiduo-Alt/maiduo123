@@ -5,7 +5,7 @@ const UNKNOWN_VALUE = /^(?:[-—]+|无|暂无|未知|未提供|未注明|未标�
 const MISSING_DISCLOSURE = /(?:详情(?:页)?|商品页|商品资料|资料|页面).{0,16}(?:没(?:有)?|未)(?:明确|单独)?标(?:明|注)?|(?:没(?:有)?|未)(?:明确|单独)?标(?:明|注)?.{0,8}机洗/u;
 const HAND_WASH = /(?:确认前|未确认前|暂时|先|建议|稳妥起见).{0,12}(?:轻柔|轻轻)?手洗/u;
 
-function hasWashInformation(input: ModelReceptionInput): boolean {
+export function hasWashInformation(input: ModelReceptionInput): boolean {
   const product = input.facts?.product;
   if (!product || !Array.isArray(product.attributes)) return true;
   if (WASH_INFORMATION.test(product.title || '')) return true;

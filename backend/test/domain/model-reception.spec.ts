@@ -205,6 +205,41 @@ it.each([
 });
 
 it.each([
+  ['要不要干洗？', '不需要专门干洗，可以按洗标要求轻柔清洗。', 'dry-clean-required'],
+  ['这款需要干洗吗？', '需要干洗。', 'dry-clean-required'],
+  ['如果想穿得休闲一些，鞋子可以怎么搭配呢？', '鞋子配乐福鞋、尖头平底鞋或短靴都很搭。', 'shoe-styling'],
+  ['想穿得休闲点，鞋子怎么搭配？', '浅色帆布鞋就很合适。', 'shoe-styling'],
+])('正面回答干洗要求或休闲鞋搭配时直接判定：%s %s', async (question, reply, decisionSource) => {
+  const mock = jest.fn();
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts: trainingProduct },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved: true, decisionSource });
+  expect(verdict.evidence?.some((fragment) => reply.includes(fragment))).toBe(true);
+  expect(mock).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['要不要干洗？', '可以干洗。', trainingProduct],
+  ['可以干洗吗？', '不用专门干洗。', trainingProduct],
+  ['要不要干洗？', '我先查一下洗标。', trainingProduct],
+  ['要不要干洗？', '不需要干洗但必须干洗。', trainingProduct],
+  ['要不要干洗？', '不用专门干洗。', { product: { attributes: [{ name: '洗涤说明', value: '只能干洗' }] } }],
+  ['要不要干洗，还是可以机洗？', '不用干洗。', trainingProduct],
+  ['休闲风格的鞋子怎么搭配？', '短款针织开衫更合适。', trainingProduct],
+  ['休闲风格的鞋子怎么搭配？', '不推荐搭乐福鞋。', trainingProduct],
+  ['休闲风格的鞋子怎么搭配？', '乐福鞋就不合适。', trainingProduct],
+  ['休闲一点，外套和鞋子怎么搭配？', '鞋子建议选乐福鞋。', trainingProduct],
+])('缺少结论、相互矛盾或只答部分时不直接放行：%s %s', async (question, reply, facts) => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '模拟模型未判通过', evidence: [] }) } }],
+  }) });
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict.decisionSource).toBeUndefined();
+  expect(mock).toHaveBeenCalledTimes(1);
+});
+
+it.each([
   ['买家秀在哪里看？', '有的哦。', trainingProduct],
   ['实拍视频在哪里看？', '主图里有几张实拍照片。', trainingProduct],
   ['实拍视频在哪里看？', '物流信息在订单详情页看。', trainingProduct],

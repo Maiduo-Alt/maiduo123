@@ -1627,7 +1627,7 @@ export class ReceptionService implements OnModuleInit {
       ...(unifiedJudgment ? { judgmentVersion: semanticOnly ? 2 : params.replyJudgmentVersion } : {}),
       ...((semanticOnly || params.replyJudgmentVersion === 2) && !openerStage && !inAgentCloseWindow ? {
         replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: missingReplyDetails } : modelResult && !blockedAssessment && !useGuidance
-          ? { source: modelResult.decisionSource ? 'rule' : modelResult.provider, intent: modelResult.decisionSource === 'color-difference' || modelResult.decisionSource === 'media-location' ? modelResult.decisionSource : ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
+          ? { source: modelResult.decisionSource ? 'rule' : modelResult.provider, intent: modelResult.decisionSource === 'color-difference' || modelResult.decisionSource === 'media-location' || modelResult.decisionSource === 'dry-clean-required' ? modelResult.decisionSource : ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
           : { ...ruleAssessment, source: 'rule' },
       } : {}),
       ...(openerStage ? { openerTiming: true } : {}),
