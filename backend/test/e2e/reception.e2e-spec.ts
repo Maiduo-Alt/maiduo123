@@ -183,11 +183,16 @@ describe('在线模拟接待端到端链路', () => {
       [session.id, content, seq, JSON.stringify(rule)]);
     await addBuyer('上一题：多久发货？', 0);
     await addBuyer('在吗？', 1, { responseRoundType: 'opener' });
-    await addBuyer('走线整齐吗？', 1, { responseRoundStart: true });
+    await addBuyer('你好，我来看商品。', 1);
+    await addBuyer('走线整齐吗？', 1, { responseRoundStart: true, responseRoundType: 'question' });
     const reception = app.get(ReceptionService);
     const oldMode = process.env.REPLY_JUDGMENT_MODE;
     process.env.REPLY_JUDGMENT_MODE = 'local';
     const fetchMock = jest.spyOn(global, 'fetch');
+    const inputFrom = (request: RequestInit | undefined) => {
+      const body = JSON.parse(String(request?.body));
+      return JSON.parse(body.messages.at(-1).content);
+    };
     const response = (resolved: boolean, evidence: string[]) => ({
       ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
         resolved, evidence, reason: '测试判定', matchedPoints: [],
@@ -199,20 +204,23 @@ describe('在线模拟接待端到端链路', () => {
       fetchMock.mockResolvedValueOnce(response(false, []));
       const rejected = await reception.sendMessage(1, attempt.id, session.id, '走线可以帮您核实一下。');
       expect(rejected.ruleResult).toMatchObject({ semanticOnly: true, hitPoints: [], judge: { pass: false }, replyAssessment: { source: 'local' } });
-      const inputAt = (index: number) => {
-        const body = JSON.parse(String(fetchMock.mock.calls[index][1]?.body));
-        return JSON.parse(body.messages.at(-1).content);
-      };
+      const inputAt = (index: number) => inputFrom(fetchMock.mock.calls[index][1]);
       expect(inputAt(1)).toMatchObject({ question: '走线整齐吗？' });
       expect(inputAt(1).history).toBeUndefined();
-      await addBuyer('袖口也整齐吗？', 1, { responseRoundStart: true });
-      fetchMock.mockResolvedValueOnce(response(true, ['整齐的哦']));
-      const accepted = await reception.sendMessage(1, attempt.id, session.id, '整齐的哦');
+      await addBuyer('那实物和详情页比呢？', 1, { responseRoundStart: true });
+      await addBuyer('颜色差得多吗？', 1);
+      const currentQuestion = '那实物和详情页比呢？\n颜色差得多吗？';
+      const answer = '灯光和屏幕会有些微色差，收到不满意也可以联系客服。';
+      fetchMock.mockImplementationOnce(async (_url, request) =>
+        inputFrom(request).question === currentQuestion ? response(true, ['有些微色差']) : response(false, []));
+      const accepted = await reception.sendMessage(1, attempt.id, session.id, answer);
       expect(accepted.ruleResult).toMatchObject({ hitPoints: [], judge: { pass: true }, replyAssessment: { source: 'local' } });
+      expect(inputAt(2).question).toBe(currentQuestion);
       expect(inputAt(2).history).toEqual([
         { role: 'buyer', content: '走线整齐吗？' },
         { role: 'agent', content: '走线可以帮您核实一下。' },
-        { role: 'buyer', content: '袖口也整齐吗？' },
+        { role: 'buyer', content: '那实物和详情页比呢？' },
+        { role: 'buyer', content: '颜色差得多吗？' },
       ]);
       expect(accepted.ruleResult.modelEvaluation?.buyerReply).toBe('');
       expect(fetchMock.mock.calls.every(([url]) => String(url).includes('/v1/chat/completions'))).toBe(true);

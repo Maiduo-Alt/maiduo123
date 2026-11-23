@@ -18,11 +18,12 @@ function hasWashInformation(input: ModelReceptionInput): boolean {
 
 /** Explicit, narrow exception for machine-washing questions in local training. */
 export function assessLocalWashGuidance(input: ModelReceptionInput): ModelReceptionResult | undefined {
-  const question = input.history.filter((item) => item.role === 'buyer').at(-1)?.content ?? input.question;
-  if (input.judgmentVersion !== 2 || input.goals.length || !/机洗/u.test(question) ||
+  const question = input.question;
+  if (input.judgmentVersion !== 2 || input.goals.length || question.includes('\n') || !/机洗/u.test(question) ||
       !/可以|能|适合|支持/u.test(question) || /还是|怎么|如何|干洗|温度|水温|模式|不可以|不能/u.test(question) ||
       hasWashInformation(input) || !MISSING_DISCLOSURE.test(input.reply) ||
-      input.history.some((item) => /(?:洗标|洗水标).{0,12}(?:写着|写了|显示|标明|标注了)/u.test(item.content))) {
+      [question, ...input.history.map((item) => item.content)]
+        .some((text) => /(?:洗标|洗水标).{0,12}(?:写着|写了|显示|标明|标注了)/u.test(text))) {
     return undefined;
   }
 

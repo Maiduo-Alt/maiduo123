@@ -27,8 +27,11 @@ it.each([
 it.each([
   { reply: '商品页没有标注，我帮您核实一下。' },
   { question: '要不要干洗？' },
+  { question: '洗标上写着不可水洗，这款可以机洗吗？', history: [] },
   { history: [{ role: 'buyer' as const, content: '洗标上写着不可水洗，这款可以机洗吗？' }] },
-  { history: [{ role: 'buyer' as const, content: '洗涤水温要几度？' }] },
+  { question: '可以机洗吗？\n还是应该干洗？' },
+  { question: '可以机洗吗？\n大概多久发货？' },
+  { question: '洗涤水温要几度？', history: [{ role: 'buyer' as const, content: '可以机洗吗？' }] },
   { facts: undefined },
   { facts: { product: { attributes: [{ name: '洗涤方式', value: '不可水洗' }] } } },
   { facts: { product: { title: '不可干洗连衣裙', attributes: [] } } },

@@ -1339,10 +1339,24 @@ export class ReceptionService implements OnModuleInit {
       [sessionId]
     );
     const dialogue = historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent');
-    const currentDialogue = semanticMode === 'local' ? dialogue.filter((m) =>
-      m.seq === session.current_seq && !m.rule_result?.openerTiming &&
-      m.rule_result?.responseRoundType !== 'opener' && m.rule_result?.judge?.signal !== 'opener') : [];
+    const sequenceDialogue = semanticMode === 'local' ? dialogue.filter((m) =>
+      (m.rule_result?.questionSeq ?? m.seq) === session.current_seq) : [];
+    const openerIndex = sequenceDialogue.findIndex((m) => m.rule_result?.responseRoundType === 'opener');
+    const firstQuestionIndex = openerIndex === -1 ? 0 : sequenceDialogue.findIndex((m, index) =>
+      index > openerIndex && m.sender === 'buyer' && m.rule_result?.responseRoundType === 'question');
+    const currentDialogue = sequenceDialogue.slice(Math.max(0, firstQuestionIndex)).filter((m) =>
+      !m.rule_result?.openerTiming && m.rule_result?.responseRoundType !== 'opener' && m.rule_result?.judge?.signal !== 'opener');
     const currentBuyerMessages = currentDialogue.filter((m) => m.sender === 'buyer');
+    const latestBuyer = currentBuyerMessages.at(-1);
+    const latestBuyerIndexInQuestion = latestBuyer ? currentDialogue.lastIndexOf(latestBuyer) : -1;
+    const latestBuyerRound: string[] = [];
+    // Keep every buyer bubble in the latest push, even when the buyer asks in several messages.
+    for (let index = latestBuyerIndexInQuestion; index >= 0; index--) {
+      const message = currentDialogue[index];
+      if (message.sender !== 'buyer') break;
+      latestBuyerRound.unshift(message.content);
+      if (message.rule_result?.responseRoundStart) break;
+    }
     let modelResult: Awaited<ReturnType<typeof evaluateWithModels>> | null = null;
     try {
     modelResult = useModel ? await evaluateWithModels({
@@ -1354,7 +1368,7 @@ export class ReceptionService implements OnModuleInit {
         order: session.order_payload ? { stage: session.order_payload.stage, statusText: session.order_payload.statusText,
           promisedShipAt: session.order_payload.promisedShipAt } : undefined,
       } } : {}),
-      question: currentQuestion!.question,
+      question: latestBuyerRound.join('\n') || currentQuestion!.question,
       goals: (currentQuestion!.semanticGoals || []).map((goal) => ({ id: goal.id, points: goal.requiredPoints.map((point) => ({ id: point.id, label: point.label })) })),
       history: (semanticMode === 'local'
         ? currentBuyerMessages.length > 1 ? currentDialogue : currentBuyerMessages
