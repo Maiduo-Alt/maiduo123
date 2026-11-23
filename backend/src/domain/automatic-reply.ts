@@ -432,15 +432,15 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
     }
     if (intent === 'color-difference') {
       // “细微”等与“轻微”同样表示程度；价格、尺码等其他差异不能冒充色差。
-      const colorStatements = statements.filter((part) => !/价格|运费|尺码|发货/u.test(part) || /颜色|色差|光线|屏幕/u.test(part));
-      const small = /(?:轻微|细微|略微|些微|微小)(?:的)?(?:色差|差异|差别)|(?:色差|颜色差异)(?:是|很|较|比较)?(?:轻微|细微|些微|微小|不大|很小|较小)|没有(?:明显)?色差|基本一样|基本没差别|差别不大|差不多|不明显|有(?:一点|一点点|点区别)|多少.{0,5}一点/u;
-      const large = /(?:色差|颜色差异|颜色差别|(?:实物|颜色).{0,12}(?:差异|差别)).{0,5}(?:非常大|特别大|很大|较大|严重|很明显)|(?:非常大|特别大|很大|严重)(?:的)?色差/u;
+      const colorStatements = statements.filter((part) => !/价格|运费|尺码|发货|聚酯|面料|材质|售后|退货/u.test(part) || /颜色|色差|光线|屏幕/u.test(part));
+      const small = /(?:轻微|细微|略微|些微|微小)(?:的)?(?:色差|差异|差别)|(?:色差|颜色差异)(?:是|很|较|比较)?(?:轻微|细微|些微|微小|不大|很小|较小)|没有(?:明显)?色差|基本一样|几乎一样|基本没差别|差别不大|差不多|不明显|有(?:一点|一点点|点区别)|多少.{0,5}一点/u;
+      const large = /(?:色差|颜色差异|颜色差别|(?:实物|颜色).{0,12}(?:差异|差别)).{0,5}(?:非常大|特别大|很大|较大|严重|很明显)|(?:非常大|特别大|很大|严重)(?:的)?色差|(?:主图|图片|实物|颜色).{0,12}差得(?:特别|非常|很)多/u;
       const hasSmall = colorStatements.some((part) => small.test(part) && !/(?:没有|并无|并非|不是|不算|不存在)(?:任何|所谓的?)?(?:轻微|细微|略微|些微|微小)(?:的)?(?:色差|差异|差别)/u.test(part));
       const hasLarge = colorStatements.some((part) => large.test(part) && !/(?:没有|并无|不存在)(?:任何|明显的?|严重的?)?(?:色差|颜色差异|颜色差别)/u.test(part));
       if (hasSmall && hasLarge) return { pass: false, signal: 'off-topic', intent, status: 'unsupported', reason: '对色差程度的描述存在冲突，需结合商品和具体情况核对', evidence: [], missing: ['请核对色差程度'] };
       const evidence = colorStatements.filter((part) => {
         if (/(?:没有|并无|并非|不是|不算|不存在)(?:任何|所谓的?)?(?:轻微|细微|略微|些微|微小)(?:的)?(?:色差|差异|差别)/u.test(part)) return false;
-        return /色差(?:并)?(?:不大|很小|较小|明显|较大|很大|非常大|特别大)|(?:轻微|细微|略微|些微|微小|明显|严重)(?:的)?色差|没有(?:明显)?色差|颜色.{0,8}(?:接近|一致|差别不大)|(?:只有|会有|有)(?:轻微|细微|略微|些微|微小|较小)(?:的)?(?:差异|差别)|基本一样|差不多|不明显|有(?:一点|一点点|点区别)|多少.{0,5}一点/u.test(part);
+        return /色差(?:并)?(?:不大|很小|较小|明显|较大|很大|非常大|特别大)|(?:轻微|细微|略微|些微|微小|明显|严重)(?:的)?色差|没有(?:明显)?色差|颜色.{0,8}(?:接近|一致|差别不大)|(?:只有|会有|有)(?:轻微|细微|略微|些微|微小|较小)(?:的)?(?:差异|差别)|基本一样|几乎一样|差不多|不明显|有(?:一点|一点点|点区别)|多少.{0,5}一点/u.test(part) || large.test(part);
       });
       const result = assessment(intent, evidence, evidence.length ? [] : ['尚未说明颜色差异的程度'], pendingVerification);
       return result.pass ? { ...result, acceptedGuidance: true } : result;

@@ -12,6 +12,7 @@ fi
 
 # Test the actual judge in the new image before replacing the running API.
 "${compose[@]}" build api
+"${compose[@]}" build web
 "${compose[@]}" run --rm --no-deps -T api node - <<'NODE'
 const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js');
 (async () => {
@@ -26,6 +27,7 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
   ];
   for (const [question, reply, expected] of cases) {
     const washingCase = question.includes('机洗');
+    const expectedSource = washingCase ? 'wash-guidance' : question.includes('色差') ? 'color-difference' : undefined;
     const started = Date.now();
     const result = await evaluateWithModels(
       { question, goals: [], history: [{ role: 'buyer', content: question }], reply, judgmentVersion: 2,
@@ -34,7 +36,7 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
         onFailure: reason => console.error('本地模型预检失败：' + reason) } },
     );
     if (result.resolved !== expected) throw Error('本地模型对部署样例的判定不符：' + JSON.stringify({question, reply, expected, result}));
-    if (washingCase && result.decisionSource !== 'wash-guidance') throw Error('洗涤样例未命中已批准的业务规则');
+    if (result.decisionSource !== expectedSource) throw Error('样例的判定来源不符：' + question);
     console.log('本地预检耗时 ' + (Date.now() - started) + ' ms：' + question);
   }
   console.log('本地模型通过有效答复和空泛答复检查');
@@ -48,6 +50,7 @@ timeout 60s sudo docker exec cs-training-postgres-1 pg_dump -w -U cs_training -F
 test -s "$backup"
 timeout 60s sudo docker exec -i cs-training-postgres-1 pg_restore -l < "$backup" >/dev/null
 "${compose[@]}" up -d --no-deps --wait --wait-timeout 90 api
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 90 web
 curl -fsS --max-time 5 --retry 10 --retry-delay 3 --retry-all-errors http://127.0.0.1:8080/api/health |
   python3 -c 'import json,sys; r=json.load(sys.stdin); print(r); d=r.get("data") or {}; sys.exit(0 if r.get("code")==0 and d.get("status")=="ok" and d.get("db")=="up" else 1)'
 echo "部署完成，版本 $(git rev-parse --short HEAD)，数据库备份 $backup"

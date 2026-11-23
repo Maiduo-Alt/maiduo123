@@ -40,9 +40,9 @@ export class ReceptionController {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Param('sessionId') sessionId: string,
-    @Body() body: { content: string }
+    @Body() body: { content: string; backgroundJudgment?: boolean }
   ) {
-    return this.reception.sendMessage(user.id, Number(id), Number(sessionId), body.content);
+    return this.reception.submitMessage(user.id, Number(id), Number(sessionId), body.content, body.backgroundJudgment === true);
   }
 
   @Post(':id/sessions/:sessionId/transfer')

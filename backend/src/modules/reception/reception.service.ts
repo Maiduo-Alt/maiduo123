@@ -45,7 +45,8 @@ import { ORDER_AFTERSALE_QUESTIONS, PRESALE_PRODUCT_QUESTIONS } from '../../db/s
 import { buildKeywordQuestionProgress, deriveConversationState } from '../../domain/conversation-state';
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
 import { assessAutomaticReply, ReplyAssessment } from '../../domain/automatic-reply';
-import { evaluateWithModels } from '../../domain/model-reception';
+import { evaluateWithModels, ModelReceptionInput } from '../../domain/model-reception';
+import { assessLocalTrainingRules } from '../../domain/local-training-rules';
 import { ModelCredentialsService } from '../settings/model-credentials.service';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, selectWashFollowUp } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
@@ -93,6 +94,9 @@ interface SessionRow {
 export class ReceptionService implements OnModuleInit {
   private readonly logger = new Logger(ReceptionService.name);
   private readonly modelRequests = new Map<number, number>();
+  private readonly pendingReplies = new Set<number>();
+  private localJudgeQueue = Promise.resolve();
+  private readonly localJudgeBudgetMs = 45000;
 
   /**
    * 沟通风格只改变“怎么说”，不再额外注入新的业务意图。
@@ -199,7 +203,6 @@ export class ReceptionService implements OnModuleInit {
   private async recoverRunningAttempts(): Promise<void> {
     const attempts = await this.db.many<{ id: number }>(`SELECT id FROM attempts WHERE status = 'running'`);
     if (!attempts.length) return;
-
     const idList = attempts.map((a) => a.id);
     const sessions = await this.db.many<{ id: number; state: string; join_at: string; close_deadline_at: string | null; model_started_at: string | null; last_buyer_at: string | null }>(
       `SELECT id, state, join_at, close_deadline_at, model_started_at, last_buyer_at FROM sessions
@@ -214,8 +217,15 @@ export class ReceptionService implements OnModuleInit {
         const lastBuyer = session.last_buyer_at && ['wait', 'serving', 'timeout'].includes(session.state)
           ? new Date(new Date(session.last_buyer_at).getTime() + Math.max(0, Date.now() - new Date(session.model_started_at).getTime())).toISOString()
           : session.last_buyer_at;
-        await this.db.query(`UPDATE sessions SET last_buyer_at = $2, model_started_at = NULL WHERE id = $1 AND model_started_at = $3`,
-          [session.id, lastBuyer, session.model_started_at]);
+        await this.db.tx(async (client) => {
+          const resumed = await client.query(
+            `UPDATE sessions SET last_buyer_at = $2, model_started_at = NULL WHERE id = $1 AND model_started_at = $3 RETURNING id`,
+            [session.id, lastBuyer, session.model_started_at]);
+          if (!resumed.rows.length) return;
+          await client.query(
+            `UPDATE messages SET rule_result = $2::jsonb WHERE session_id = $1 AND rule_result->>'judgmentState' = 'pending'`,
+            [session.id, JSON.stringify(this.unavailableJudgment())]);
+        });
       }
       if (session.state === 'wait') {
         this.scheduler.schedule(`join:${session.id}`, Math.max(0, new Date(session.join_at).getTime() - Date.now()), () => this.pushNextQuestion(session.id));
@@ -767,6 +777,7 @@ export class ReceptionService implements OnModuleInit {
   }
 
   async pushNextQuestion(sessionId: number, modelIntro?: string): Promise<void> {
+    if (this.pendingReplies.has(sessionId)) return;
     let session = await this.loadSession(sessionId);
     if (!session || ['finished', 'transferred', 'aborted', 'pending', 'awaiting_agent_close'].includes(session.state)) return;
     // 题号可能因跳题而增加，必须按实际推送过的轮次计算。
@@ -774,7 +785,7 @@ export class ReceptionService implements OnModuleInit {
       q.seq <= session.current_seq && !(session.skipped_seqs || []).includes(q.seq)
     ).length;
     const recentAgent = await this.db.one<{ content: string }>(
-      `SELECT content FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id DESC LIMIT 1`,
+      `SELECT content FROM messages WHERE session_id = $1 AND sender = 'agent' AND COALESCE(rule_result->>'judgmentState', '') = '' ORDER BY id DESC LIMIT 1`,
       [sessionId]
     );
     if (recentAgent && isNaturalClosingReply(recentAgent.content)) {
@@ -1026,6 +1037,7 @@ export class ReceptionService implements OnModuleInit {
    * 历史消息没有 judge 字段（旧数据）时退回要点命中口径。
    */
   async advanceAfterReply(sessionId: number): Promise<void> {
+    if (this.pendingReplies.has(sessionId)) return;
     const session = await this.loadSession(sessionId);
     if (!session || ['finished', 'transferred', 'aborted', 'pending'].includes(session.state)) return;
     // 开场白阶段：买家只发了问候/商品链接，客服有任何回应即抛出第一题（不参与要点判定）。
@@ -1040,7 +1052,7 @@ export class ReceptionService implements OnModuleInit {
       return;
     }
     const replies = await this.db.many<any>(
-      `SELECT content, rule_result FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'agent' ORDER BY id`,
+      `SELECT content, rule_result FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'agent' AND COALESCE(rule_result->>'judgmentState', '') = '' ORDER BY id`,
       [sessionId, session.current_seq]
     );
     // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
@@ -1284,7 +1296,25 @@ export class ReceptionService implements OnModuleInit {
 
   /* ---------------- 客服回复 ---------------- */
 
+  submitMessage(accountId: number, attemptId: number, sessionId: number, content: string, backgroundJudgment: boolean) {
+    return backgroundJudgment
+      ? this.processMessage(accountId, attemptId, sessionId, content, { backgroundJudgment: true })
+      : this.sendMessage(accountId, attemptId, sessionId, content);
+  }
+
   async sendMessage(
+    accountId: number,
+    attemptId: number,
+    sessionId: number,
+    content: string,
+    meta?: { businessAction?: { code: string; name: string } },
+  ) {
+    const { ruleResult, ...sent } = await this.processMessage(accountId, attemptId, sessionId, content, meta);
+    if ('judgmentState' in ruleResult) throw new Error('同步回复未完成判定');
+    return { ...sent, ruleResult };
+  }
+
+  private async processMessage(
     accountId: number,
     attemptId: number,
     sessionId: number,
@@ -1294,7 +1324,7 @@ export class ReceptionService implements OnModuleInit {
      * 带 businessAction 的消息：不参与「无效 / 敷衍回复」判定（连点两次催付是正常操作），
      * 其余（计入本轮响应时长、要点命中、情绪变化）与普通回复一致。
      */
-    meta?: { businessAction?: { code: string; name: string } }
+    meta?: { businessAction?: { code: string; name: string }; backgroundJudgment?: boolean },
   ) {
     const attempt = await this.assertAttempt(accountId, attemptId);
     // 判定与计分一律按开局时的参数快照：系统参数改完只对新接待生效，历史接待按旧快照复算
@@ -1317,7 +1347,7 @@ export class ReceptionService implements OnModuleInit {
     const currentQuestion = session.questions.find((q) => q.seq === session.current_seq) || null;
     const semanticMode = process.env.REPLY_JUDGMENT_MODE;
     const semanticOnly = semanticMode === 'local' || semanticMode === 'external';
-    const modelKeys = semanticMode === 'local' ? { local: {
+    const modelKeys: Parameters<typeof evaluateWithModels>[1] = semanticMode === 'local' ? { local: {
       url: process.env.LOCAL_SEMANTIC_JUDGE_URL || 'http://semantic-judge:11434/v1/chat/completions',
       model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL || 'qwen2.5:1.5b',
       onFailure: (reason: string) => this.logger.warn(`本地判定失败 attempt=${attemptId} session=${sessionId} seq=${session.current_seq}：${reason}`),
@@ -1333,11 +1363,25 @@ export class ReceptionService implements OnModuleInit {
       if (!claimed) throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复或状态已改变，请稍候');
       this.modelRequests.set(sessionId, now);
     }
+    let released = false;
+    const release = async () => {
+      if (released) return;
+      released = true;
+      try {
+        if (useModel) {
+          await this.db.query(`UPDATE sessions SET model_started_at = NULL WHERE id = $1 AND model_started_at = $2`, [sessionId, new Date(now).toISOString()]);
+        }
+      } finally {
+        if (useModel) this.modelRequests.delete(sessionId);
+        if (meta?.backgroundJudgment) this.pendingReplies.delete(sessionId);
+      }
+    };
+    let handedOff = false;
     try {
-    const historyRows = await this.db.many<any>(
+    const historyRows = (await this.db.many<any>(
       `SELECT sender, content, seq, response_sec, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
       [sessionId]
-    );
+    )).filter((m) => !m.rule_result?.judgmentState);
     const dialogue = historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent');
     const sequenceDialogue = semanticMode === 'local' ? dialogue.filter((m) =>
       (m.rule_result?.questionSeq ?? m.seq) === session.current_seq) : [];
@@ -1357,9 +1401,7 @@ export class ReceptionService implements OnModuleInit {
       latestBuyerRound.unshift(message.content);
       if (message.rule_result?.responseRoundStart) break;
     }
-    let modelResult: Awaited<ReturnType<typeof evaluateWithModels>> | null = null;
-    try {
-    modelResult = useModel ? await evaluateWithModels({
+    const modelInput: ModelReceptionInput | null = useModel ? {
       ...(semanticOnly || params.replyJudgmentVersion === 2 ? { judgmentVersion: 2 as const, facts: {
         product: session.products[0] ? {
           title: session.products[0].title, attributes: session.products[0].attributes,
@@ -1375,7 +1417,17 @@ export class ReceptionService implements OnModuleInit {
         : dialogue.slice(-12)
       ).map((m) => ({ role: m.sender, content: m.content })),
       reply: text,
-    }, modelKeys) : null;
+    } : null;
+    const ruleDecision = modelInput && semanticMode === 'local' ? assessLocalTrainingRules(modelInput) : undefined;
+
+    const complete = async (pendingId?: number) => {
+    let modelResult: Awaited<ReturnType<typeof evaluateWithModels>> | null = null;
+    try {
+      if (modelInput) {
+        modelResult = ruleDecision ?? (modelKeys.local
+          ? await this.queueLocalJudgment(modelInput, modelKeys.local, now)
+          : await evaluateWithModels(modelInput, modelKeys));
+      }
     } catch (error) {
       if (lastBuyerAt !== null) {
         await this.db.query(
@@ -1387,7 +1439,10 @@ export class ReceptionService implements OnModuleInit {
     }
     if (modelResult) {
       const latest = await this.loadSession(sessionId);
-      if (!latest || latest.state !== session.state || latest.current_seq !== session.current_seq) throw new BizError(ERR.SESSION_STATE, '会话状态已改变，请重新确认后发送');
+      if (!latest || latest.state !== session.state || latest.current_seq !== session.current_seq ||
+          String(latest.last_buyer_at) !== String(session.last_buyer_at)) {
+        throw new BizError(ERR.SESSION_STATE, '会话状态已改变，请重新确认后发送');
+      }
     }
     const trainingProduct = session.products[0];
     const productMaterialDetails = trainingProduct ? [
@@ -1562,7 +1617,7 @@ export class ReceptionService implements OnModuleInit {
       ...(unifiedJudgment ? { judgmentVersion: semanticOnly ? 2 : params.replyJudgmentVersion } : {}),
       ...((semanticOnly || params.replyJudgmentVersion === 2) && !openerStage && !inAgentCloseWindow ? {
         replyAssessment: invalidReason ? { source: 'rule', status: 'unanswered', reason: invalidReason, evidence: [], missing: missingReplyDetails } : modelResult && !blockedAssessment && !useGuidance
-          ? { source: modelResult.decisionSource === 'wash-guidance' ? 'rule' : modelResult.provider, intent: ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
+          ? { source: modelResult.decisionSource ? 'rule' : modelResult.provider, intent: modelResult.decisionSource === 'color-difference' ? 'color-difference' : ruleAssessment.intent || 'general', status: modelResolved ? 'resolved' : pendingVerification ? 'pending' : 'unanswered', reason: modelResult.reason, evidence: modelResult.evidence || [], missing: [] }
           : { ...ruleAssessment, source: 'rule' },
       } : {}),
       ...(openerStage ? { openerTiming: true } : {}),
@@ -1587,58 +1642,79 @@ export class ReceptionService implements OnModuleInit {
       ...(meta?.businessAction ? { businessAction: meta.businessAction } : {}),
     };
 
-    const inserted = await this.db.one<{ id: number }>(
-      `INSERT INTO messages (session_id, sender, content, seq, response_sec, is_timeout, rule_result)
-       VALUES ($1,'agent',$2,$3,$4,$5,$6::jsonb) RETURNING id`,
-      [sessionId, text, insertSeq, responseSec, isTimeout, JSON.stringify(ruleResult)]
-    );
+    const persistReply = async (query: DbService['query']) => {
+      const result = pendingId === undefined ? await query<{ id: number }>(
+        `INSERT INTO messages (session_id, sender, content, seq, response_sec, is_timeout, rule_result)
+         VALUES ($1,'agent',$2,$3,$4,$5,$6::jsonb) RETURNING id`,
+        [sessionId, text, insertSeq, responseSec, isTimeout, JSON.stringify(ruleResult)]
+      ) : await query<{ id: number }>(
+        `UPDATE messages SET response_sec = $2, is_timeout = $3, rule_result = $4::jsonb
+         WHERE id = $1 AND rule_result->>'judgmentState' = 'pending' RETURNING id`,
+        [pendingId, responseSec, isTimeout, JSON.stringify(ruleResult)],
+      );
+      const inserted = result.rows[0];
+      if (!inserted) throw new Error('待判定的客服消息已改变');
 
-    // 平均响应按官方口径：Σ轮次时长 ÷ 轮次总数，未回复/无有效回复的轮次记 600 秒
-    const maxResponseSec = Math.max(session.max_response_sec || 0, responseSec || 0);
-    let avgResponseSec: number | null;
-    if (params.responseTimingVersion === 2) {
-      avgResponseSec = await this.responseEventAverage(session, params);
-    } else {
-      const roundRows = await this.db.many<{ sec: number | string }>(
-        `SELECT min(response_sec) AS sec FROM messages
-         WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL
-           AND COALESCE(rule_result->>'openerTiming', 'false') <> 'true' GROUP BY seq`,
-        [sessionId]
+      // 平均响应按官方口径：Σ轮次时长 ÷ 轮次总数，未回复/无有效回复的轮次记 600 秒
+      const maxResponseSec = Math.max(session.max_response_sec || 0, responseSec || 0);
+      let avgResponseSec: number | null;
+      if (params.responseTimingVersion === 2) {
+        avgResponseSec = await this.responseEventAverage(session, params, query);
+      } else {
+        const roundRows = await query<{ sec: number | string }>(
+          `SELECT min(response_sec) AS sec FROM messages
+           WHERE session_id = $1 AND sender = 'agent' AND response_sec IS NOT NULL
+             AND COALESCE(rule_result->>'openerTiming', 'false') <> 'true' GROUP BY seq`,
+          [sessionId]
+        );
+        avgResponseSec = weightedAvgResponseSec(
+          roundRows.rows.map((r) => Number(r.sec)),
+          session.total_questions - (session.skipped_seqs || []).length
+        );
+      }
+      const closeDeadline = inAgentCloseWindow
+        ? new Date(Date.now() + this.agentCloseWindowMs(attempt.level)).toISOString()
+        : null;
+      await query(
+        `UPDATE sessions SET state = $7::varchar,
+                             close_deadline_at = CASE WHEN $7::varchar = 'awaiting_agent_close' THEN $8::timestamptz ELSE NULL END,
+                             last_agent_at = now(),
+                             first_reply_at = COALESCE(first_reply_at, now()),
+                             max_response_sec = $2,
+                             avg_response_sec = $3,
+                             emotion_value = $4,
+                             unresolved_streak = $5,
+                             conversation_state = $6::jsonb
+         WHERE id = $1`,
+        [
+          sessionId,
+          maxResponseSec,
+          avgResponseSec,
+          emotion.value,
+          inAgentCloseWindow && unifiedJudgment ? session.unresolved_streak : responded ? 0 : session.unresolved_streak + 1,
+          JSON.stringify(conversationState),
+          inAgentCloseWindow ? 'awaiting_agent_close' : 'waiting_buyer',
+          closeDeadline,
+        ]
       );
-      avgResponseSec = weightedAvgResponseSec(
-        roundRows.map((r) => Number(r.sec)),
-        session.total_questions - (session.skipped_seqs || []).length
-      );
-    }
-    const closeDeadline = inAgentCloseWindow
-      ? new Date(Date.now() + this.agentCloseWindowMs(attempt.level)).toISOString()
-      : null;
-    await this.db.query(
-      `UPDATE sessions SET state = $7::varchar,
-                           close_deadline_at = CASE WHEN $7::varchar = 'awaiting_agent_close' THEN $8::timestamptz ELSE NULL END,
-                           last_agent_at = now(),
-                           first_reply_at = COALESCE(first_reply_at, now()),
-                           max_response_sec = $2,
-                           avg_response_sec = $3,
-                           emotion_value = $4,
-                           unresolved_streak = $5,
-                           conversation_state = $6::jsonb
-       WHERE id = $1`,
-      [
-        sessionId,
-        maxResponseSec,
-        avgResponseSec,
-        emotion.value,
-        inAgentCloseWindow && unifiedJudgment ? session.unresolved_streak : responded ? 0 : session.unresolved_streak + 1,
-        JSON.stringify(conversationState),
-        inAgentCloseWindow ? 'awaiting_agent_close' : 'waiting_buyer',
-        closeDeadline,
-      ]
-    );
+
+      return { inserted, closeDeadline };
+    };
+    const { inserted, closeDeadline } = pendingId === undefined
+      ? await persistReply(this.db.query.bind(this.db))
+      : await this.db.tx(async (client) => {
+        const current = await client.query(
+          `SELECT id FROM sessions WHERE id = $1 AND state = $2 AND current_seq = $3 AND model_started_at = $4 FOR UPDATE`,
+          [sessionId, session.state, session.current_seq, new Date(now).toISOString()],
+        );
+        if (!current.rows.length) throw new BizError(ERR.SESSION_STATE, '会话状态已改变，请重新确认后发送');
+        return persistReply((sql, values) => client.query(sql, values));
+      });
 
     this.gateway.emitToUser(accountId, 'agent.message.ack', {
       sessionId,
       messageId: inserted.id,
+      backgroundJudgment: pendingId !== undefined,
       responseSec,
       isTimeout,
       ruleResult,
@@ -1679,6 +1755,8 @@ export class ReceptionService implements OnModuleInit {
       }
     }
 
+    // A zero-delay buyer task must be able to run as soon as the result is committed.
+    if (pendingId !== undefined) await release();
     if (inAgentCloseWindow) {
       this.scheduleAgentClose(sessionId, Date.parse(closeDeadline!));
     } else if (!waitingForEscalationReply) {
@@ -1691,11 +1769,59 @@ export class ReceptionService implements OnModuleInit {
     }
 
     return { messageId: inserted.id, responseSec, isTimeout, ruleResult, level: attempt.level };
+    };
+
+    if (modelInput && modelKeys.local && meta?.backgroundJudgment && !ruleDecision) {
+      this.pendingReplies.add(sessionId);
+      const pending = { questionSeq: session.current_seq, judgmentVersion: 2, judgmentState: 'pending' };
+      const inserted = await this.db.one<{ id: number }>(
+        `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'agent',$2,$3,$4::jsonb) RETURNING id`,
+        [sessionId, text, session.current_seq, JSON.stringify(pending)],
+      );
+      this.scheduler.cancel(`next:${sessionId}`);
+      handedOff = true;
+      void complete(inserted.id).catch(async (error: Error) => {
+        const ruleResult = this.unavailableJudgment(session.current_seq);
+        await this.db.query(`UPDATE messages SET rule_result = $2::jsonb WHERE id = $1 AND rule_result->>'judgmentState' = 'pending'`,
+          [inserted.id, JSON.stringify(ruleResult)]);
+        this.gateway.emitToUser(accountId, 'agent.message.ack', { sessionId, messageId: inserted.id, ruleResult });
+        if (session.state === 'waiting_buyer') {
+          this.scheduler.schedule(`next:${sessionId}`, this.REPLY_THINK_DELAY_MS, () => this.advanceAfterReply(sessionId));
+        }
+        this.logger.warn(`后台判定未完成 session=${sessionId}：${error.message}`);
+      }).finally(release).catch((error: Error) => this.logger.error(`更新后台判定状态失败 session=${sessionId}：${error.message}`));
+      return { messageId: inserted.id, responseSec: null, isTimeout: false, ruleResult: pending, level: attempt.level };
+    }
+    return await complete();
     } finally {
-      if (useModel) {
-        await this.db.query(`UPDATE sessions SET model_started_at = NULL WHERE id = $1 AND model_started_at = $2`, [sessionId, new Date(now).toISOString()]);
-        this.modelRequests.delete(sessionId);
-      }
+      if (!handedOff) await release();
+    }
+  }
+
+  private unavailableJudgment(questionSeq?: number) {
+    return { questionSeq, judgmentVersion: 2, judgmentState: 'unavailable',
+      replyAssessment: { reason: '本次判定未完成，可重新发送回复' } };
+  }
+
+  private async queueLocalJudgment(input: ModelReceptionInput, config: NonNullable<Parameters<typeof evaluateWithModels>[1]['local']>, receivedAt: number) {
+    const remaining = receivedAt + this.localJudgeBudgetMs - Date.now();
+    if (remaining <= 0) throw new Error('本地判定等待超时');
+    const signal = AbortSignal.timeout(remaining);
+    let onExpiry: () => void;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      onExpiry = () => reject(new Error('本地判定等待超时'));
+      signal.addEventListener('abort', onExpiry, { once: true });
+    });
+    const work = this.localJudgeQueue.then(() => {
+      const timeoutMs = receivedAt + this.localJudgeBudgetMs - Date.now();
+      if (signal.aborted || timeoutMs <= 0) throw new Error('本地判定等待超时');
+      return evaluateWithModels(input, { local: { ...config, timeoutMs } });
+    });
+    this.localJudgeQueue = work.then(() => undefined, () => undefined);
+    try {
+      return await Promise.race([work, deadline]);
+    } finally {
+      signal.removeEventListener('abort', onExpiry!);
     }
   }
 
@@ -1750,6 +1876,7 @@ export class ReceptionService implements OnModuleInit {
     await this.assertAttempt(accountId, attemptId);
     const session = await this.loadSession(sessionId);
     if (!session || session.attempt_id !== attemptId) throw new BizError(ERR.NOT_FOUND, '会话不存在');
+    if (this.pendingReplies.has(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在判定，请稍候');
     if (session.state === 'pending') throw new BizError(ERR.SESSION_STATE, '该买家还在排队待接入，请稍候');
     if (['finished', 'transferred', 'aborted'].includes(session.state)) throw new BizError(ERR.SESSION_STATE, '该会话已结束');
     const transferred = Array.from(new Set([...(session.transferred_seqs || []), session.current_seq]));
@@ -1772,6 +1899,7 @@ export class ReceptionService implements OnModuleInit {
     await this.assertAttempt(accountId, attemptId);
     const session = await this.loadSession(sessionId);
     if (!session || session.attempt_id !== attemptId) throw new BizError(ERR.NOT_FOUND, '会话不存在');
+    if (this.pendingReplies.has(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在判定，请稍候');
     if (session.state === 'pending') throw new BizError(ERR.SESSION_STATE, '该买家还在排队待接入，请稍候');
     if (['finished', 'transferred', 'aborted'].includes(session.state)) throw new BizError(ERR.SESSION_STATE, '该会话已结束');
     const reason: 'normal' | 'early' | 'manual' = session.state === 'awaiting_agent_close'
@@ -1786,6 +1914,7 @@ export class ReceptionService implements OnModuleInit {
   async finishAttempt(accountId: number, attemptId: number) {
     await this.assertAttempt(accountId, attemptId);
     const sessions = await this.db.many<SessionRow>(`SELECT * FROM sessions WHERE attempt_id = $1`, [attemptId]);
+    if (sessions.some((s) => this.pendingReplies.has(s.id))) throw new BizError(ERR.SESSION_STATE, '有会话正在判定，请稍候');
     for (const s of sessions) {
       if (!['finished', 'transferred', 'aborted'].includes(s.state)) {
         this.scheduler.cancel(`next:${s.id}`);
@@ -1799,9 +1928,9 @@ export class ReceptionService implements OnModuleInit {
 
   /* ---------------- 评分与收尾 ---------------- */
 
-  private async responseEventAverage(session: SessionRow, params: SystemParams): Promise<number | null> {
-    const messages = await this.db.many<any>(
-      `SELECT sender, content, seq, response_sec, is_timeout, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
+  private async responseEventAverage(session: SessionRow, params: SystemParams, query: DbService['query'] = this.db.query.bind(this.db)): Promise<number | null> {
+    const { rows: messages } = await query<any>(
+      `SELECT sender, content, seq, response_sec, is_timeout, rule_result FROM messages WHERE session_id = $1 AND COALESCE(rule_result->>'judgmentState', '') = '' ORDER BY id`,
       [session.id],
     );
     const timing = computeResponseRounds(messages.map((m) => ({
@@ -1829,7 +1958,7 @@ export class ReceptionService implements OnModuleInit {
     );
     const params = attemptRow?.param_snapshot || (await this.settings.getParams());
     const messages = await this.db.many<any>(
-      `SELECT sender, content, seq, response_sec, is_timeout, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
+      `SELECT sender, content, seq, response_sec, is_timeout, rule_result FROM messages WHERE session_id = $1 AND COALESCE(rule_result->>'judgmentState', '') = '' ORDER BY id`,
       [sessionId]
     );
     const styleEmotional = !!this.styleBehavior[session.style_code]?.emotional;
@@ -2278,13 +2407,21 @@ export class ReceptionService implements OnModuleInit {
             [row.id],
           );
       if (Number(already.count) > 0) continue;
-      const current = await this.loadSession(row.id);
-      await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, is_timeout) VALUES ($1,'system',$2,$3,true)`, [
-        row.id,
-        `该会话已超过 ${Math.round(params.timeoutSec * tolerance)} 秒未回复，系统记录一次超时`,
-        current?.current_seq || 0,
-      ]);
-      await this.db.query(`UPDATE sessions SET timeout_count = timeout_count + 1, state = 'timeout' WHERE id = $1`, [row.id]);
+      const recorded = await this.db.tx(async (client) => {
+        const updated = await client.query<{ current_seq: number }>(
+          `UPDATE sessions SET timeout_count = timeout_count + 1, state = 'timeout'
+           WHERE id = $1 AND model_started_at IS NULL AND state = $2 AND last_buyer_at = $3 RETURNING current_seq`,
+          [row.id, row.state, row.last_buyer_at],
+        );
+        if (!updated.rows.length) return false;
+        await client.query(`INSERT INTO messages (session_id, sender, content, seq, is_timeout) VALUES ($1,'system',$2,$3,true)`, [
+          row.id,
+          `该会话已超过 ${Math.round(params.timeoutSec * tolerance)} 秒未回复，系统记录一次超时`,
+          updated.rows[0].current_seq,
+        ]);
+        return true;
+      });
+      if (!recorded) continue;
       this.gateway.emitToUser(row.account_id, 'timeout.warning', {
         attemptId: row.attempt_id,
         sessionId: row.id,

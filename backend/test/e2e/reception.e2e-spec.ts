@@ -117,6 +117,8 @@ describe('在线模拟接待端到端链路', () => {
        VALUES ($1, 1, '重启买家', 'serving', 1, 1, $2::jsonb, $3, $4) RETURNING id`,
       [attempt.id, JSON.stringify([{ seq: 1, question: '可以机洗吗？', keyPoints: ['洗标'], stage: 'presale' }]), new Date(now - 8000).toISOString(), new Date(now - 5000).toISOString()],
     );
+    await sharedDb.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'agent',$2,1,$3::jsonb)`,
+      [session.id, '请以洗标为准。', JSON.stringify({ judgmentState: 'pending' })]);
     try {
       const reception = app.get(ReceptionService);
       await (reception as any).recoverRunningAttempts();
@@ -125,6 +127,7 @@ describe('在线模拟接待端到端链路', () => {
       const snapshot = await reception.snapshot(1, attempt.id);
       expect(snapshot.sessions[0].waitedSec).toBeGreaterThanOrEqual(3);
       expect(snapshot.sessions[0].waitedSec).toBeLessThanOrEqual(4);
+      expect(snapshot.messages[0]).toMatchObject({ content: '请以洗标为准。', ruleResult: { judgmentState: 'unavailable' } });
     } finally {
       await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
     }
@@ -164,6 +167,78 @@ describe('在线模拟接待端到端链路', () => {
       fetchMock.mockRestore();
       if (oldGlm === undefined) delete process.env.GLM_API_KEY; else process.env.GLM_API_KEY = oldGlm;
       if (oldDeepseek === undefined) delete process.env.DEEPSEEK_API_KEY; else process.env.DEEPSEEK_API_KEY = oldDeepseek;
+      await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
+    }
+  });
+
+  it('本地混合模式先落库，开放题串行判定且模型故障后解除暂停', async () => {
+    const auth = { Authorization: `Bearer ${await login('admin', 'Admin@123')}` };
+    const attempt = await sharedDb.one<{ id: number }>(
+      `INSERT INTO attempts (attempt_no, account_id, level, source, param_snapshot) VALUES ($1, 1, 'L1', 'free', $2::jsonb) RETURNING id`,
+      ['AT-background-judge-test', JSON.stringify({ ...DEFAULT_PARAMS, questionPushDelaySec: [600, 600] })],
+    );
+    const addSession = async (question: string) => {
+      const session = await sharedDb.one<{ id: number }>(
+        `INSERT INTO sessions (attempt_id, script_id, buyer_name, state, current_seq, total_questions, questions, last_buyer_at)
+         VALUES ($1, 1, '测试买家', 'serving', 1, 1, $2::jsonb, now()) RETURNING id`,
+        [attempt.id, JSON.stringify([{ seq: 1, question, keyPoints: [] }])],
+      );
+      await sharedDb.query(
+        `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`,
+        [session.id, question, JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' })],
+      );
+      return session.id;
+    };
+    const first = await addSession('走线整齐吗？');
+    const second = await addSession('内衬用了什么材料？');
+    const color = await addSession('实物和详情页图片色差大吗？');
+    const send = (id: number, content: string) => request(http)
+      .post(`/api/receptions/${attempt.id}/sessions/${id}/messages`).set(auth)
+      .send({ content, backgroundJudgment: true });
+    const snapshot = () => app.get(ReceptionService).snapshot(1, attempt.id);
+    const oldMode = process.env.REPLY_JUDGMENT_MODE;
+    const oldModel = process.env.LOCAL_SEMANTIC_JUDGE_MODEL;
+    process.env.REPLY_JUDGMENT_MODE = 'local';
+    process.env.LOCAL_SEMANTIC_JUDGE_MODEL = 'qwen3:0.6b';
+    const releases: ((response: Response) => void)[] = [];
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(
+      () => new Promise((resolve) => releases.push(resolve)),
+    );
+    const accepted = { ok: true, json: async () => ({ choices: [{ message: {
+      content: JSON.stringify({ resolved: true, reason: '直接回答', evidence: ['整齐的哦'] }),
+    } }] }) } as Response;
+    try {
+      const firstReply = (await send(first, '整齐的哦')).body.data;
+      const secondReply = (await send(second, '棉质内衬')).body.data;
+      expect([firstReply.ruleResult.judgmentState, secondReply.ruleResult.judgmentState]).toEqual(['pending', 'pending']);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const pending = await snapshot();
+      expect(pending.sessions.filter((session) => session.timerPausedAt).map((session) => session.sessionId)).toEqual([first, second]);
+      expect(pending.messages.find((msg) => msg.id === firstReply.messageId)).toMatchObject({ content: '整齐的哦', ruleResult: { judgmentState: 'pending' } });
+      expect((await send(first, '重复回复')).body.code).not.toBe(0);
+      const fast = (await send(color, '光线可能带来细微色差')).body.data;
+      expect(fast.ruleResult).toMatchObject({ judge: { pass: true }, replyAssessment: { source: 'rule' } });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      releases[0](accepted);
+      await waitFor(() => releases.length === 2);
+      releases[1]({ ok: false } as Response);
+      let completed = await snapshot();
+      for (let i = 0; i < 30 && completed.sessions.some((session) => session.timerPausedAt); i++) {
+        await sleep(50);
+        completed = await snapshot();
+      }
+      expect(completed.sessions.every((session) => !session.timerPausedAt)).toBe(true);
+      expect(completed.messages.filter((msg) => msg.sessionId === first && msg.sender === 'agent')).toEqual([
+        expect.objectContaining({ id: firstReply.messageId, ruleResult: expect.objectContaining({ judge: { pass: true, signal: 'key-point' } }) }),
+      ]);
+      expect(completed.messages.find((msg) => msg.id === secondReply.messageId)).toMatchObject({
+        content: '棉质内衬', ruleResult: { judgmentState: 'unavailable' }, isTimeout: false,
+      });
+    } finally {
+      releases.forEach((resolve) => resolve({ ok: false } as Response));
+      fetchMock.mockRestore();
+      if (oldMode === undefined) delete process.env.REPLY_JUDGMENT_MODE; else process.env.REPLY_JUDGMENT_MODE = oldMode;
+      if (oldModel === undefined) delete process.env.LOCAL_SEMANTIC_JUDGE_MODEL; else process.env.LOCAL_SEMANTIC_JUDGE_MODEL = oldModel;
       await sharedDb.query(`UPDATE attempts SET status = 'finished' WHERE id = $1`, [attempt.id]);
     }
   });

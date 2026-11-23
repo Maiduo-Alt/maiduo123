@@ -541,6 +541,9 @@ export default function Reception() {
     loadSnapshot(attemptIdFromUrl, false);
     const disconnect = connectRealtime((event, payload) => {
       if (event === 'timeout.warning') beep(true);
+      if (event === 'agent.message.ack' && payload?.backgroundJudgment && payload.isTimeout) {
+        message.warning(`本条回复超过时限（${payload.responseSec} 秒），已记录一次超时`);
+      }
       // C6 实时预警：回复被判无效 / 敷衍时当场提醒（该条消息随后会被打标）
       if (event === 'agent.message.ack' && payload?.invalid) {
         message.warning({
@@ -635,14 +638,16 @@ export default function Reception() {
   };
 
   const send = async () => {
-    if (!attempt || !activeSession || !input.trim()) return;
+    if (!attempt || !activeSession || !input.trim() || sending || activeSession.timerPausedAt) return;
+    const draft = input;
+    const sessionId = activeSession.sessionId;
     setSending(true);
     try {
-      const data = await api<any>(`/receptions/${attempt.id}/sessions/${activeSession.sessionId}/messages`, {
+      const data = await api<any>(`/receptions/${attempt.id}/sessions/${sessionId}/messages`, {
         method: 'POST',
-        body: { content: input.trim() },
+        body: { content: draft.trim(), backgroundJudgment: true },
       });
-      setInput('');
+      if (activeIdRef.current === sessionId) setInput((value) => value === draft ? '' : value);
       if (data.isTimeout) message.warning(`本条回复超过时限（${data.responseSec} 秒），已记录一次超时`);
       await loadSnapshot(attempt.id);
     } catch (e) {
@@ -1534,11 +1539,11 @@ export default function Reception() {
                     {m.sender === 'agent' && m.responseSec !== null && `响应 ${m.responseSec}s`}
                     {m.sender === 'agent' && m.ruleResult?.judgmentVersion >= 1 && !m.ruleResult?.invalid &&
                       !['opener', 'closing'].includes(m.ruleResult?.judge?.signal) && (
-                      <span title={[m.ruleResult?.replyAssessment?.reason, ...(m.ruleResult?.replyAssessment?.evidence || [])].filter(Boolean).join('；')}> · 回答判定：{m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.replyAssessment?.status === 'partial' ? '部分回答' : m.ruleResult?.replyAssessment?.status === 'unsupported' ? '信息待核对' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
+                      <span title={[m.ruleResult?.replyAssessment?.reason, ...(m.ruleResult?.replyAssessment?.evidence || [])].filter(Boolean).join('；')}> · 回答判定：{m.ruleResult?.judgmentState === 'pending' ? '判定中' : m.ruleResult?.judgmentState === 'unavailable' ? '判定未完成，可重发' : m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.replyAssessment?.status === 'partial' ? '部分回答' : m.ruleResult?.replyAssessment?.status === 'unsupported' ? '信息待核对' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
                     )}
                     {m.ruleResult?.modelEvaluation && (
                       <Tooltip title={m.ruleResult.modelEvaluation.reason}>
-                        <span style={{ color: '#1677ff' }}> · 模型判定依据</span>
+                        <span style={{ color: '#1677ff' }}> · {m.ruleResult.modelEvaluation.decisionSource ? '规则' : '模型'}判定依据</span>
                       </Tooltip>
                     )}
                     {m.isTimeout && <span style={{ color: '#cf1322' }}> · 超时</span>}
@@ -1667,7 +1672,7 @@ export default function Reception() {
             <span className="reception-input-count">
               {input.length}/{systemParams?.messageMaxLength ?? 800}
             </span>
-            <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send} disabled={!running}>
+            <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send} disabled={!running || !!activeSession?.timerPausedAt}>
               发送
             </Button>
           </div>
@@ -1684,7 +1689,7 @@ export default function Reception() {
             message={`问题推送已完成，请整理会话后结束（剩余 ${formatDuration(activeSession.remainSec)}）`}
           />
         )}
-        {activeSession && activeSession.timerMode !== 'agent_close' && activeSession.remainSec <= 30 && running && (
+        {activeSession && !activeSession.timerPausedAt && activeSession.timerMode !== 'agent_close' && activeSession.remainSec <= 30 && running && (
           <Alert
             type="warning"
             showIcon

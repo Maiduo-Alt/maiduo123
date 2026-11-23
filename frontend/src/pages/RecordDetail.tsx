@@ -122,11 +122,11 @@ export default function RecordDetail() {
                 {m.responseSec !== null && m.sender === 'agent' && ` · 响应 ${m.responseSec}s`}
                 {m.sender === 'agent' && m.ruleResult?.judgmentVersion >= 1 && !m.ruleResult?.invalid &&
                   !['opener', 'closing'].includes(m.ruleResult?.judge?.signal) && (
-                  <span title={[m.ruleResult?.replyAssessment?.reason, ...(m.ruleResult?.replyAssessment?.evidence || [])].filter(Boolean).join('；')}> · 回答判定：{m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.replyAssessment?.status === 'partial' ? '部分回答' : m.ruleResult?.replyAssessment?.status === 'unsupported' ? '信息待核对' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
+                  <span title={[m.ruleResult?.replyAssessment?.reason, ...(m.ruleResult?.replyAssessment?.evidence || [])].filter(Boolean).join('；')}> · 回答判定：{m.ruleResult?.judgmentState === 'pending' ? '判定中' : m.ruleResult?.judgmentState === 'unavailable' ? '判定未完成' : m.ruleResult?.pendingVerification ? '待核实' : m.ruleResult?.replyAssessment?.status === 'partial' ? '部分回答' : m.ruleResult?.replyAssessment?.status === 'unsupported' ? '信息待核对' : m.ruleResult?.judge?.pass ? '已回答' : '未确认解决'}</span>
                 )}
                 {m.isTimeout && <span style={{ color: '#cf1322' }}> · 超时</span>}
                 {m.ruleResult?.modelEvaluation && (
-                  <span style={{ color: '#1677ff' }}> · 模型判定：{m.ruleResult.modelEvaluation.reason}</span>
+                  <span style={{ color: '#1677ff' }}> · {m.ruleResult.modelEvaluation.decisionSource ? '规则' : '模型'}判定：{m.ruleResult.modelEvaluation.reason}</span>
                 )}
                 {m.ruleResult?.businessAction && (
                   <span style={{ color: '#1677ff' }}> · 业务动作：{m.ruleResult.businessAction.name}</span>

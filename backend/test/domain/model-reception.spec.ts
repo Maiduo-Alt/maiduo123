@@ -149,42 +149,41 @@ it('本地 Qwen3 关闭思考模式，使用单次结构化判定', async () => 
   });
 });
 
-it.each([
-  ['详情没标注，确认前建议轻柔手洗。', ['建议轻柔手洗'], 'alternative', 1, true, 2],
-  ['详情没标注，确认前建议轻柔手洗。', ['建议轻柔手洗'], 'alternative', 2, false, 2],
-  ['未确认，建议手洗或用洗衣袋机洗。', ['建议手洗'], 'none', 0, false, 2],
-  ['我帮您查一下。', [], 'direct', 1, false, 1],
-])('本地 Qwen3 只复核有原文依据的被拒答复：%s', async (reply, evidence, kind, index, expected, calls) => {
-  const response = (value: object) => ({ ok: true, json: async () => ({
-    choices: [{ message: { content: JSON.stringify(value) } }],
+it('本地 Qwen3 保留开放题首判，不再自动翻转有引文的拒答', async () => {
+  const reply = '我帮您查一下';
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '仅承诺核实', evidence: [reply] }) } }],
   }) });
-  const mock = jest.fn().mockResolvedValueOnce(response({
-    resolved: false, reason: '未给机洗结论', evidence,
-  })).mockResolvedValueOnce(response({ kind, index }));
-  const verdict = await evaluateWithModels({ ...input, question: '可以机洗吗？', reply, goals: [], judgmentVersion: 2 },
+  const verdict = await evaluateWithModels({ ...input, question: '走线整齐吗？', reply, history: [], goals: [], judgmentVersion: 2 },
     { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
-  expect(verdict.resolved).toBe(expected);
-  expect(mock).toHaveBeenCalledTimes(calls);
-  if (calls === 2) expect(mock.mock.calls[1][1].signal).toBe(mock.mock.calls[0][1].signal);
+  expect(verdict).toMatchObject({ resolved: false, evidence: [reply] });
+  expect(mock).toHaveBeenCalledTimes(1);
 });
 
 it.each([
-  ['图片光线和屏幕可能产生细微色差', 'direct', 2, true],
-  ['这款用的是聚酯纤维', 'none', 0, false],
-] as const)('色差复核区分程度说明和无关信息：%s', async (firstClause, kind, index, expected) => {
-  const question = '实物和详情页图片色差大吗？';
-  const serviceClause = '如果收到不合适可以联系客服';
-  const reply = `${firstClause}，${serviceClause}。`;
-  const evidence = [serviceClause, firstClause];
-  const response = (value: object) => ({ ok: true, json: async () => ({
-    choices: [{ message: { content: JSON.stringify(value) } }],
-  }) });
-  const mock = jest.fn()
-    .mockResolvedValueOnce(response({ resolved: false, reason: reply, evidence }))
-    .mockResolvedValueOnce(response({ kind, index }));
+  ['实物和详情页图片色差大吗？', '图片光线和屏幕可能产生细微色差，如果收到不合适可以联系客服。', true],
+  ['实物和详情页图片色差大吗？', '这款用的是聚酯纤维，收到不合适可以联系客服。', false],
+  ['实物跟主图颜色差得多吗？', '看着基本一样，手机上显示可能略深一点。', true],
+  ['这件有明显色差吗？', '色差这块我帮您查一下，您先等等。', false],
+  ['这件实物色差明显吗？', '看起来几乎一样，同一件在同样光线下和主图差得特别多。', false],
+  ['实物和详情页图片色差大吗？', '面料跟上款基本一样。', false],
+])('单一色差问题按固定规则判断：%s %s', async (question, reply, expected) => {
+  const mock = jest.fn();
   const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2 },
     { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
-  expect(verdict).toMatchObject({ resolved: expected, evidence: expected ? [firstClause] : evidence });
-  const review = JSON.parse(mock.mock.calls[1][1].body);
-  expect(JSON.parse(review.messages[1].content)).toEqual({ question, reply, quotes: evidence });
+  expect(verdict).toMatchObject({ resolved: expected, decisionSource: 'color-difference' });
+  expect(mock).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['实物和详情页图片色差大吗？', '肉眼看上去还原得挺到位。'],
+  ['色差大吗？还有多久发货？', '基本一样。'],
+])('未覆盖的色差表达或复合问题仍交给模型：%s', async (question, reply) => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '模型判定', evidence: [] }) } }],
+  }) });
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict.decisionSource).toBeUndefined();
+  expect(mock).toHaveBeenCalledTimes(1);
 });
