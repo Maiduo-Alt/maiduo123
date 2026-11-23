@@ -209,6 +209,8 @@ it.each([
   ['这款需要干洗吗？', '需要干洗。', 'dry-clean-required'],
   ['如果想穿得休闲一些，鞋子可以怎么搭配呢？', '鞋子配乐福鞋、尖头平底鞋或短靴都很搭。', 'shoe-styling'],
   ['想穿得休闲点，鞋子怎么搭配？', '浅色帆布鞋就很合适。', 'shoe-styling'],
+  ['想穿得休闲点，鞋子怎么搭配？', '乐福鞋、尖头平底鞋或短靴都可以。', 'shoe-styling'],
+  ['休闲一点配哪种鞋呢？', '小白鞋或帆布鞋。', 'shoe-styling'],
 ])('正面回答干洗要求或休闲鞋搭配时直接判定：%s %s', async (question, reply, decisionSource) => {
   const mock = jest.fn();
   const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts: trainingProduct },
@@ -228,12 +230,50 @@ it.each([
   ['休闲风格的鞋子怎么搭配？', '短款针织开衫更合适。', trainingProduct],
   ['休闲风格的鞋子怎么搭配？', '不推荐搭乐福鞋。', trainingProduct],
   ['休闲风格的鞋子怎么搭配？', '乐福鞋就不合适。', trainingProduct],
+  ['休闲一点配哪种鞋呢？', '店里也有乐福鞋，今天缺货。', trainingProduct],
+  ['休闲一点配哪种鞋呢？', '乐福鞋多少钱？', trainingProduct],
   ['休闲一点，外套和鞋子怎么搭配？', '鞋子建议选乐福鞋。', trainingProduct],
 ])('缺少结论、相互矛盾或只答部分时不直接放行：%s %s', async (question, reply, facts) => {
   const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
     choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '模拟模型未判通过', evidence: [] }) } }],
   }) });
   const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict.decisionSource).toBeUndefined();
+  expect(mock).toHaveBeenCalledTimes(1);
+});
+
+const declaredBlend = { product: { title: '棉感衬衫', attributes: [{ name: '成分', value: '65%棉，35%聚酯纤维' }] } };
+
+it.each([
+  ['这款含多少棉呢？', '大约65%。', declaredBlend],
+  ['这款是聚酯纤维的吗？', '是的，含有聚酯纤维。', declaredBlend],
+  ['这款含多少棉？', '详情页没有单独标注含棉量。', { product: { title: '棉感衬衫', attributes: [{ name: '面料', value: '混纺' }] } }],
+  ['这款是不是涤纶？', '对的哈。', { product: { title: '棉感衬衫', attributes: [] } }],
+  ['含棉量是多少？', '有55%的棉。', { product: { attributes: [{ name: '棉含量', value: '55%' }] } }],
+  ['是聚酯纤维吗？', '不是哦，这款是纯棉。', { product: { attributes: [{ name: '面料', value: '纯棉' }] } }],
+])('成分规则接受符合商品资料或明确说明缺项的回答：%s %s', async (question, reply, facts) => {
+  const mock = jest.fn();
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved: true, decisionSource: 'material-details' });
+  expect(mock).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['这款含多少棉？', '差不多80%。'],
+  ['这款含多少棉？', '不含棉。'],
+  ['这款含多少棉？', '65%棉，不过实际是80%棉。'],
+  ['这款含多少棉？', '65%棉或80%棉。'],
+  ['这款透气吗，含多少棉？', '65%。'],
+  ['这款含多少棉？', '详情页没有标注含棉量。'],
+  ['是聚酯纤维吗？', '不是聚酯纤维。'],
+  ['是聚酯纤维吗？', '是100%聚酯纤维。'],
+])('与商品标注冲突的成分答复不由规则放行：%s %s', async (question, reply) => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '模拟模型判定', evidence: [] }) } }],
+  }) });
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2, facts: declaredBlend },
     { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
   expect(verdict.decisionSource).toBeUndefined();
   expect(mock).toHaveBeenCalledTimes(1);

@@ -37,27 +37,68 @@ function assessMediaLocation(input: ModelReceptionInput): ModelReceptionResult |
     reason: '答复说明了所问资源的查看入口', evidence, matchedPoints: [], buyerReply: '' };
 }
 
+const COTTON_RATIO = /含棉量|棉含量|棉的比例|棉占比|棉成分/u;
+const POLYESTER = /聚酯纤维|涤纶/u;
+
+function cottonPercents(text: string, standalone = false): number[] {
+  const values = [...text.matchAll(/(?:棉(?:纤维)?(?:含量|占比|比例|成分)?)(?:大约|大概|约|是|为|占|有|\s)*(\d{1,3}(?:\.\d+)?)\s*[%％]|(?<![\d.−-])(\d{1,3}(?:\.\d+)?)\s*[%％]\s*(?:的)?\s*棉/gu)]
+    .map((match) => Number(match[1] ?? match[2]));
+  if (/不含棉|无棉成分/u.test(text)) values.push(0);
+  if (/^(?:(?:这款|面料|成分|是|为|采用)\s*)*(?:纯棉|全棉)(?:面料)?[哦哈呢的。\s]*$/u.test(text)) values.push(100);
+  const bare = standalone && text.match(/^(?:大约|大概|差不多|约|有|是|为|\s)*(\d{1,3}(?:\.\d+)?)\s*[%％](?:左右|上下)?[哦哈呢的。\s]*$/u);
+  if (bare) values.push(Number(bare[1]));
+  return values;
+}
+
 function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult | undefined {
   const question = input.question.replace(/[？?]麻烦直接说一下。?$/u, '').replace(/[？?。\s]+$/u, '');
-  if (!/(?:含棉量|棉含量|棉的比例|棉占比)(?:是)?(?:多少|有多少|高吗|多少呢)$|(?:是|是不是|是否是)(?:聚酯纤维|涤纶)(?:的面料|面料|吗|呢)?$/u.test(question) ||
-      /[\n；;？?]|还有|以及|并且|注意事项|怎么洗|缩水|会不会/u.test(question)) return undefined;
+  const cotton = /(?:含棉量|棉含量|棉的比例|棉占比)(?:是)?(?:多少|有多少|高吗|多少呢)$|(?:含多少棉|棉占多少|棉成分(?:有|是)?多少)(?:呢|啊)?$/u.test(question);
+  const polyester = /(?:是|是不是|是否是|是否为|属于|含有|有没有)(?:聚酯纤维|涤纶)(?:的面料|面料|的)?(?:吗|呢|啊)?$/u.test(question);
+  if ((!cotton && !polyester) || /[\n；;？?]|(?:吗|呢|嘛|么)[，,]|还有|以及|并且|还是|注意事项|怎么洗|缩水|透气|会不会|色差|尺码|发货|退换|什么(?:面料|材质|成分)/u.test(question)) return undefined;
   const product = input.facts?.product;
   if (!product || !Array.isArray(product.attributes)) return undefined;
   const attributes = product.attributes.filter((row): row is { name: string; value: unknown } =>
     !!row && typeof row === 'object' && 'name' in row && typeof row.name === 'string' && 'value' in row);
   if (attributes.length !== product.attributes.length) return undefined;
-  const productMaterialDetails = [product.title, ...attributes
-    .filter((row) => /材质|面料|成分|含棉/u.test(row.name))
-    .map((row) => String(row.value ?? ''))].join('；');
-  if (/棉|聚酯|涤纶|羊毛|羊绒|丝|麻|锦纶|氨纶|人造纤维|纤维素|[%％]/u.test(productMaterialDetails)) return undefined;
-  // Conflicting or uncertain descriptions need the normal contextual judgment.
-  if (/也许|或许|估计|不敢保证|不确定|说不准|不是.{0,8}(?:聚酯纤维|涤纶).{0,20}是.{0,8}(?:聚酯纤维|涤纶)|不含棉.{0,16}含棉/u.test(input.reply)) return undefined;
-  const assessment = assessAutomaticReply({ question, buyerText: input.question, keyPoints: [], reply: input.reply, productMaterialDetails }, 2);
-  if (!assessment.pass || !assessment.acceptedGuidance) return undefined;
-  if (/(?:聚酯纤维|涤纶)/u.test(question) && !assessment.evidence?.some((part) =>
-    /(?:是|采用|使用|用的是|主要为|含)(?:的|用的|含)?(?:聚酯纤维|涤纶)|(?:聚酯纤维|涤纶)(?:的)?(?:面料|材质|成分)|^(?:聚酯纤维|涤纶)[的哦哈呢\s]*$|(?:未|没|没有)(?:单独|明确)?(?:标注|注明|说明|写明)/u.test(part))) return undefined;
+  const material = attributes.filter((row) => /材质|面料|成分|含棉|棉含量|棉占比/u.test(row.name))
+    .map((row) => ({ ...row, value: String(row.value ?? '').trim() }));
+  const title = product.title || '';
+  const declaredTitle = /\d\s*[%％]\s*(?:聚酯纤维|涤纶|棉(?!感))|(?:含棉量|棉含量|棉占比)\s*\d/u.test(title) ? title
+    : /纯棉|全棉/u.test(title) && !/仿|棉感|手感/u.test(title) ? '纯棉' : '';
+  const details = [declaredTitle, ...material.map((row) => row.value)];
+  const reply = input.reply;
+  if (/也许|或许|估计|不敢保证|不确定|说不准|(?:可能|是否|如果|不能说|不代表|没说|未说|不排除)[^。！？]*?(?:棉|聚酯纤维|涤纶)|[？?]/u.test(reply)) return undefined;
+  const clauses = reply.split(/[，,。；;！!\n]|但是|不过|但(?=不|要|有|含|是)|且(?=不|有|含|是)/u).map((part) => part.trim()).filter(Boolean);
+  let evidence: string[];
+  if (cotton) {
+    if (/棉[^，,。；;]*不含棉|不含棉[^，,。；;]*(?:棉.{0,4}\d|\d+\s*[%％]\s*棉)|(?:不是|并非|不等于)[^，,。；;]*(?:棉|[%％])/u.test(reply)) return undefined;
+    const replies = clauses.map((part) => ({ part, percents: cottonPercents(part, true) }))
+      .filter((item) => item.percents.length);
+    const known = [...cottonPercents(declaredTitle), ...material.flatMap((row) => cottonPercents(row.value, COTTON_RATIO.test(row.name)))];
+    if (details.some((value) => /(?:100\s*[%％]\s*|全|纯)(?:聚酯纤维|涤纶)/u.test(value))) known.push(0);
+    const stated = replies.flatMap((item) => item.percents);
+    if (new Set([...known, ...stated]).size > 1 || [...known, ...stated].some((value) => value > 100) ||
+        (stated.includes(0) && !known.length && details.some((value) => /棉/u.test(value) && !/棉感|仿棉|不含棉/u.test(value)))) return undefined;
+    evidence = replies.map((item) => item.part);
+    if (!evidence.length && !known.length && /详情|商品页|资料|材质栏|标签|吊牌|洗标/u.test(reply) &&
+        /(?:未|没有|没)(?:单独|明确|具体)?(?:标注|写明|注明|给出|说明).{0,8}(?:含棉量|棉含量|棉的比例|棉占比)/u.test(reply)) evidence = [reply];
+  } else {
+    const deny = /(?:不是|不含|没有)(?:任何|用)?(?:聚酯纤维|涤纶)/u;
+    const yes = /(?:是|采用|使用|用的是|主要为|含有|含)(?:的|用的)?(?:聚酯纤维|涤纶)|(?:聚酯纤维|涤纶)(?:的)?(?:面料|材质|成分)[的哦哈呢呀\s]*$|^(?:聚酯纤维|涤纶|是的|对的)[的哦哈呢呀\s]*$/u;
+    const positive = clauses.filter((part) => yes.test(part) && !deny.test(part));
+    const negative = clauses.filter((part) => deny.test(part) || /^(?:不是的?|没有)[哦哈呢呀\s]*$/u.test(part));
+    const knownPositive = details.some((value) => POLYESTER.test(value) && !deny.test(value) && !/样|仿|未标|暂无/u.test(value));
+    const knownNegative = details.some((value) => deny.test(value) || cottonPercents(value).includes(100) ||
+      /100\s*[%％]\s*(?:锦纶|羊毛|真丝|亚麻)/u.test(value));
+    if ((knownPositive || positive.length) && (knownNegative || negative.length)) return undefined;
+    if (knownPositive && positive.some((part) => /[%％]|百分之|全(?:聚酯纤维|涤纶)|纯(?:聚酯纤维|涤纶)/u.test(part))) return undefined;
+    evidence = [...positive, ...negative];
+    if (!evidence.length && !knownPositive && !knownNegative && /详情|商品页|资料|标签|洗标/u.test(reply) &&
+        /(?:未|没有|没)(?:单独|明确)?(?:标注|注明|说明|写明).{0,12}(?:聚酯纤维|涤纶|材质|成分)/u.test(reply)) evidence = [reply];
+  }
+  if (!evidence.length) return undefined;
   return { provider: 'local', decisionSource: 'material-details', resolved: true,
-    reason: '答复直接说明了买家询问的成分或资料缺项', evidence: assessment.evidence || [], matchedPoints: [], buyerReply: '' };
+    reason: '答复直接说明了买家询问的成分或资料缺项', evidence, matchedPoints: [], buyerReply: '' };
 }
 
 function assessDryCleanRequirement(input: ModelReceptionInput): ModelReceptionResult | undefined {
@@ -84,15 +125,20 @@ function assessDryCleanRequirement(input: ModelReceptionInput): ModelReceptionRe
 
 function assessShoeStyling(input: ModelReceptionInput): ModelReceptionResult | undefined {
   const question = input.question.replace(/[？?]麻烦直接说一下。?$/u, '').replace(/[？?。\s]+$/u, '');
-  if (!/鞋/u.test(question) || !/休闲/u.test(question) || !/搭配|怎么搭|配什么|穿什么/u.test(question) ||
-      /[\n；;？?]|外套|上衣|裤子|包包|以及|还有|并且|尺码|发货|换货/u.test(question)) return undefined;
+  if (!/鞋/u.test(question) || !/休闲/u.test(question) || !/搭配|怎么搭|配(?:哪|什么)|穿(?:哪|什么)|哪种鞋|什么鞋/u.test(question) ||
+      /[\n；;？?]|(?:吗|呢|嘛|么)[，,]|外套|上衣|裤子|包包|以及|还有|并且|尺码|发货|换货/u.test(question)) return undefined;
 
   const assessment = assessAutomaticReply({ question, buyerText: input.question, keyPoints: [], reply: input.reply }, 2);
   const footwear = /乐福鞋|帆布鞋|运动鞋|小白鞋|球鞋|板鞋|平底鞋|短靴|老爹鞋/u;
-  const evidence = assessment.evidence?.filter((part) => footwear.test(part) &&
+  const denial = /不建议|不推荐|不适合|不合适|不搭|不配|不想|不宜|别选|别穿|别搭|避免|不要|不能|没有|不确定|没货/u;
+  const evidence = assessment.pass && assessment.acceptedGuidance ? assessment.evidence?.filter((part) => footwear.test(part) &&
     /配|搭|推荐|建议|合适|适合|可以选/u.test(part) &&
-    !/不建议|不推荐|不适合|不合适|不搭|不配|不想|不宜|别选|别穿|别搭|避免|不要|不能|没有|不确定|没货/u.test(part));
-  if (!assessment.pass || !assessment.acceptedGuidance || !evidence?.length) return undefined;
+    !denial.test(part)) ?? [] : [];
+  const shoe = `(?:浅色|深色|白色|黑色|尖头)?(?:${footwear.source})`;
+  const direct = new RegExp(`^${shoe}(?:\\s*(?:[、，,]|或(?:者)?|和|跟)\\s*${shoe})*(?:都)?(?:可以|行|合适|不错|好看)?[的哦哈呢呀～~。！!\\s]*$`, 'u');
+  const shortReply = input.reply.trim();
+  if (!evidence.length && direct.test(shortReply)) evidence.push(shortReply);
+  if (!evidence.length) return undefined;
   return { provider: 'local', decisionSource: 'shoe-styling', resolved: true,
     reason: '答复给出了具体的休闲鞋搭配', evidence, matchedPoints: [], buyerReply: '' };
 }
