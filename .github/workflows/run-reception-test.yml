@@ -18,6 +18,16 @@ on:
         required: false
         default: ''
         type: string
+      report_pr:
+        description: '可选：把测试报告自动回贴到指定 PR 编号（便于直接复盘）'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 
 jobs:
   reception-test:
@@ -43,8 +53,19 @@ jobs:
           TEST_USERNAME: ${{ inputs.username || secrets.TEST_AGENT_USERNAME || 'agent' }}
           TEST_PASSWORD: ${{ secrets.TEST_AGENT_PASSWORD || 'Agent@123' }}
           TEST_LEVEL: ${{ inputs.level }}
+          TEST_SOURCE: auto
           REPORT_PATH: reception-test-report.md
         run: node tools/auto-reception-test.mjs
+
+      - name: Post Markdown report to PR
+        if: always() && inputs.report_pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_PR: ${{ inputs.report_pr }}
+        run: |
+          if [ -f reception-test-report.md ]; then
+            gh pr comment "$REPORT_PR" --body-file reception-test-report.md
+          fi
 
       - name: Upload Markdown report artifact
         if: always()

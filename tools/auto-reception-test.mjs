@@ -16,7 +16,8 @@ const BASE_URL = (process.env.BASE_URL || 'http://127.0.0.1:8080').replace(/\/$/
 const USERNAME = process.env.TEST_USERNAME || 'agent';
 const PASSWORD = process.env.TEST_PASSWORD || 'Agent@123';
 const LEVEL = (process.env.TEST_LEVEL || 'L2').toUpperCase();
-const SOURCE = process.env.TEST_SOURCE || 'free';
+const SOURCE = process.env.TEST_SOURCE || 'auto';
+const TASK_NAME = process.env.TEST_TASK_NAME || '';
 const REPORT_PATH = process.env.REPORT_PATH || '';
 const MAX_DURATION_MS = Number(process.env.MAX_DURATION_MS || 25 * 60 * 1000);
 
@@ -194,12 +195,14 @@ function generateReply(buyerText, session) {
   return '亲，这款商品详情页有完整参数与尺码说明，现货 48 小时内发货并支持 7 天无理由退换，有任何问题随时联系在线客服为您处理哦。';
 }
 
-function buildMarkdownReport(attemptNo, level, elapsedSec, result) {
+function buildMarkdownReport(attemptNo, level, elapsedSec, result, taskInfo) {
   const sessions = result.sessions || [];
   const totalScore = Number(result.totalScore ?? 0);
   const conclusion = result.conclusion === 'pass' ? '达标' : '未达标';
-  const totalTimeouts = sessions.reduce((sum, s) => sum + Number(s.timeoutCount || 0), 0);
-  const avgList = sessions.map((s) => s.avgResponseSec).filter((v) => typeof v === 'number');
+  const totalTimeouts = sessions.reduce((sum, s) => sum + Number(s.timeoutCount ?? s.metrics?.timeoutCount ?? 0), 0);
+  const avgList = sessions
+    .map((s) => s.metrics?.avgResponseSec ?? s.avgResponseSec)
+    .filter((v) => typeof v === 'number');
   const avgSec = avgList.length ? (avgList.reduce((a, b) => a + b, 0) / avgList.length).toFixed(1) : '—';
   const mins = Math.floor(elapsedSec / 60);
   const secs = elapsedSec % 60;
@@ -208,30 +211,55 @@ function buildMarkdownReport(attemptNo, level, elapsedSec, result) {
     `# ${level} 难度 · 10 个客户全自动并发接待测试报告`,
     '',
     `> 会话编号：**${attemptNo}**`,
-    `> 测试地址：${BASE_URL}`,
-    `> 账号：${USERNAME} · 难度：${level} · 接待时长：${mins}分${secs}秒`,
+    `> 账号：${USERNAME} · 难度：${level}${taskInfo ? ` · 任务「${taskInfo.name}」` : ''} · 接待时长：${mins}分${secs}秒`,
     `> 结论：**总分 ${totalScore} 分（${conclusion}）** · 超时 **${totalTimeouts} 次** · 平均响应 **${avgSec} 秒** · 会话数 **${sessions.length}**`,
     '',
     '## 10 个客户接待明细',
     '',
-    '| # | 买家 | 得分 | 平均响应 | 超时 | 主要失分明细 |',
-    '|---|---|---|---|---|---|',
+    '| # | 买家 | 剧本场景 | 得分 | 首响 | 平均响应 | 超时 | 主要失分明细 |',
+    '|---|---|---|---|---|---|---|---|',
   ];
 
   sessions.forEach((s, idx) => {
+    const firstSec = s.metrics?.firstResponseSec;
+    const avg = s.metrics?.avgResponseSec ?? s.avgResponseSec;
+    const timeouts = s.timeoutCount ?? s.metrics?.timeoutCount ?? 0;
     const deductions = (s.deductions || [])
       .filter((d) => Number(d.points) > 0)
       .map((d) => `${d.reason}(-${d.points})`)
       .join('；') || '无失分（满分）';
-    lines.push(`| ${idx + 1} | ${s.buyerName || s.sessionId} | ${s.score ?? '—'} | ${s.avgResponseSec ?? '—'}s | ${s.timeoutCount ?? 0} | ${deductions} |`);
+    lines.push(`| ${idx + 1} | ${s.buyerName || s.id} | ${s.scriptName || '—'} | ${s.score ?? s.totalScore ?? '—'} | ${firstSec ?? '—'}s | ${avg ?? '—'}s | ${timeouts} | ${deductions} |`);
   });
 
   lines.push('');
   return lines.join('\n');
 }
 
+async function resolveStartBody(token) {
+  if (SOURCE === 'free') return { body: { level: LEVEL, source: 'free' }, taskInfo: null };
+  const tasks = await api('/api/tasks', { token }).catch(() => []);
+  const list = Array.isArray(tasks) ? tasks : [];
+  const matchesLevel = (t) => !Array.isArray(t.levels) || t.levels.length === 0 || t.levels.includes(LEVEL);
+  const candidates = list.filter((t) => t.status === 'running' && matchesLevel(t));
+  const preferred = (TASK_NAME ? candidates.find((t) => String(t.name || '').includes(TASK_NAME)) : null)
+    || candidates[0]
+    || list.find((t) => t.status === 'running')
+    || list.find(matchesLevel);
+  if (preferred) {
+    console.log(`==> 自动匹配任务：id=${preferred.id} name="${preferred.name}" status=${preferred.status} levels=${JSON.stringify(preferred.levels)}`);
+    return {
+      body: { level: LEVEL, source: 'task', taskId: Number(preferred.id) },
+      taskInfo: { id: Number(preferred.id), name: preferred.name },
+    };
+  }
+  if (SOURCE === 'task') {
+    throw new Error(`未找到分配给当前账号且包含 ${LEVEL} 的进行中任务`);
+  }
+  return { body: { level: LEVEL, source: 'free' }, taskInfo: null };
+}
+
 async function main() {
-  console.log(`==> 登录 ${BASE_URL} (user=${USERNAME}, level=${LEVEL})...`);
+  console.log(`==> 登录 ${BASE_URL} (user=${USERNAME}, level=${LEVEL}, source=${SOURCE})...`);
   const login = await api('/api/auth/login', { method: 'POST', body: { username: USERNAME, password: PASSWORD } });
   const token = login.token;
   const closeSocket = await connectSocket(token);
@@ -251,11 +279,12 @@ async function main() {
       throw new Error(`难度 ${LEVEL} 尚未解锁（当前解锁状态：${JSON.stringify(levels.map((l) => `${l.code}:${l.unlocked}`))}）`);
     }
 
+    const { body: startBody, taskInfo } = await resolveStartBody(token);
     const startedAt = Date.now();
-    const started = await api('/api/receptions', { method: 'POST', token, body: { level: LEVEL, source: SOURCE } });
+    const started = await api('/api/receptions', { method: 'POST', token, body: startBody });
     const attemptId = started.attemptId;
     const attemptNo = started.attemptNo;
-    console.log(`==> 已开启 ${LEVEL} 接待：${attemptNo} (attemptId=${attemptId}, sessions=${started.sessions.length})`);
+    console.log(`==> 已开启 ${LEVEL} 接待：${attemptNo} (attemptId=${attemptId}, source=${startBody.source}, taskId=${startBody.taskId ?? '—'}, sessions=${started.sessions.length})`);
 
     const repliedLastBuyerMsgId = new Map();
     const closedSent = new Set();
@@ -339,7 +368,7 @@ async function main() {
 
     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
     const result = await api(`/api/receptions/${attemptId}/result`, { token });
-    const report = buildMarkdownReport(attemptNo, LEVEL, elapsedSec, result);
+    const report = buildMarkdownReport(attemptNo, LEVEL, elapsedSec, result, taskInfo);
     console.log('\n' + report);
 
     if (REPORT_PATH) {
