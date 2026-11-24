@@ -1,0 +1,91 @@
+name: Deploy to Tencent Lighthouse
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-lighthouse
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Pull & Release on Lighthouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Validate deployment secrets
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_SSH_KEY: ${{ secrets.LIGHTHOUSE_SSH_KEY }}
+        run: |
+          if [ -z "$LIGHTHOUSE_HOST" ] || [ -z "$LIGHTHOUSE_SSH_KEY" ]; then
+            echo "::error::缺少必要的 GitHub Secrets：请在仓库 Settings -> Secrets and variables -> Actions 中配置 LIGHTHOUSE_HOST 和 LIGHTHOUSE_SSH_KEY。"
+            exit 1
+          fi
+
+      - name: Configure SSH key
+        env:
+          LIGHTHOUSE_SSH_KEY: ${{ secrets.LIGHTHOUSE_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$LIGHTHOUSE_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Deploy latest main to Tencent Lighthouse
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+          LIGHTHOUSE_PORT: ${{ secrets.LIGHTHOUSE_PORT }}
+          LIGHTHOUSE_APP_DIR: ${{ secrets.LIGHTHOUSE_APP_DIR }}
+        run: |
+          USER="${LIGHTHOUSE_USER:-root}"
+          PORT="${LIGHTHOUSE_PORT:-22}"
+          APP_DIR="${LIGHTHOUSE_APP_DIR:-/home/ubuntu/cs-training}"
+
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -p "$PORT" \
+            -o StrictHostKeyChecking=accept-new \
+            -o BatchMode=yes \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=40 \
+            "${USER}@${LIGHTHOUSE_HOST}" \
+            "APP_DIR='${APP_DIR}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          exec 9>/tmp/cs-training-deploy.lock
+          if ! flock -n 9; then
+            echo "已有另一个部署任务正在运行，请稍后重试。"
+            exit 1
+          fi
+
+          cd "$APP_DIR"
+          echo "==> 当前目录：$(pwd)"
+
+          OWNER="$(stat -c '%U' "$APP_DIR")"
+          if [ "$(id -u)" -eq 0 ] && [ "$OWNER" != "root" ]; then
+            echo "==> 以 $OWNER 身份拉取 origin/main..."
+            sudo -u "$OWNER" git fetch origin main
+            sudo -u "$OWNER" git checkout main
+            sudo -u "$OWNER" git pull --ff-only origin main
+          else
+            echo "==> 拉取 origin/main..."
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+          fi
+
+          echo "==> 当前版本：$(git rev-parse --short HEAD) $(git log -1 --pretty=%s)"
+          echo "==> 执行本地语义判定发布脚本（含构建、模型预检、数据库备份与健康检查）..."
+          bash deploy/lighthouse/release-local-judge.sh
+          REMOTE
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
