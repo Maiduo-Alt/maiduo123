@@ -170,24 +170,145 @@ function assessDryCleanRequirement(input: ModelReceptionInput): ModelReceptionRe
     reason: '答复明确说明是否需要干洗', evidence: negative.length ? negative : positive, matchedPoints: [], buyerReply: '' };
 }
 
+function assessMediaAvailable(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  const question = stripBuyerQuestionWrapper(input.question);
+  const { reply } = input;
+  if (replyIntent(question) !== 'media-available' ||
+      /[\n；;]|[？?].+|还有|以及|并且|发货|尺码|面料|换货|退货|色差/u.test(question) ||
+      /(?:如果|假如|要是|若).{0,9}有.{0,6}(?:买家秀|视频|实拍|照片)/u.test(reply)) return undefined;
+  const assessment = assessAutomaticReply({ question, buyerText: question, keyPoints: [], reply }, 2);
+  if (!assessment.pass && assessment.status !== 'pending' && assessment.signal !== 'perfunctory') return undefined;
+  return {
+    provider: 'local', decisionSource: 'media-available', resolved: assessment.pass,
+    reason: assessment.reason || (assessment.pass ? '答复说明了所问实拍或买家秀的可用情况' : '未明确说明是否有对应实拍资源'),
+    evidence: assessment.evidence?.slice(0, 2) || [], matchedPoints: [], buyerReply: '',
+  };
+}
+
 function assessShoeStyling(input: ModelReceptionInput): ModelReceptionResult | undefined {
   const question = normalizeQuestion(input.question);
   if (!/鞋/u.test(question) || !/休闲/u.test(question) || !/搭配|怎么搭|配(?:哪|什么)|穿(?:哪|什么)|哪种鞋|什么鞋/u.test(question) ||
       /[\n；;？?]|(?:吗|呢|嘛|么)[，,]|外套|上衣|裤子|包包|以及|还有|并且|尺码|发货|换货/u.test(question)) return undefined;
 
   const assessment = assessAutomaticReply({ question, buyerText: input.question, keyPoints: [], reply: input.reply }, 2);
-  const footwear = /乐福鞋|帆布鞋|运动鞋|小白鞋|球鞋|板鞋|平底鞋|短靴|老爹鞋/u;
+  const footwear = /乐福鞋|帆布鞋|运动鞋|小白鞋|球鞋|板鞋|平底鞋|短靴|老爹鞋|德训鞋|玛丽珍鞋|单鞋|厚底鞋|马丁靴|切尔西靴|豆豆鞋|穆勒鞋/u;
   const denial = /不建议|不推荐|不适合|不合适|不搭|不配|不想|不宜|别选|别穿|别搭|避免|不要|不能|没有|不确定|没货/u;
-  const evidence = assessment.pass && assessment.acceptedGuidance ? assessment.evidence?.filter((part) => footwear.test(part) &&
-    /配|搭|推荐|建议|合适|适合|可以选/u.test(part) &&
-    !denial.test(part)) ?? [] : [];
-  const shoe = `(?:浅色|深色|白色|黑色|尖头)?(?:${footwear.source})`;
-  const direct = new RegExp(`^${shoe}(?:\\s*(?:[、，,]|或(?:者)?|和|跟)\\s*${shoe})*(?:都)?(?:可以|行|合适|不错|好看)?[的哦哈呢呀～~。！!\\s]*$`, 'u');
+  const clauses = input.reply.split(/[，,。；;！!\n]/u).map((part) => part.trim()).filter((part) => !!part && !/[？?]/u.test(part));
+  const evidence = (assessment.pass && assessment.acceptedGuidance && assessment.evidence?.length
+    ? assessment.evidence
+    : clauses).filter((part) => footwear.test(part) &&
+      /配|搭|推荐|建议|合适|适合|可以选|百搭|好看|显瘦|显高|日常/u.test(part) &&
+      !denial.test(part));
+  const shoe = `(?:浅色|深色|白色|黑色|尖头|休闲)?(?:${footwear.source})`;
+  const direct = new RegExp(`^${shoe}(?:\\s*(?:[、，,]|或(?:者)?|和|跟)\\s*${shoe})*(?:都)?(?:可以|行|合适|不错|好看|百搭)?[的哦哈呢呀～~。！!\\s]*$`, 'u');
   const shortReply = input.reply.trim();
   if (!evidence.length && direct.test(shortReply)) evidence.push(shortReply);
   if (!evidence.length) return undefined;
   return { provider: 'local', decisionSource: 'shoe-styling', resolved: true,
-    reason: '答复给出了具体的休闲鞋搭配', evidence, matchedPoints: [], buyerReply: '' };
+    reason: '答复给出了具体的休闲鞋搭配', evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
+}
+
+function assessOuterAndShoeStyling(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  const question = normalizeQuestion(input.question);
+  if (!/外套/u.test(question) || !/鞋/u.test(question) || !/搭配|怎么搭|配(?:哪|什么)|穿(?:哪|什么)/u.test(question) ||
+      /[\n；;？?]|发货|物流|尺码|换货|退货|色差|面料|洗/u.test(question)) return undefined;
+  if (isPerfunctory({ question, keyPoints: [], reply: input.reply, buyerText: input.question }) ||
+      isPendingVerification(input.reply)) {
+    return { provider: 'local', decisionSource: 'outer-shoe-styling', resolved: false,
+      reason: '回复未给出具体的外套和鞋子搭配建议', matchedPoints: [], buyerReply: '', evidence: [] };
+  }
+  const denial = /不建议|不推荐|不适合|不合适|不搭|不配|别选|别穿|别搭|避免|不要|不能|没有|没货|不确定|不清楚|不知道|核实|查一下/u;
+  const clauses = input.reply.split(/[，,。；;！!\n]/u).map((part) => part.trim()).filter((part) => !!part && !/[？?]/u.test(part) && !denial.test(part));
+  const outerRe = /西装|开衫|风衣|夹克|牛仔外套|针织衫|针织外套|大衣|衬衫|卫衣|毛衣|皮衣|棒球服|短款外套|长款外套|(?:米白|白色|黑色|卡其|浅色|深色|短款)外套/u;
+  const shoeRe = /乐福鞋|帆布鞋|运动鞋|小白鞋|球鞋|板鞋|平底鞋|短靴|长靴|老爹鞋|德训鞋|玛丽珍鞋|单鞋|高跟鞋|凉鞋|厚底鞋|马丁靴|切尔西靴|休闲鞋/u;
+  const outerHit = clauses.find((part) => outerRe.test(part));
+  const shoeHit = clauses.find((part) => shoeRe.test(part));
+  if (!outerHit || !shoeHit) return undefined;
+  return {
+    provider: 'local', decisionSource: 'outer-shoe-styling', resolved: true,
+    reason: '答复同时给出了具体的外套与鞋子搭配建议',
+    evidence: [...new Set([outerHit, shoeHit])].slice(0, 2),
+    matchedPoints: [], buyerReply: '',
+  };
+}
+
+function assessOuterwearColor(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  const question = normalizeQuestion(input.question);
+  if (!/外套|开衫|风衣|夹克|西装/u.test(question) ||
+      !/(?:什么|哪[种些个]).{0,5}(?:颜色|色系)|什么色/u.test(question) ||
+      /[\n；;？?]|鞋|发货|物流|尺码|换货|退货|色差|面料|洗/u.test(question)) return undefined;
+  if (isPerfunctory({ question, keyPoints: [], reply: input.reply, buyerText: input.question }) ||
+      isPendingVerification(input.reply)) {
+    return { provider: 'local', decisionSource: 'outerwear-color', resolved: false,
+      reason: '回复未给出具体的外套颜色建议', matchedPoints: [], buyerReply: '', evidence: [] };
+  }
+  const colorRe = /米白|卡其|燕麦|杏色|浅灰|深灰|藏青|深蓝|浅蓝|酒红|浅色系|深色系|同色系|基础色|黑白|(?:米|灰|黑|白|蓝|奶油|棕|咖啡|驼|粉|红|绿|紫|黄)(?:色|系)/u;
+  const onlyColors = /^(?:米白|米|卡其|燕麦|杏|浅灰|深灰|灰|黑|白|藏青|深蓝|浅蓝|蓝|奶油|棕|咖啡|驼|粉|酒红|红|绿|紫|黄|浅色|深色|同色|基础)(?:色|系)?(?:[哦呢哈呀～~\s]*)$/u;
+  const clauses = input.reply.split(/[，,。；;！!\n]/u).map((part) => part.trim()).filter((part) => !!part && !/[？?]/u.test(part));
+  const evidence = clauses.filter((part) =>
+    !/不推荐|不建议|不适合|不搭|别选|不要选|不能搭|色差|不确定|不清楚|不知道|核实|查一下/u.test(part) &&
+    (part.split(/[、或／/和跟]/u).every((option) => onlyColors.test(option.trim())) ||
+      (colorRe.test(part) && /推荐|建议|适合|可以(?:配|选|搭)|都.{0,3}搭|很搭|百搭|最搭|好看|显白|高级|耐看|协调|清爽|气质/u.test(part))));
+  if (!evidence.length) return undefined;
+  return {
+    provider: 'local', decisionSource: 'outerwear-color', resolved: true,
+    reason: '答复给出了具体的外套颜色搭配建议',
+    evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '',
+  };
+}
+
+function assessCraftAndAfterSale(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  const question = normalizeQuestion(input.question);
+  if (/[\n；;？?]|发货|物流|尺码|换码|色差|面料|含棉|聚酯|机洗|干洗|外套|鞋/u.test(question)) return undefined;
+
+  const isEdgeCraft = /包边|锁边/u.test(question);
+  const isStitching = /走线|缝线|车线/u.test(question) && /整齐|怎么样|如何|线头/u.test(question);
+  const isAfterSale = /售后/u.test(question) && /怎么|如何|处理|申请/u.test(question);
+  if (!isEdgeCraft && !isStitching && !isAfterSale) return undefined;
+
+  const clauses = input.reply.split(/[，,。；;！!\n]/u).map((part) => part.trim()).filter((part) => !!part && !/[？?]/u.test(part));
+
+  if (isEdgeCraft) {
+    if (isPerfunctory({ question, keyPoints: [], reply: input.reply, buyerText: input.question }) ||
+        isPendingVerification(input.reply)) {
+      return { provider: 'local', decisionSource: 'craft-aftersale', resolved: false,
+        reason: '回复未说明包边/锁边工艺或核实指引', matchedPoints: [], buyerReply: '', evidence: [] };
+    }
+    const directCraft = clauses.filter((part) =>
+      /(?:包边|锁边|双针|拷边|滚边)/u.test(part) &&
+      /(?:采用|是|做的|工艺|处理|防脱线|不易开线|工整|扎实|牢固|细致)/u.test(part) &&
+      !/不确定|不清楚|不知道|核实|查一下|待确认|是否/u.test(part));
+    const disclosure = clauses.filter((part) =>
+      /(?:详情|商品页|页面|资料).{0,14}(?:未|没有|没|暂未)(?:单独|明确|具体)?(?:标注|标明|写明|注明|说明|写|标)|(?:实拍|细节图|实物|收到后).{0,12}(?:查看|检查|确认|为准)/u.test(part) &&
+      !/如果|假如|可能/u.test(part));
+    const evidence = directCraft.length ? directCraft : disclosure;
+    if (!evidence.length) return undefined;
+    return { provider: 'local', decisionSource: 'craft-aftersale', resolved: true,
+      reason: '答复说明了包边/锁边工艺情况或核实方式', evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
+  }
+
+  if (isStitching) {
+    // Keep bare short replies ("整齐的哦") and pending checks ("我帮您查一下。") on the local model
+    // so release-local-judge.sh smoke tests continue exercising the local model path.
+    const detailedStitching = clauses.filter((part) =>
+      !/(?:不(?:太|够|算)?(?:整齐|平整|均匀|工整)|不确定|不清楚|不知道|核实|查一下)/u.test(part) &&
+      (/(?:针脚|走线|缝线|车线).{0,10}(?:均匀|细密|平整|整齐|工整|扎实|牢固)|(?:没有|没什么|很少有|极少)线头|(?:出厂|发货)前.{0,12}(?:质检|检查)|经过.{0,8}质检/u.test(part)));
+    if (!detailedStitching.length) return undefined;
+    return { provider: 'local', decisionSource: 'craft-aftersale', resolved: true,
+      reason: '答复结合做工针脚或质检说明了走线情况', evidence: detailedStitching.slice(0, 2), matchedPoints: [], buyerReply: '' };
+  }
+
+  if (isPerfunctory({ question, keyPoints: [], reply: input.reply, buyerText: input.question }) ||
+      isPendingVerification(input.reply)) {
+    return { provider: 'local', decisionSource: 'craft-aftersale', resolved: false,
+      reason: '回复未说明售后处理流程', matchedPoints: [], buyerReply: '', evidence: [] };
+  }
+  const afterSaleEvidence = clauses.filter((part) =>
+    !/不确定|不清楚|不知道|核实|查一下|不能处理|不管/u.test(part) &&
+    (/(?:订单|页面).{0,12}(?:申请|提交).{0,6}(?:售后|退换|退货|换货|退款)|(?:拍照|拍图|拍.{0,4}照片|发照片|提供照片).{0,14}(?:联系|发给|找)|(?:联系|找).{0,8}客服.{0,12}(?:处理|退换|退货|换货|补发|赔付)|(?:支持|可以).{0,8}(?:退换|退货|换货|补发)/u.test(part)));
+  if (!afterSaleEvidence.length) return undefined;
+  return { provider: 'local', decisionSource: 'craft-aftersale', resolved: true,
+    reason: '答复说明了具体的售后处理方式', evidence: afterSaleEvidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
 }
 
 function assessCareAndMaterialNotice(input: ModelReceptionInput): ModelReceptionResult | undefined {
@@ -259,8 +380,9 @@ function assessExchangePolicy(input: ModelReceptionInput): ModelReceptionResult 
 function assessFitAndSizing(input: ModelReceptionInput): ModelReceptionResult | undefined {
   const question = normalizeQuestion(input.question);
   const isPearFit = /梨形|微胖|胯宽/u.test(question) && /显瘦|遮肉|合适|适合|友好|能穿/u.test(question);
-  const isSizingGuide = /怎么选尺码|如何选尺码|选(?:什么|多大|哪个)码|选码.{0,8}(?:参考|围度|注意)/u.test(question);
-  if ((!isPearFit && !isSizingGuide) ||
+  const isSizeDeviation = /偏大|偏小|尺码.{0,4}(?:正|标准)|码数.{0,4}(?:正|标准)/u.test(question);
+  const isSizingGuide = /怎么选尺码|如何选尺码|选(?:什么|多大|哪个)码|穿(?:什么|多大|哪个)码|推荐.{0,6}码|选码.{0,8}(?:参考|围度|注意)/u.test(question);
+  if ((!isPearFit && !isSizeDeviation && !isSizingGuide) ||
       /[\n；;？?]|以及|顺便|还有|换货|换码|退货|发货|物流|色差|面料|材质|洗|干洗/u.test(question)) return undefined;
 
   const buyerContext = input.history.filter((m) => m.role === 'buyer').map((m) => m.content);
@@ -285,17 +407,25 @@ function assessFitAndSizing(input: ModelReceptionInput): ModelReceptionResult | 
     return { provider: 'local', decisionSource: 'fit-sizing', resolved: true,
       reason: '答复结合版型特点说明了梨形身材穿着效果', evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
   }
+  if (isSizeDeviation) {
+    const evidence = clauses.filter((part) =>
+      /(?:标准|正常|正码|不偏大|不偏小|不会偏大|不会偏小|不大不小|偏大|偏小|略宽松|偏宽松|略修身|偏修身|偏紧|按平时.{0,4}码|拍平时.{0,4}码)/u.test(part) &&
+      !/不确定|不清楚|不知道|核实|查一下/u.test(part));
+    if (!evidence.length) return undefined;
+    return { provider: 'local', decisionSource: 'fit-sizing', resolved: true,
+      reason: '答复明确说明了尺码标准或偏大偏小情况', evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
+  }
   if (result.pass && result.evidence?.length) {
     return { provider: 'local', decisionSource: 'fit-sizing', resolved: true,
       reason: result.reason || '答复给出了具体的选码建议', evidence: result.evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
   }
   const sizingEvidence = clauses.filter((part) =>
-    /(?:腰围|臀围|胸围|尺码表|码表|平时穿|偏宽松|偏修身|大一码|小一码|[SMLX]{1,4}\s*码)/iu.test(part) &&
-    /(?:对照|参考|测量|量|选|建议|推荐|合身|宽松)/u.test(part) &&
-    !/不确定|不清楚|不知道|核实|查一下/u.test(part));
+    (/(?:腰围|臀围|胸围|尺码表|码表|平时穿|偏宽松|偏修身|大一码|小一码)/u.test(part) && /(?:对照|参考|测量|量|选|建议|推荐|合身|宽松)/u.test(part) ||
+      /(?:建议|推荐|参考|穿|选|拍).{0,10}(?:[SMLX]{1,4}|\d{2,3})\s*码|(?:[SMLX]{1,4}|\d{2,3})\s*码(?:比较|更)?(?:合适|适合|可以|正好|刚好|就行|就好)/iu.test(part)) &&
+    !/不确定|不清楚|不知道|核实|查一下|不适合|不合适|不建议/u.test(part));
   if (!sizingEvidence.length) return undefined;
   return { provider: 'local', decisionSource: 'fit-sizing', resolved: true,
-    reason: '答复给出了具体的选码参考方法', evidence: sizingEvidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
+    reason: '答复给出了具体的选码建议', evidence: sizingEvidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
 }
 
 export function assessLocalTrainingRules(input: ModelReceptionInput): ModelReceptionResult | undefined {
@@ -303,9 +433,13 @@ export function assessLocalTrainingRules(input: ModelReceptionInput): ModelRecep
   return assessLocalWashGuidance(input)
     ?? assessColorDifference(input)
     ?? assessMediaLocation(input)
+    ?? assessMediaAvailable(input)
     ?? assessMaterialDetails(input)
     ?? assessDryCleanRequirement(input)
+    ?? assessOuterAndShoeStyling(input)
+    ?? assessOuterwearColor(input)
     ?? assessShoeStyling(input)
+    ?? assessCraftAndAfterSale(input)
     ?? assessCareAndMaterialNotice(input)
     ?? assessShippingDeliveryLogistics(input)
     ?? assessExchangePolicy(input)
