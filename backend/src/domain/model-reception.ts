@@ -25,6 +25,7 @@ export interface ModelReceptionResult {
     | 'outer-shoe-styling'
     | 'outerwear-color'
     | 'craft-aftersale'
+    | 'comfort-breathability'
     | 'care-notice'
     | 'shipping-logistics'
     | 'exchange-policy'

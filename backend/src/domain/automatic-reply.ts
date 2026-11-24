@@ -378,7 +378,7 @@ function assessAutomaticReplyStrict(ctx: JudgeContext & { buyerContext?: string[
     }
     if (intent === 'dry-clean-required' || intent === 'dry-clean-allowed') {
       const pattern = intent === 'dry-clean-required'
-        ? /(?:不需要|无需|不用|不必)(?:专门|进行)?干洗|(?:需要|必须|只能|要)(?:专门|进行)?干洗|正常洗|平常.{0,5}洗|日常清洗|没必要.{0,6}(?:干洗|麻烦)|不用.{0,6}麻烦|^(?:亲)?(?:不需要|不必|不用|需要|必须|不要|要)[的哦呢哈呀啊哒~～\s]*$/u
+        ? /(?:不需要|无需|不用|不必|没(?:有)?必要)(?:专门|进行|去|送)?干洗|(?:需要|必须|只能|要)(?:专门|进行|去|送)?干洗|正常洗|平常.{0,5}洗|日常清洗|没必要.{0,6}(?:干洗|麻烦)|不用.{0,6}麻烦|^(?:亲)?(?:不需要|不必|不用|需要|必须|不要|要)(?:的)?(?:亲)?[的哦呢哈呀啊哒~～\s]*$/u
         : /(?:可以|不能|不可以|不支持|支持|允许|禁止|适合|不适合)(?:进行)?干洗|^(?:亲)?(?:可以|不可以|不能|不支持|支持|没问题)[的哦呢哈呀啊哒~～\s]*$/u;
       const evidence = statements.filter((s) => pattern.test(s));
       return assessment(intent, evidence, evidence.length ? [] : [intent === 'dry-clean-required' ? '尚未说明是否需要干洗' : '尚未说明是否允许干洗'], pendingVerification);
