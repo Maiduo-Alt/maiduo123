@@ -1,0 +1,55 @@
+name: Run Automated Reception Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: '测试难度档位（L1 / L2 / L3 / L4）'
+        required: true
+        default: 'L2'
+        type: choice
+        options:
+          - L1
+          - L2
+          - L3
+          - L4
+      username:
+        description: '客服测试账号（留空则使用 Secret TEST_AGENT_USERNAME 或默认 agent）'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  reception-test:
+    name: Automated 10-Customer Reception Test (${{ inputs.level }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install socket.io-client for realtime heartbeat
+        run: npm install --no-save socket.io-client
+
+      - name: Run 10-customer reception test
+        env:
+          BASE_URL: http://${{ secrets.LIGHTHOUSE_HOST }}:8080
+          TEST_USERNAME: ${{ inputs.username || secrets.TEST_AGENT_USERNAME || 'agent' }}
+          TEST_PASSWORD: ${{ secrets.TEST_AGENT_PASSWORD || 'Agent@123' }}
+          TEST_LEVEL: ${{ inputs.level }}
+          REPORT_PATH: reception-test-report.md
+        run: node tools/auto-reception-test.mjs
+
+      - name: Upload Markdown report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reception-report-${{ inputs.level }}-${{ github.run_number }}
+          path: reception-test-report.md
+          if-no-files-found: ignore

@@ -53,7 +53,7 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
       { question, goals: [], history: [{ role: 'buyer', content: question }], reply, judgmentVersion: 2,
         ...(washingCase || rule === 'material-details' || rule === 'dry-clean-required' || rule === 'care-notice'
           ? { facts: { product: declaredProduct || { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } } } : {}) },
-      { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL,
+      { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL, timeoutMs: 90000,
         onFailure: reason => console.error('本地模型预检失败：' + reason) } },
     );
     if (result.resolved !== expected) throw Error('本地模型对部署样例的判定不符：' + JSON.stringify({question, reply, expected, result}));
