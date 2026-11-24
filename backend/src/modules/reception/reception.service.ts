@@ -166,9 +166,11 @@ export class ReceptionService implements OnModuleInit {
 
   /** 客服回复后，买家「思考」多久再抛下一个问题；服务重启补挂定时器时沿用同一口径。 */
   private readonly REPLY_THINK_DELAY_MS = 1500;
-  /** L1 保留五分钟整理时间，其他难度使用三十秒。 */
+  /** L1 保留五分钟整理时间，L2 双并发给 90 秒整理时间，L3/L4 给 60 秒，避免切换并发会话时来不及发收尾语即自动结束。 */
   private agentCloseWindowMs(level: string): number {
-    return level === 'L1' ? 5 * 60 * 1000 : 30 * 1000;
+    if (level === 'L1') return 5 * 60 * 1000;
+    if (level === 'L2') return 90 * 1000;
+    return 60 * 1000;
   }
 
   constructor(

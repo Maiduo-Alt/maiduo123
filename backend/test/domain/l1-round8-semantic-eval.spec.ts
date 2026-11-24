@@ -102,4 +102,19 @@ describe('L1 第八轮复测语义判定黄金回归集（AT20261124-9230）', (
     expect(verdict).toMatchObject({ resolved: expected, decisionSource: 'fit-sizing' });
     expect(mock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['能机洗吗？', '详情页未写明是否支持机洗，建议先轻柔手洗，收到以水洗标为准。', true],
+    ['能机洗吗？', '商品页没写能不能机洗，稳妥起见建议轻柔手洗哦。', true],
+    ['能机洗吗？', '详情页没写能不能机洗，直接机洗就行。', false],
+  ])('洗涤未标注自然缺项说明（L2 第8客户回归）：%s → %s', async (question, reply, expected) => {
+    const mock = jest.fn();
+    const verdict = await evaluateWithModels(
+      { question, reply, history: [{ role: 'buyer', content: question }], goals: [], judgmentVersion: 2, facts: noWashProduct },
+      localConfig,
+      mock as any,
+    );
+    expect(verdict).toMatchObject({ resolved: expected, decisionSource: 'wash-guidance' });
+    expect(mock).not.toHaveBeenCalled();
+  });
 });
