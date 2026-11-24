@@ -234,13 +234,12 @@ function buildMarkdownReport(attemptNo, level, elapsedSec, result, taskInfo, det
   });
 
   const nonPerfect = sessions.filter((s) => Number(s.score ?? s.totalScore ?? 0) < 100);
-  if (nonPerfect.length && detailData?.sessions) {
-    const detailMap = new Map(detailData.sessions.map((s) => [Number(s.id), s]));
+  if (nonPerfect.length && Array.isArray(detailData?.messages)) {
     lines.push('', '## 失分会话对话复盘', '');
     for (const s of nonPerfect) {
-      const ds = detailMap.get(Number(s.id));
+      const msgs = detailData.messages.filter((m) => Number(m.sessionId ?? m.session_id) === Number(s.id));
       lines.push(`### ${s.buyerName}（${s.scriptName || '—'}，${s.score ?? s.totalScore} 分）`);
-      for (const m of ds?.messages || []) {
+      for (const m of msgs) {
         const rr = m.ruleResult || m.rule_result || {};
         const tag = m.sender === 'agent'
           ? ` [seq=${m.seq} resp=${m.responseSec ?? m.response_sec ?? '-'}s timeout=${m.isTimeout ?? m.is_timeout ?? false} src=${rr.replyAssessment?.source || '-'}/${rr.modelEvaluation?.decisionSource || '-'} status=${rr.replyAssessment?.status || '-'} reason=${rr.replyAssessment?.reason || '-'}]`
