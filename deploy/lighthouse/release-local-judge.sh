@@ -30,6 +30,9 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
     ['这款是聚酯纤维的吗？', '是的，含有聚酯纤维。', true, 'material-details', { title: '棉感衬衫', attributes: [{ name: '成分', value: '65%棉，35%聚酯纤维' }] }],
     ['含棉量大概多少呢？', '商品页只标注材质其他纤维22%，确实无单独含棉量数据，暂时无法给准确数字。', true, 'material-details'],
     ['还有个问题，麻烦直接说下：是聚酯纤维吗？', '商品详情没有注明是否含聚酯纤维，可以帮您核对标签。', true, 'material-details'],
+    ['亲，我问的其实是：含棉量多少？，麻烦再看下哦～', '商品页没有写具体含棉比例，收到可以看下水洗标。', true, 'material-details'],
+    ['平时清洗和打理有什么要注意的吗？', '建议按洗标说明轻柔手洗，深浅色分开，阴凉通风处晾干。', true, 'care-notice'],
+    ['如果尺码不合适，可以换吗？', '支持的亲，7天无理由退换，尺码不合适可以换码。', true, 'exchange-policy'],
     ['可以机洗吗？', '详情页没标注，请以洗标为准，确认前建议轻柔手洗。', true],
     ['可以机洗吗？', '没标注机洗，不过用洗衣袋就一定能机洗。', false],
     ['这款连衣裙可以机洗吗？', '亲，这款商品页没有明确标注是否可机洗或需干洗哦。稳妥起见建议轻柔手洗，或洗衣袋机洗选轻柔模式，水温30度以下，洗后自然晾干避免暴晒烘干～收到后也可以看洗水标确认哦。', false],
@@ -40,7 +43,7 @@ const { evaluateWithModels } = require('./backend/dist/domain/model-reception.js
     const started = Date.now();
     const result = await evaluateWithModels(
       { question, goals: [], history: [{ role: 'buyer', content: question }], reply, judgmentVersion: 2,
-        ...(washingCase || rule === 'material-details' || rule === 'dry-clean-required'
+        ...(washingCase || rule === 'material-details' || rule === 'dry-clean-required' || rule === 'care-notice'
           ? { facts: { product: declaredProduct || { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } } } : {}) },
       { local: { url: process.env.LOCAL_SEMANTIC_JUDGE_URL, model: process.env.LOCAL_SEMANTIC_JUDGE_MODEL,
         onFailure: reason => console.error('本地模型预检失败：' + reason) } },

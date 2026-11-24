@@ -222,6 +222,7 @@ export default function Reception() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const seenBuyerSessionsRef = useRef(new Set<number>());
   const lastClosedSessionRef = useRef<number | null>(null);
+  const closedSessionIdsRef = useRef(new Set<number>());
   const inputRef = useRef('');
   const replyInputRef = useRef<any>(null);
   const autoFocusSessionRef = useRef<number | null>(null);
@@ -471,8 +472,25 @@ export default function Reception() {
         setAttempt(data.attempt);
         if (updateServerClock(data.serverTime)) setSessions(data.sessions);
         setMessages(data.messages);
+        const closedIds = new Set<number>(
+          data.sessions
+            .filter((s: SessionDto) => ['finished', 'transferred', 'aborted'].includes(s.state))
+            .map((s: SessionDto) => s.sessionId)
+        );
+        closedIds.forEach((sid) => closedSessionIdsRef.current.add(sid));
+        if (closedIds.size) {
+          setUnread((prev) => {
+            let changed = false;
+            const next = new Set(prev);
+            for (const sid of closedIds) {
+              if (next.delete(sid)) changed = true;
+            }
+            return changed ? next : prev;
+          });
+        }
         const newBuyer = data.messages.find((m: MessageDto) => m.sender === 'buyer' &&
           !seenBuyerSessionsRef.current.has(m.sessionId) &&
+          !closedSessionIdsRef.current.has(m.sessionId) &&
           data.sessions.some((s: SessionDto) => s.sessionId === m.sessionId && ['serving', 'timeout'].includes(s.state)));
         data.messages.forEach((m: MessageDto) => {
           if (m.sender === 'buyer') seenBuyerSessionsRef.current.add(m.sessionId);
@@ -483,6 +501,7 @@ export default function Reception() {
           selectSession(newBuyer.sessionId);
         } else if (!activeIdRef.current && suppressAutoSelectRef.current && !inputRef.current.trim()) {
           const waiting = data.sessions.find((s: SessionDto) => s.sessionId !== lastClosedSessionRef.current &&
+            !closedSessionIdsRef.current.has(s.sessionId) &&
             ['serving', 'timeout'].includes(s.state) &&
             data.messages.some((m: MessageDto) => m.sender === 'buyer' && m.sessionId === s.sessionId));
           if (waiting) {
@@ -491,9 +510,9 @@ export default function Reception() {
             selectSession(waiting.sessionId);
           }
         }
-        // 客户 2026-10-03：待接入的买家不在「正在接待」里展示，默认选中的也应该是已进线的那个。
+        // 客户 2026-10-03：待接入的买家不在「正在接待」里展示，默认选中的也应该是已进线且未结束的那个。
         // ESC 主动关闭窗口后（suppressAutoSelectRef）轮询不再自动选中，直到用户手动点开会话。
-        setActiveId((prev) => prev ?? (suppressAutoSelectRef.current ? null : data.sessions.find((s: any) => s.state !== 'pending')?.sessionId ?? null));
+        setActiveId((prev) => prev ?? (suppressAutoSelectRef.current ? null : data.sessions.find((s: any) => !['pending', 'finished', 'transferred', 'aborted'].includes(s.state))?.sessionId ?? null));
       } catch (e) {
         if (!silent) message.error((e as Error).message);
       }
@@ -551,10 +570,21 @@ export default function Reception() {
           duration: 6,
         });
       }
+      if (event === 'session.finished' && payload?.sessionId) {
+        const finishedId = Number(payload.sessionId);
+        closedSessionIdsRef.current.add(finishedId);
+        setUnread((prev) => {
+          if (!prev.has(finishedId)) return prev;
+          const next = new Set(prev);
+          next.delete(finishedId);
+          return next;
+        });
+      }
       // 方案 3.1.5：买家消息到达且不在当前会话时，队列项显示未读红点并播放轻提示音
       if (event === 'buyer.message' && payload?.sessionId) {
         const sessionId = Number(payload.sessionId);
         if (payload.attemptId && Number(payload.attemptId) !== attemptIdFromUrl) return;
+        if (closedSessionIdsRef.current.has(sessionId)) return;
         const isNewBuyer = !seenBuyerSessionsRef.current.has(sessionId);
         seenBuyerSessionsRef.current.add(sessionId);
         if (isNewBuyer && !inputRef.current.trim()) {
@@ -627,6 +657,7 @@ export default function Reception() {
       });
       setParams({ attemptId: String(data.attemptId) });
       seenBuyerSessionsRef.current.clear();
+      closedSessionIdsRef.current.clear();
       lastClosedSessionRef.current = null;
       // 新一局恢复「自动选中第一个进线会话」的默认行为（上一局可能用 ESC 关过窗口）。
       suppressAutoSelectRef.current = false;

@@ -18,7 +18,23 @@ describe('补位进线时间', () => {
     const service: any = new ReceptionService(db, {} as any, {} as any, scheduler, {} as any, {} as any);
     await service.promoteWaiting(1);
     expect(db.query).toHaveBeenCalledWith(expect.stringContaining("state = 'wait'"), [3, new Date(now + 20000).toISOString()]);
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining('last_buyer_at = NULL'), [3, new Date(now + 20000).toISOString()]);
     expect(scheduler.schedule).toHaveBeenCalledWith('join:3', 20000, expect.any(Function));
+  });
+
+  it('并发补位已被抢占时不再重复调度同一客户进线', async () => {
+    const db: any = {
+      one: jest.fn()
+        .mockResolvedValueOnce({ level: 'L1', param_snapshot: { ...DEFAULT_PARAMS, levelJoinDelaySec: [5, 5] } })
+        .mockResolvedValueOnce({ count: '0' })
+        .mockResolvedValueOnce({ id: 7 })
+        .mockResolvedValueOnce(null),
+      query: jest.fn().mockResolvedValueOnce({ rows: [] }),
+    };
+    const scheduler: any = { schedule: jest.fn() };
+    const service: any = new ReceptionService(db, {} as any, {} as any, scheduler, {} as any, {} as any);
+    await service.promoteWaiting(1);
+    expect(scheduler.schedule).not.toHaveBeenCalled();
   });
 
   it('服务重启后按计划时间恢复等待', async () => {
