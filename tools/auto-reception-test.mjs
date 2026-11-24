@@ -102,9 +102,19 @@ function generateReply(buyerText, session) {
   if (/晾晒|晾干|晒干|暴晒|阴干/u.test(q)) {
     return '亲，洗后建议平铺或悬挂在阴凉通风处自然阴干，避免阳光直射暴晒哦。';
   }
+  // 3b. 洗衣袋 / 水温 / 清洗方式
+  if (/洗衣袋/u.test(q)) {
+    return '亲，稳妥起见优先建议冷水轻柔手洗；如果收到后水洗标明确允许机洗，建议装入洗衣袋并选择轻柔模式清洗，减少勾丝变形哦。';
+  }
+  if (/水温|多少度|冷水|温水/u.test(q)) {
+    return '亲，清洗时建议使用 30 度以下的冷水或常温水轻柔手洗，避免热水浸泡导致缩水或褪色哦。';
+  }
+  if (/怎么洗|怎么清洗|清洗方法|如何洗|怎样洗/u.test(q)) {
+    return '亲，建议用 30 度以下冷水加中性洗涤剂轻柔手洗，深浅色分开，洗后阴凉通风处自然晾干，具体以收到后的水洗标为准哦。';
+  }
   // 4. 注意事项 / 清洗打理
   if (/注意(?:事项|的地方|什么|的)|要注意|需要注意/u.test(q)) {
-    if (/尺码|选码/u.test(q)) {
+    if (/尺码|选.{0,3}码/u.test(q)) {
       return '亲，选码时建议量一下腰围和臀围，对照商品尺码表选择，喜欢宽松可以选大一码哦。';
     }
     return '亲，建议收到后先核对水洗标说明，平时冷水轻柔手洗、深浅色分开，阴凉通风处自然晾干，避免暴晒和高温熨烫哦。';
@@ -161,8 +171,8 @@ function generateReply(buyerText, session) {
   if (/换货|换码|换.{0,4}码|能换吗|可以换吗/u.test(q)) {
     return '亲，支持的哦，我们支持 7 天无理由退换货，尺码不合适可以直接联系客服办理换码。';
   }
-  // 16. 梨形 / 显瘦
-  if (/梨形|微胖|胯宽/u.test(q)) {
+  // 16. 梨形 / 显瘦（排除「梨形身材选哪个码」让其走选码推荐）
+  if (/梨形|微胖|胯宽/u.test(q) && !/选.{0,4}码|穿.{0,4}码/u.test(q)) {
     return '亲，这款采用高腰收腰 A 字版型，遮胯遮肉很显瘦，对梨形身材非常友好哦。';
   }
   // 17. 偏大 / 偏小
@@ -188,14 +198,42 @@ function generateReply(buyerText, session) {
   if (/现货|发货|发出|出库/u.test(q)) {
     return '亲，目前都是现货供应，下单付款后一般当天安排发出，最晚不超过 48 小时内发货哦。';
   }
-  // 22. 售后处理
+  // 22. 物流停滞跟进
+  if (/停滞|卡住|不动|跟进/u.test(q) && /物流|快递/u.test(q)) {
+    return '亲，如果物流出现停滞或长时间未更新，随时联系在线客服，我们会第一时间帮您联系快递网点核实并催促派送哦。';
+  }
+  // 23. 优惠 / 支付 / 发票 / 运费 / 包装 / 修改订单
+  if (/优惠|折扣|活动|优惠券/u.test(q)) {
+    return '亲，下单时系统会自动匹配店铺当前可用的优惠活动和优惠券，具体优惠金额以提交订单结算页显示为准哦。';
+  }
+  if (/支付|付款方式/u.test(q)) {
+    return '亲，下单时支持微信支付、支付宝和银行卡等平台常规支付方式，在收银台直接选择即可完成付款哦。';
+  }
+  if (/发票|开票/u.test(q)) {
+    return '亲，支持开具电子发票的，下单时勾选开票或确认收货后在订单详情页申请开票，联系客服也可以协助处理哦。';
+  }
+  if (/运费|包邮/u.test(q)) {
+    return '亲，店铺商品默认包邮发货（偏远地区以结算页运费显示为准），并赠送运费险，购物更放心哦。';
+  }
+  if (/包装/u.test(q)) {
+    return '亲，发货时会采用防尘内袋加防水外包装袋严密打包，保护衣物运输途中不易弄脏损坏哦。';
+  }
+  if (/外套长度|包包|鞋跟/u.test(q)) {
+    return '亲，通勤建议选过臀短款或中长款外套更利落显比例，配简约托特包或腋下包，鞋跟选 3-5 厘米中低跟舒适又显气质哦。';
+  }
+  if (/修改订单|改地址/u.test(q)) {
+    return '亲，未发货前可以在订单详情页修改收货信息或联系客服帮您备注修改；已发出后需要联系客服协助拦截改址哦。';
+  }
+  // 24. 售后处理
   if (/售后|退货|退款|质量|瑕疵/u.test(q)) {
     return '亲，收到后如有任何质量问题，可以直接拍照联系在线客服，或在订单页面申请售后退换货处理，我们会第一时间为您解决。';
   }
   return '亲，这款商品详情页有完整参数与尺码说明，现货 48 小时内发货并支持 7 天无理由退换，有任何问题随时联系在线客服为您处理哦。';
 }
 
-function buildMarkdownReport(attemptNo, level, elapsedSec, result, taskInfo) {
+const FETCH_LATEST_ONLY = process.env.FETCH_LATEST_ONLY === 'true';
+
+function buildMarkdownReport(attemptNo, level, elapsedSec, result, taskInfo, detailData) {
   const sessions = result.sessions || [];
   const totalScore = Number(result.totalScore ?? 0);
   const conclusion = result.conclusion === 'pass' ? '达标' : '未达标';
@@ -231,6 +269,23 @@ function buildMarkdownReport(attemptNo, level, elapsedSec, result, taskInfo) {
     lines.push(`| ${idx + 1} | ${s.buyerName || s.id} | ${s.scriptName || '—'} | ${s.score ?? s.totalScore ?? '—'} | ${firstSec ?? '—'}s | ${avg ?? '—'}s | ${timeouts} | ${deductions} |`);
   });
 
+  const nonPerfect = sessions.filter((s) => Number(s.score ?? s.totalScore ?? 0) < 100);
+  if (nonPerfect.length && Array.isArray(detailData?.messages)) {
+    lines.push('', '## 失分会话对话复盘', '');
+    for (const s of nonPerfect) {
+      const msgs = detailData.messages.filter((m) => Number(m.sessionId ?? m.session_id) === Number(s.id));
+      lines.push(`### ${s.buyerName}（${s.scriptName || '—'}，${s.score ?? s.totalScore} 分）`);
+      for (const m of msgs) {
+        const rr = m.ruleResult || m.rule_result || {};
+        const tag = m.sender === 'agent'
+          ? ` [seq=${m.seq} resp=${m.responseSec ?? m.response_sec ?? '-'}s timeout=${m.isTimeout ?? m.is_timeout ?? false} src=${rr.replyAssessment?.source || '-'}/${rr.modelEvaluation?.decisionSource || '-'} status=${rr.replyAssessment?.status || '-'} reason=${rr.replyAssessment?.reason || '-'}]`
+          : ` [seq=${m.seq}]`;
+        lines.push(`- **${m.sender}**${tag}: ${String(m.content || '').replace(/\n/g, ' ')}`);
+      }
+      lines.push('');
+    }
+  }
+
   lines.push('');
   return lines.join('\n');
 }
@@ -259,9 +314,26 @@ async function resolveStartBody(token) {
 }
 
 async function main() {
-  console.log(`==> 登录 ${BASE_URL} (user=${USERNAME}, level=${LEVEL}, source=${SOURCE})...`);
+  console.log(`==> 登录 ${BASE_URL} (user=${USERNAME}, level=${LEVEL}, source=${SOURCE}, fetchLatestOnly=${FETCH_LATEST_ONLY})...`);
   const login = await api('/api/auth/login', { method: 'POST', body: { username: USERNAME, password: PASSWORD } });
   const token = login.token;
+
+  if (FETCH_LATEST_ONLY) {
+    const records = await api(`/api/records?level=${encodeURIComponent(LEVEL)}&page=1&pageSize=1`, { token });
+    const latest = records?.list?.[0];
+    if (!latest) throw new Error(`未找到 ${LEVEL} 的历史接待记录`);
+    const result = await api(`/api/receptions/${latest.id}/result`, { token });
+    const detail = await api(`/api/records/${latest.id}`, { token }).catch(() => null);
+    const elapsedSec = latest.startedAt && latest.finishedAt
+      ? Math.max(0, Math.round((Date.parse(latest.finishedAt) - Date.parse(latest.startedAt)) / 1000))
+      : 0;
+    const report = buildMarkdownReport(latest.attemptNo, LEVEL, elapsedSec, result, null, detail);
+    console.log('\n' + report);
+    if (REPORT_PATH) fs.writeFileSync(REPORT_PATH, report, 'utf8');
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, report + '\n', 'utf8');
+    return;
+  }
+
   const closeSocket = await connectSocket(token);
 
   try {
@@ -290,7 +362,16 @@ async function main() {
     const closedSent = new Set();
 
     while (Date.now() - startedAt < MAX_DURATION_MS) {
-      const snap = await api(`/api/receptions/${attemptId}/snapshot`, { token });
+      let snap;
+      try {
+        snap = await api(`/api/receptions/${attemptId}/snapshot`, { token });
+      } catch (err) {
+        if (String(err.message).includes('code=2002') || String(err.message).includes('已结束')) {
+          console.log('==> 整局接待已全部结束并落库（code=2002）！');
+          break;
+        }
+        throw err;
+      }
       if (snap.attempt?.status === 'finished') {
         console.log('==> 整局接待已全部结束并落库！');
         break;
@@ -368,7 +449,8 @@ async function main() {
 
     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
     const result = await api(`/api/receptions/${attemptId}/result`, { token });
-    const report = buildMarkdownReport(attemptNo, LEVEL, elapsedSec, result, taskInfo);
+    const detail = await api(`/api/records/${attemptId}`, { token }).catch(() => null);
+    const report = buildMarkdownReport(attemptNo, LEVEL, elapsedSec, result, taskInfo, detail);
     console.log('\n' + report);
 
     if (REPORT_PATH) {
