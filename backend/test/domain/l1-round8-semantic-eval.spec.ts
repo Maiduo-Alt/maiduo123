@@ -10,6 +10,7 @@ describe('L1 第八轮复测语义判定黄金回归集（AT20261124-9230）', (
     ['这件搭配什么外套和鞋子好看？', '我帮您查一下搭配方案。', false, 'outer-shoe-styling'],
     ['这款商品适合搭配什么颜色的外套呢？', '推荐米白色、卡其色或浅灰色外套，都很百搭显白。', true, 'outerwear-color'],
     ['这款商品适合搭配什么颜色的外套呢？', '米白、燕麦色或黑色。', true, 'outerwear-color'],
+    ['这款商品适合搭配什么颜色的外套呢？', '米白色、卡其色都可以。', true, 'outerwear-color'],
     ['这款商品适合搭配什么颜色的外套呢？', '我帮您查一下什么颜色合适。', false, 'outerwear-color'],
     ['如果想穿得休闲一些，鞋子可以怎么搭配呢？', '日常穿德训鞋或小白鞋就很百搭显瘦。', true, 'shoe-styling'],
   ])('搭配建议场景（第5/9/10客户）本地准确判定：%s → %s', async (question, reply, expected, source) => {

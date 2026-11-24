@@ -219,7 +219,7 @@ function assessOuterAndShoeStyling(input: ModelReceptionInput): ModelReceptionRe
   }
   const denial = /不建议|不推荐|不适合|不合适|不搭|不配|别选|别穿|别搭|避免|不要|不能|没有|没货|不确定|不清楚|不知道|核实|查一下/u;
   const clauses = input.reply.split(/[，,。；;！!\n]/u).map((part) => part.trim()).filter((part) => !!part && !/[？?]/u.test(part) && !denial.test(part));
-  const outerRe = /西装|开衫|风衣|夹克|牛仔外套|针织衫|针织外套|大衣|衬衫|卫衣|毛衣|皮衣|棒球服|短款外套|长款外套|(?:米白|白色|黑色|卡其|浅色|深色|短款)外套/u;
+  const outerRe = /西装|开衫|风衣|夹克|牛仔外套|针织衫|针织外套|大衣|衬衫|卫衣|毛衣|皮衣|棒球服|羽绒服|棉服|马甲|(?:短款?|长款?|米白|白色|黑色|卡其|浅色系?|深色系?|休闲|通勤|小香风)外套/u;
   const shoeRe = /乐福鞋|帆布鞋|运动鞋|小白鞋|球鞋|板鞋|平底鞋|短靴|长靴|老爹鞋|德训鞋|玛丽珍鞋|单鞋|高跟鞋|凉鞋|厚底鞋|马丁靴|切尔西靴|休闲鞋/u;
   const outerHit = clauses.find((part) => outerRe.test(part));
   const shoeHit = clauses.find((part) => shoeRe.test(part));
@@ -248,7 +248,7 @@ function assessOuterwearColor(input: ModelReceptionInput): ModelReceptionResult 
   const evidence = clauses.filter((part) =>
     !/不推荐|不建议|不适合|不搭|别选|不要选|不能搭|色差|不确定|不清楚|不知道|核实|查一下/u.test(part) &&
     (part.split(/[、或／/和跟]/u).every((option) => onlyColors.test(option.trim())) ||
-      (colorRe.test(part) && /推荐|建议|适合|可以(?:配|选|搭)|都.{0,3}搭|很搭|百搭|最搭|好看|显白|高级|耐看|协调|清爽|气质/u.test(part))));
+      (colorRe.test(part) && /推荐|建议|适合|可以(?:配|选|搭)|都可以|都行|都合适|都.{0,3}搭|很搭|百搭|最搭|好看|不错|首选|显白|高级|耐看|协调|清爽|气质/u.test(part))));
   if (!evidence.length) return undefined;
   return {
     provider: 'local', decisionSource: 'outerwear-color', resolved: true,

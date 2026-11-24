@@ -197,4 +197,15 @@ describe('新版响应计时按买家问题和追问划分', () => {
     expect(result.totalRounds).toBe(1);
     expect(result.avgResponseSec).toBe(20);
   });
+
+  it('超时阈值调严到 45 秒时，3 分钟回复率仍按 180 秒窗口计算（第九轮第10客户回归）', () => {
+    const strictParams = { ...params, timeoutSec: 45 };
+    const result = computeResponseRounds([
+      start(1), reply(1, 52),
+      start(2), reply(2, 13),
+      start(3), reply(3, 13),
+    ], questions, strictParams, [], options);
+    expect(result.avgResponseSec).toBe(26);
+    expect(result.replyRatePct).toBe(100);
+  });
 });
