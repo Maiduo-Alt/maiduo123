@@ -99,9 +99,12 @@ export function computeResponseRounds(
 
   // 首次响应：按消息顺序的第一条有效回复（与轮次无关，方案 4.2 口径）
   const firstResponseSec = timed.length ? Math.round(timed[0].responseSec as number) : null;
+  // 3 分钟回复率按真正的 180 秒窗口计算：管理员将单轮超时阈值（timeoutSec）调严到 45/60 秒时，
+  // 不应把 50 秒内的正常回复误判为「超过 3 分钟未回复」。
+  const replyRateWindowSec = Math.max(180, params.timeoutSec);
   const replyRatePct = options.responseTimingVersion === 2
-    ? (answeredRounds ? (rounds.filter((r) => r.answered && r.countedSec <= params.timeoutSec).length / answeredRounds) * 100 : 0)
-    : (questionTimed.length ? (questionTimed.filter((m) => (m.responseSec as number) <= params.timeoutSec).length / questionTimed.length) * 100 : 0);
+    ? (answeredRounds ? (rounds.filter((r) => r.answered && r.countedSec <= replyRateWindowSec).length / answeredRounds) * 100 : 0)
+    : (questionTimed.length ? (questionTimed.filter((m) => (m.responseSec as number) <= replyRateWindowSec).length / questionTimed.length) * 100 : 0);
 
   // 同一次待回复可能既有系统超时提示，又有标记超时的客服回复；只计一次。
   // 开场和首题可能共用 seq，因此以买家新提问与客服回复划分待回复事件。
