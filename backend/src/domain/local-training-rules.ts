@@ -73,7 +73,7 @@ function materialDisclosure(sentences: string[], cotton: boolean): string[] {
 }
 
 function cottonPercents(text: string, standalone = false): number[] {
-  const values = [...text.matchAll(/(?:棉(?:纤维)?(?:含量|占比|比例|成分)?)(?:大约|大概|约|是|为|占|有|\s)*(\d{1,3}(?:\.\d+)?)\s*[%％]|(?<![\d.−-])(\d{1,3}(?:\.\d+)?)\s*[%％]\s*(?:的)?\s*棉/gu)]
+  const values = [...text.matchAll(/(?:含棉量|含棉比例|棉(?:纤维)?(?:含量|占比|比例|成分|量)?)(?:大约|大概|约|在|是|为|占|有|达|\s)*(\d{1,3}(?:\.\d+)?)\s*[%％]|(?<![\d.−-])(\d{1,3}(?:\.\d+)?)\s*[%％]\s*(?:左右|上下)?\s*(?:的)?\s*棉/gu)]
     .map((match) => Number(match[1] ?? match[2]));
   if (/不含棉|无棉成分/u.test(text)) values.push(0);
   if (/^(?:(?:这款|面料|成分|是|为|采用)\s*)*(?:纯棉|全棉)(?:面料)?[哦哈呢的。\s]*$/u.test(text)) values.push(100);
@@ -150,18 +150,18 @@ function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult
 
 function assessDryCleanRequirement(input: ModelReceptionInput): ModelReceptionResult | undefined {
   const question = normalizeQuestion(input.question);
-  if (!/(?:要不要|需不需要|是否需要|用不用|需要|必须)(?:专门)?干洗(?:吗|呢)?$/u.test(question) ||
+  if (!/(?:要不要|需不需要|是否需要|用不用|需要|必须|要)(?:专门)?干洗(?:吗|呢|呀|啊|哈|哦)?(?:亲)?$/u.test(question) ||
       /[\n；;？?]|以及|还有|或者|并且|机洗|手洗|水洗|怎么洗/u.test(question) ||
       hasWashInformation(input) || input.history.some(({ content }) =>
         /(?:洗标|洗水标).{0,12}(?:写着|写了|显示|标明|标注了)/u.test(content)) ||
       /如果|假如|要是|可能|也许|或许|是否|不确定|未确认|说不准|没法保证/u.test(input.reply)) return undefined;
 
-  const clauses = input.reply.split(/[，,。；;！!\n]|但是|不过/u).map((part) => part.trim());
-  const notRequired = /(?:不需要|无需|不用|不必|没有必要)(?:专门|进行)?干洗|^(?:亲)?(?:不需要|不用|不必)[的哦哈呢呀啊～~\s]*$/u;
-  const required = /(?:需要|必须|只能)(?:专门|进行)?干洗|^(?:亲)?(?:需要|必须)[的哦哈呢呀啊～~\s]*$/u;
+  const clauses = input.reply.split(/[，,。；;！!\n]|但是|不过/u).map((part) => part.trim()).filter((part) => !!part && !/[？?]/u.test(part));
+  const notRequired = /(?:不需要|无需|不用|不必|没(?:有)?必要)(?:专门|进行|去|送)?干洗|^(?:亲)?(?:不需要|不用|不必)(?:的)?(?:亲)?[的哦哈呢呀啊～~\s]*$/u;
+  const required = /(?:需要|必须|只能)(?:专门|进行|去|送)?干洗|^(?:亲)?(?:需要|必须)(?:的)?(?:亲)?[的哦哈呢呀啊～~\s]*$/u;
   const negative = clauses.filter((part) => notRequired.test(part));
   const positive = clauses.filter((part) => required.test(part.replace(notRequired, '').trim()) &&
-    !/不一定|不代表|不是|并非|不建议|没说|未说|别/u.test(part));
+    !/不一定|不代表|不是|并非|不建议|没说|未说|未标注|没标注|没写|未写|别/u.test(part));
   if ((negative.length > 0) === (positive.length > 0)) return undefined;
 
   const assessment = assessAutomaticReply({ question: '要不要干洗', buyerText: input.question, keyPoints: [], reply: input.reply }, 2);
@@ -428,6 +428,26 @@ function assessFitAndSizing(input: ModelReceptionInput): ModelReceptionResult | 
     reason: '答复给出了具体的选码建议', evidence: sizingEvidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
 }
 
+function assessComfortAndBreathability(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  const question = normalizeQuestion(input.question);
+  const isComfortQuestion = /(?:穿起来|上身|穿着|面料|材质).{0,10}(?:闷|不舒服|舒服|舒适|透气|扎人|刺痒|亲肤)|(?:会不会|会|容易).{0,6}(?:闷|不舒服|扎人|刺痒)|透气(?:吗|呢|不透气)/u.test(question);
+  if (!isComfortQuestion ||
+      /[\n；;？?]|含棉|聚酯|涤纶|洗|干洗|发货|物流|尺码|换货|退货|色差/u.test(question)) return undefined;
+
+  if (isPerfunctory({ question, keyPoints: [], reply: input.reply, buyerText: input.question }) ||
+      isPendingVerification(input.reply)) {
+    return { provider: 'local', decisionSource: 'comfort-breathability', resolved: false,
+      reason: '回复未说明穿着透气性或舒适度', matchedPoints: [], buyerReply: '', evidence: [] };
+  }
+  const clauses = input.reply.split(/[，,。；;！!\n]/u).map((part) => part.trim()).filter((part) => !!part && !/[？?]/u.test(part));
+  const comfortAdvice = /(?:不会闷|不闷|不会不舒服|不扎|不刺|透气|清爽|亲肤|舒适|舒服|柔软|柔和|轻薄|吸汗|吸湿|贴身|手感.{0,4}(?:软|柔|顺滑|好))/u;
+  const evidence = clauses.filter((part) => comfortAdvice.test(part) &&
+    !/不确定|不清楚|不知道|核实|查一下|待确认|不透气|很闷|不舒服|扎人/u.test(part));
+  if (!evidence.length) return undefined;
+  return { provider: 'local', decisionSource: 'comfort-breathability', resolved: true,
+    reason: '答复说明了面料透气性与穿着舒适度', evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
+}
+
 export function assessLocalTrainingRules(input: ModelReceptionInput): ModelReceptionResult | undefined {
   if (input.judgmentVersion !== 2 || input.goals.length) return undefined;
   return assessLocalWashGuidance(input)
@@ -440,6 +460,7 @@ export function assessLocalTrainingRules(input: ModelReceptionInput): ModelRecep
     ?? assessOuterwearColor(input)
     ?? assessShoeStyling(input)
     ?? assessCraftAndAfterSale(input)
+    ?? assessComfortAndBreathability(input)
     ?? assessCareAndMaterialNotice(input)
     ?? assessShippingDeliveryLogistics(input)
     ?? assessExchangePolicy(input)
