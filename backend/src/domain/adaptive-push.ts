@@ -77,6 +77,22 @@ export function stripTopicTransitionText(question: string): string {
   return prefix ? question.slice(prefix.length) : question;
 }
 
+/** Remove simulator wrappers (topic transitions and follow-up templates) around the core buyer question. */
+export function stripBuyerQuestionWrapper(question: string): string {
+  let text = stripTopicTransitionText(String(question || '').trim());
+  for (const pair of Object.values(FOLLOWUP_TEMPLATES)) {
+    for (const template of pair) {
+      if (template === '{q}') continue;
+      const [prefix, suffix = ''] = template.split('{q}');
+      if (prefix && text.startsWith(prefix) && (!suffix || text.endsWith(suffix))) {
+        text = text.slice(prefix.length, suffix ? text.length - suffix.length : undefined).trim();
+        break;
+      }
+    }
+  }
+  return stripTopicTransitionText(text).replace(/[？?]麻烦直接说一下。?$/u, '').trim();
+}
+
 /**
  * 生成追问话术（1 条）。
  * @param styleCode 沟通风格编码

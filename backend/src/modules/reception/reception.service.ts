@@ -548,7 +548,7 @@ export class ReceptionService implements OnModuleInit {
           joinAt.toISOString(),
           styleRow?.emotion_base ?? 20,
           initialState,
-          initialState === 'wait' ? joinAt.toISOString() : null,
+          null,
         ]
       );
       // 开局就按「第一个问题的订单状态」生成订单：售前=待支付/待发货，售后=已发货
@@ -779,7 +779,11 @@ export class ReceptionService implements OnModuleInit {
       const [minDelay, maxDelay] = params.levelJoinDelaySec;
       const joinDelay = Math.round(minDelay + Math.random() * (maxDelay - minDelay)) * 1000;
       const joinAt = new Date(Date.now() + joinDelay);
-      await this.db.query(`UPDATE sessions SET state = 'wait', join_at = $2, last_buyer_at = now() WHERE id = $1`, [next.id, joinAt.toISOString()]);
+      const claimed = await this.db.query<{ id: number }>(
+        `UPDATE sessions SET state = 'wait', join_at = $2, last_buyer_at = NULL WHERE id = $1 AND state = 'pending' RETURNING id`,
+        [next.id, joinAt.toISOString()],
+      );
+      if (claimed && Array.isArray(claimed.rows) && claimed.rows.length === 0) continue;
       this.scheduler.schedule(`join:${next.id}`, joinDelay, () => this.pushNextQuestion(next.id));
       slots -= 1;
     }
@@ -947,17 +951,25 @@ export class ReceptionService implements OnModuleInit {
     if (nextSeq === 1 && !session.opener_pending && !session.first_reply_at) {
       const opener = this.openerFor(session);
       if (opener.kind !== 'direct') {
-        for (const [index, text] of opener.texts.entries()) {
-          await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`, [
-            sessionId,
-            text,
-            JSON.stringify(index === 0 ? { responseRoundStart: true, responseRoundType: 'opener' } : {}),
-          ]);
-        }
-        await this.db.query(
-          `UPDATE sessions SET state = 'serving', last_buyer_at = COALESCE(last_buyer_at, now()), opener_pending = true WHERE id = $1`,
-          [sessionId]
-        );
+        const pushedOpener = await this.db.tx(async (client) => {
+          const claimed = await client.query<{ id: number }>(
+            `UPDATE sessions SET state = 'serving', last_buyer_at = now(), opener_pending = true
+             WHERE id = $1 AND current_seq = 0 AND opener_pending = false
+               AND state NOT IN ('finished','transferred','aborted','pending','awaiting_agent_close')
+             RETURNING id`,
+            [sessionId]
+          );
+          if (!claimed.rows.length) return false;
+          for (const [index, text] of opener.texts.entries()) {
+            await client.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,1,$3::jsonb)`, [
+              sessionId,
+              text,
+              JSON.stringify(index === 0 ? { responseRoundStart: true, responseRoundType: 'opener' } : {}),
+            ]);
+          }
+          return true;
+        });
+        if (!pushedOpener) return;
         const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
           session.attempt_id,
         ]);
@@ -1001,19 +1013,31 @@ export class ReceptionService implements OnModuleInit {
       [sessionId]
     );
     const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)), session.products?.[0] ?? null, inferQuantityFromTexts(buyerTexts.map((row) => row.content)));
-    await this.persistOrder(sessionId, order);
-    for (const [index, text] of texts.entries()) {
-      await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
-        sessionId,
-        text,
-        nextSeq,
-        JSON.stringify(index === 0 ? { responseRoundStart: true, responseRoundType: 'question' } : {}),
-      ]);
-    }
-    await this.db.query(
-      `UPDATE sessions SET current_seq = $2, state = 'serving', last_buyer_at = $3, follow_ups = 0, opener_pending = false WHERE id = $1`,
-      [sessionId, nextSeq, session.current_seq === 0 && !session.first_reply_at && session.last_buyer_at ? session.last_buyer_at : new Date().toISOString()]
-    );
+    const expectedSeq = next.skippedSeqs.length !== (session.skipped_seqs || []).length ? nextSeq - 1 : session.current_seq;
+    const pushedQuestion = await this.db.tx(async (client) => {
+      const claimed = await client.query<{ id: number }>(
+        `UPDATE sessions SET current_seq = $2, state = 'serving', last_buyer_at = now(), follow_ups = 0, opener_pending = false
+         WHERE id = $1 AND current_seq = $3
+           AND state NOT IN ('finished','transferred','aborted','pending','awaiting_agent_close')
+         RETURNING id`,
+        [sessionId, nextSeq, expectedSeq]
+      );
+      if (!claimed.rows.length) return false;
+      await client.query(
+        `UPDATE sessions SET order_no = $2, order_amount = $3, order_status = $4, order_payload = $5::jsonb WHERE id = $1`,
+        [sessionId, order.orderNo, order.amount, order.statusText, JSON.stringify(order)]
+      );
+      for (const [index, text] of texts.entries()) {
+        await client.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
+          sessionId,
+          text,
+          nextSeq,
+          JSON.stringify(index === 0 ? { responseRoundStart: true, responseRoundType: 'question' } : {}),
+        ]);
+      }
+      return true;
+    });
+    if (!pushedQuestion) return;
     const updated = await this.loadSession(sessionId);
     const pushedConversationState = await this.persistConversationState(updated, evaluations, {
       currentSeq: nextSeq,
@@ -1237,17 +1261,24 @@ export class ReceptionService implements OnModuleInit {
     response?: string,
   ): Promise<void> {
     const text = response || buildMissingPointFollowUpText(session.style_code, missingLabels, round);
-    await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
-      sessionId,
-      text,
-      session.current_seq,
-      JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' }),
-    ]);
     const emotionValue = Math.max(0, session.emotion_value + followUpEmotionDelta(round));
-    await this.db.query(
-      `UPDATE sessions SET state = 'serving', last_buyer_at = now(), follow_ups = $2, emotion_value = $3 WHERE id = $1`,
-      [sessionId, round + 1, emotionValue],
-    );
+    const pushed = await this.db.tx(async (client) => {
+      const claimed = await client.query<{ id: number }>(
+        `UPDATE sessions SET state = 'serving', last_buyer_at = now(), follow_ups = $2, emotion_value = $3
+         WHERE id = $1 AND current_seq = $4 AND state NOT IN ('finished','transferred','aborted','pending','awaiting_agent_close')
+         RETURNING id`,
+        [sessionId, round + 1, emotionValue, session.current_seq],
+      );
+      if (!claimed.rows.length) return false;
+      await client.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
+        sessionId,
+        text,
+        session.current_seq,
+        JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' }),
+      ]);
+      return true;
+    });
+    if (!pushed) return;
     const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
       session.attempt_id,
     ]);
@@ -1277,17 +1308,24 @@ export class ReceptionService implements OnModuleInit {
     const text = planned
       ? ((this.styleBehavior[session.style_code] || this.styleBehavior.friendly).transform(planned)[0] || planned)
       : buildFollowUpText(session.style_code, question.question, round);
-    await this.db.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
-      sessionId,
-      text,
-      session.current_seq,
-      JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' }),
-    ]);
     const emotionValue = Math.max(0, session.emotion_value + followUpEmotionDelta(round));
-    await this.db.query(
-      `UPDATE sessions SET state = 'serving', last_buyer_at = now(), follow_ups = $2, emotion_value = $3 WHERE id = $1`,
-      [sessionId, round + 1, emotionValue]
-    );
+    const pushed = await this.db.tx(async (client) => {
+      const claimed = await client.query<{ id: number }>(
+        `UPDATE sessions SET state = 'serving', last_buyer_at = now(), follow_ups = $2, emotion_value = $3
+         WHERE id = $1 AND current_seq = $4 AND state NOT IN ('finished','transferred','aborted','pending','awaiting_agent_close')
+         RETURNING id`,
+        [sessionId, round + 1, emotionValue, session.current_seq]
+      );
+      if (!claimed.rows.length) return false;
+      await client.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
+        sessionId,
+        text,
+        session.current_seq,
+        JSON.stringify({ responseRoundStart: true, responseRoundType: 'question' }),
+      ]);
+      return true;
+    });
+    if (!pushed) return;
     const attemptRow = await this.db.one<{ account_id: number }>(`SELECT account_id FROM attempts WHERE id = $1`, [
       session.attempt_id,
     ]);
@@ -1388,7 +1426,7 @@ export class ReceptionService implements OnModuleInit {
     let handedOff = false;
     try {
     const historyRows = (await this.db.many<any>(
-      `SELECT sender, content, seq, response_sec, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
+      `SELECT sender, content, seq, response_sec, is_timeout, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
       [sessionId]
     )).filter((m) => !m.rule_result?.judgmentState);
     const dialogue = historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent');
@@ -1682,6 +1720,10 @@ export class ReceptionService implements OnModuleInit {
           session.total_questions - (session.skipped_seqs || []).length
         );
       }
+      const roundAlreadyTimedOut = eventStart >= 0
+        ? historyRows.slice(eventStart).some((m) => m.is_timeout === true)
+        : historyRows.some((m) => m.is_timeout === true && m.seq === insertSeq);
+      const shouldIncrementTimeout = isTimeout && !roundAlreadyTimedOut;
       const closeDeadline = inAgentCloseWindow
         ? new Date(Date.now() + this.agentCloseWindowMs(attempt.level)).toISOString()
         : null;
@@ -1694,7 +1736,8 @@ export class ReceptionService implements OnModuleInit {
                              avg_response_sec = $3,
                              emotion_value = $4,
                              unresolved_streak = $5,
-                             conversation_state = $6::jsonb
+                             conversation_state = $6::jsonb,
+                             timeout_count = timeout_count + $9
          WHERE id = $1`,
         [
           sessionId,
@@ -1705,6 +1748,7 @@ export class ReceptionService implements OnModuleInit {
           JSON.stringify(conversationState),
           inAgentCloseWindow ? 'awaiting_agent_close' : 'waiting_buyer',
           closeDeadline,
+          shouldIncrementTimeout ? 1 : 0,
         ]
       );
 
@@ -2024,8 +2068,8 @@ export class ReceptionService implements OnModuleInit {
         ]
       );
       await client.query(
-        `UPDATE sessions SET state = $2, finished_reason = $3, finished_at = now(), close_deadline_at = NULL, score = $4, avg_response_sec = $5 WHERE id = $1`,
-        [sessionId, aborted ? 'aborted' : 'finished', reason, finalScore, result.metrics.avgResponseSec]
+        `UPDATE sessions SET state = $2, finished_reason = $3, finished_at = now(), close_deadline_at = NULL, score = $4, avg_response_sec = $5, timeout_count = $6 WHERE id = $1`,
+        [sessionId, aborted ? 'aborted' : 'finished', reason, finalScore, result.metrics.avgResponseSec, aborted ? session.timeout_count : result.metrics.timeoutCount]
       );
     });
 

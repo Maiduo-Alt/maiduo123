@@ -1,3 +1,4 @@
+import { stripBuyerQuestionWrapper } from './adaptive-push';
 import type { ModelReceptionInput, ModelReceptionResult } from './model-reception';
 
 const WASH_INFORMATION = /洗标|洗水标|洗涤|护理|机洗|手洗|干洗|水洗|不可洗/u;
@@ -18,7 +19,7 @@ export function hasWashInformation(input: ModelReceptionInput): boolean {
 
 /** Explicit, narrow exception for machine-washing questions in local training. */
 export function assessLocalWashGuidance(input: ModelReceptionInput): ModelReceptionResult | undefined {
-  const question = input.question;
+  const question = stripBuyerQuestionWrapper(input.question);
   if (input.judgmentVersion !== 2 || input.goals.length || question.includes('\n') || !/机洗/u.test(question) ||
       !/可以|能|适合|支持/u.test(question) || /还是|怎么|如何|干洗|温度|水温|模式|不可以|不能/u.test(question) ||
       hasWashInformation(input) || !MISSING_DISCLOSURE.test(input.reply) ||
