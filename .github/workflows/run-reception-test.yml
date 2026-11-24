@@ -23,6 +23,11 @@ on:
         required: false
         default: ''
         type: string
+      fetch_latest_only:
+        description: '仅拉取最新一局已落库报告（不新开接待）'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -45,6 +50,7 @@ jobs:
           node-version: 22
 
       - name: Install socket.io-client for realtime heartbeat
+        if: ${{ !inputs.fetch_latest_only }}
         run: npm install --no-save socket.io-client
 
       - name: Run 10-customer reception test
@@ -54,6 +60,7 @@ jobs:
           TEST_PASSWORD: ${{ secrets.TEST_AGENT_PASSWORD || 'Agent@123' }}
           TEST_LEVEL: ${{ inputs.level }}
           TEST_SOURCE: auto
+          FETCH_LATEST_ONLY: ${{ inputs.fetch_latest_only }}
           REPORT_PATH: reception-test-report.md
         run: node tools/auto-reception-test.mjs
 

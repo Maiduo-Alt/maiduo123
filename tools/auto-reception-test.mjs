@@ -195,7 +195,9 @@ function generateReply(buyerText, session) {
   return '亲，这款商品详情页有完整参数与尺码说明，现货 48 小时内发货并支持 7 天无理由退换，有任何问题随时联系在线客服为您处理哦。';
 }
 
-function buildMarkdownReport(attemptNo, level, elapsedSec, result, taskInfo) {
+const FETCH_LATEST_ONLY = process.env.FETCH_LATEST_ONLY === 'true';
+
+function buildMarkdownReport(attemptNo, level, elapsedSec, result, taskInfo, detailData) {
   const sessions = result.sessions || [];
   const totalScore = Number(result.totalScore ?? 0);
   const conclusion = result.conclusion === 'pass' ? '达标' : '未达标';
@@ -231,6 +233,24 @@ function buildMarkdownReport(attemptNo, level, elapsedSec, result, taskInfo) {
     lines.push(`| ${idx + 1} | ${s.buyerName || s.id} | ${s.scriptName || '—'} | ${s.score ?? s.totalScore ?? '—'} | ${firstSec ?? '—'}s | ${avg ?? '—'}s | ${timeouts} | ${deductions} |`);
   });
 
+  const nonPerfect = sessions.filter((s) => Number(s.score ?? s.totalScore ?? 0) < 100);
+  if (nonPerfect.length && detailData?.sessions) {
+    const detailMap = new Map(detailData.sessions.map((s) => [Number(s.id), s]));
+    lines.push('', '## 失分会话对话复盘', '');
+    for (const s of nonPerfect) {
+      const ds = detailMap.get(Number(s.id));
+      lines.push(`### ${s.buyerName}（${s.scriptName || '—'}，${s.score ?? s.totalScore} 分）`);
+      for (const m of ds?.messages || []) {
+        const rr = m.ruleResult || m.rule_result || {};
+        const tag = m.sender === 'agent'
+          ? ` [seq=${m.seq} resp=${m.responseSec ?? m.response_sec ?? '-'}s timeout=${m.isTimeout ?? m.is_timeout ?? false} src=${rr.replyAssessment?.source || '-'}/${rr.modelEvaluation?.decisionSource || '-'} status=${rr.replyAssessment?.status || '-'} reason=${rr.replyAssessment?.reason || '-'}]`
+          : ` [seq=${m.seq}]`;
+        lines.push(`- **${m.sender}**${tag}: ${String(m.content || '').replace(/\n/g, ' ')}`);
+      }
+      lines.push('');
+    }
+  }
+
   lines.push('');
   return lines.join('\n');
 }
@@ -259,9 +279,26 @@ async function resolveStartBody(token) {
 }
 
 async function main() {
-  console.log(`==> 登录 ${BASE_URL} (user=${USERNAME}, level=${LEVEL}, source=${SOURCE})...`);
+  console.log(`==> 登录 ${BASE_URL} (user=${USERNAME}, level=${LEVEL}, source=${SOURCE}, fetchLatestOnly=${FETCH_LATEST_ONLY})...`);
   const login = await api('/api/auth/login', { method: 'POST', body: { username: USERNAME, password: PASSWORD } });
   const token = login.token;
+
+  if (FETCH_LATEST_ONLY) {
+    const records = await api(`/api/records?level=${encodeURIComponent(LEVEL)}&page=1&pageSize=1`, { token });
+    const latest = records?.list?.[0];
+    if (!latest) throw new Error(`未找到 ${LEVEL} 的历史接待记录`);
+    const result = await api(`/api/receptions/${latest.id}/result`, { token });
+    const detail = await api(`/api/records/${latest.id}`, { token }).catch(() => null);
+    const elapsedSec = latest.startedAt && latest.finishedAt
+      ? Math.max(0, Math.round((Date.parse(latest.finishedAt) - Date.parse(latest.startedAt)) / 1000))
+      : 0;
+    const report = buildMarkdownReport(latest.attemptNo, LEVEL, elapsedSec, result, null, detail);
+    console.log('\n' + report);
+    if (REPORT_PATH) fs.writeFileSync(REPORT_PATH, report, 'utf8');
+    if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, report + '\n', 'utf8');
+    return;
+  }
+
   const closeSocket = await connectSocket(token);
 
   try {
@@ -290,7 +327,16 @@ async function main() {
     const closedSent = new Set();
 
     while (Date.now() - startedAt < MAX_DURATION_MS) {
-      const snap = await api(`/api/receptions/${attemptId}/snapshot`, { token });
+      let snap;
+      try {
+        snap = await api(`/api/receptions/${attemptId}/snapshot`, { token });
+      } catch (err) {
+        if (String(err.message).includes('code=2002') || String(err.message).includes('已结束')) {
+          console.log('==> 整局接待已全部结束并落库（code=2002）！');
+          break;
+        }
+        throw err;
+      }
       if (snap.attempt?.status === 'finished') {
         console.log('==> 整局接待已全部结束并落库！');
         break;
@@ -368,7 +414,8 @@ async function main() {
 
     const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
     const result = await api(`/api/receptions/${attemptId}/result`, { token });
-    const report = buildMarkdownReport(attemptNo, LEVEL, elapsedSec, result, taskInfo);
+    const detail = await api(`/api/records/${attemptId}`, { token }).catch(() => null);
+    const report = buildMarkdownReport(attemptNo, LEVEL, elapsedSec, result, taskInfo, detail);
     console.log('\n' + report);
 
     if (REPORT_PATH) {
