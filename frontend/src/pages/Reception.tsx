@@ -223,6 +223,7 @@ export default function Reception() {
   const seenBuyerSessionsRef = useRef(new Set<number>());
   const lastClosedSessionRef = useRef<number | null>(null);
   const closedSessionIdsRef = useRef(new Set<number>());
+  const activeRunningRef = useRef(false);
   const inputRef = useRef('');
   const replyInputRef = useRef<any>(null);
   const autoFocusSessionRef = useRef<number | null>(null);
@@ -488,6 +489,10 @@ export default function Reception() {
             return changed ? next : prev;
           });
         }
+        const activeIsStillRunning = activeIdRef.current !== null && data.sessions.some(
+          (s: SessionDto) => s.sessionId === activeIdRef.current && !['pending', 'finished', 'transferred', 'aborted'].includes(s.state)
+        );
+        activeRunningRef.current = activeIsStillRunning;
         const newBuyer = data.messages.find((m: MessageDto) => m.sender === 'buyer' &&
           !seenBuyerSessionsRef.current.has(m.sessionId) &&
           !closedSessionIdsRef.current.has(m.sessionId) &&
@@ -495,7 +500,7 @@ export default function Reception() {
         data.messages.forEach((m: MessageDto) => {
           if (m.sender === 'buyer') seenBuyerSessionsRef.current.add(m.sessionId);
         });
-        if (newBuyer && !inputRef.current.trim()) {
+        if (newBuyer && !activeIsStillRunning && !inputRef.current.trim()) {
           autoFocusSessionRef.current = newBuyer.sessionId;
           setQueueTab('serving');
           selectSession(newBuyer.sessionId);
@@ -573,6 +578,7 @@ export default function Reception() {
       if (event === 'session.finished' && payload?.sessionId) {
         const finishedId = Number(payload.sessionId);
         closedSessionIdsRef.current.add(finishedId);
+        if (activeIdRef.current === finishedId) activeRunningRef.current = false;
         setUnread((prev) => {
           if (!prev.has(finishedId)) return prev;
           const next = new Set(prev);
@@ -587,7 +593,7 @@ export default function Reception() {
         if (closedSessionIdsRef.current.has(sessionId)) return;
         const isNewBuyer = !seenBuyerSessionsRef.current.has(sessionId);
         seenBuyerSessionsRef.current.add(sessionId);
-        if (isNewBuyer && !inputRef.current.trim()) {
+        if (isNewBuyer && !activeRunningRef.current && !inputRef.current.trim()) {
           autoFocusSessionRef.current = sessionId;
           setQueueTab('serving');
           selectSession(sessionId);
@@ -669,7 +675,11 @@ export default function Reception() {
   };
 
   const send = async () => {
-    if (!attempt || !activeSession || !input.trim() || sending || activeSession.timerPausedAt) return;
+    if (!attempt || !activeSession || !input.trim() || sending) return;
+    if (activeSession.timerPausedAt) {
+      message.info('当前会话正在判定上一条回复，请稍候 1~2 秒再发送');
+      return;
+    }
     const draft = input;
     const sessionId = activeSession.sessionId;
     setSending(true);
@@ -706,6 +716,7 @@ export default function Reception() {
       await api(`/receptions/${attempt.id}/sessions/${closedId}/finish`, { method: 'POST' });
       lastClosedSessionRef.current = closedId;
       if (activeIdRef.current === closedId) {
+        activeRunningRef.current = false;
         suppressAutoSelectRef.current = true;
         activeIdRef.current = null;
         setActiveId(null);

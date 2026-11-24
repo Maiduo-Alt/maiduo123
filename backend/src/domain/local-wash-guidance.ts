@@ -3,7 +3,7 @@ import type { ModelReceptionInput, ModelReceptionResult } from './model-receptio
 
 const WASH_INFORMATION = /洗标|洗水标|洗涤|护理|机洗|手洗|干洗|水洗|不可洗/u;
 const UNKNOWN_VALUE = /^(?:[-—]+|无|暂无|未知|未提供|未注明|未标注|不详)$/u;
-const MISSING_DISCLOSURE = /(?:详情(?:页)?|商品页|商品资料|资料|页面).{0,16}(?:没(?:有)?|未)(?:明确|单独)?标(?:明|注)?|(?:没(?:有)?|未)(?:明确|单独)?标(?:明|注)?.{0,8}机洗/u;
+const MISSING_DISCLOSURE = /(?:详情(?:页)?|商品页|商品资料|资料|页面).{0,16}(?:没(?:有)?|未|暂未)(?:明确|单独|具体)?(?:标明|标注|写明|注明|说明|写|标)|(?:没(?:有)?|未|暂未)(?:明确|单独|具体)?(?:标明|标注|写明|注明|说明|写|标).{0,8}机洗/u;
 const HAND_WASH = /(?:确认前|未确认前|暂时|先|建议|稳妥起见).{0,12}(?:轻柔|轻轻)?手洗/u;
 
 export function hasWashInformation(input: ModelReceptionInput): boolean {

@@ -1164,7 +1164,7 @@ describe('在线模拟接待端到端链路', () => {
     await reception.finishSession(1, attempt.id, session.id);
   }, 60000);
 
-  it.each([['L1', 300], ['L2', 30], ['L3', 30], ['L4', 30]])(
+  it.each([['L1', 300], ['L2', 90], ['L3', 60], ['L4', 60]])(
     '%s 整理阶段按难度设置和重置倒计时',
     async (level, expectedSeconds) => {
       const attempt = await sharedDb.one<{ id: number }>(
