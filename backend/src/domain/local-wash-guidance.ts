@@ -31,17 +31,31 @@ export function assessLocalWashGuidance(input: ModelReceptionInput): ModelRecept
   const hasMissingDisclosure = MISSING_DISCLOSURE.test(input.reply);
   const clauses = input.reply.split(/[，,。；;！？!?\n]|但是|不过|但/u).map((part) => part.trim());
   const machineAdvice = clauses.find((part) => /机洗/u.test(part) &&
-    /建议|(?:也|或|或者|还)可|或|可以|允许|就能|一定能|直接|洗衣袋/u.test(part) &&
-    !/不确定|无法确认|不能确认|未标注|没(?:有)?(?:明确)?标注|(?:不要|不能|不可|避免|不建议).{0,8}机洗|洗标(?:明确)?允许.{0,8}才/u.test(part));
+    !MISSING_DISCLOSURE.test(part) &&
+    /建议|(?:也|或|或者|还)可|或|可以|允许|就能|一定能|直接|支持|洗衣袋/u.test(part) &&
+    !/不确定|无法确认|不能确认|是否|能否|未标注|未写明|没(?:有)?(?:明确)?(?:标注|写明)|(?:不要|不能|不可|避免|不建议).{0,8}机洗|洗标(?:明确)?允许.{0,8}才/u.test(part));
   if (machineAdvice && hasMissingDisclosure) {
     return { provider: 'local', decisionSource: 'wash-guidance', resolved: false,
       reason: '洗涤说明未确认，回复仍建议机洗', matchedPoints: [], buyerReply: '', evidence: [machineAdvice] };
   }
-  if (machineAdvice) return undefined;
 
   const noMachineWash = clauses.find((part) => /(?:不要|不能|不可|避免|不建议|不推荐).{0,8}机洗/u.test(part) &&
     !/不确定|不清楚|不知道|核实|查一下/u.test(part));
+  if (machineAdvice) {
+    if (!noMachineWash && !/可能|也许|不确定|不清楚|不知道|核实|查一下|待确认/u.test(input.reply)) {
+      return { provider: 'local', decisionSource: 'wash-guidance', resolved: true,
+        reason: '商品未标注洗涤限制，客服给出了明确的洗涤答复',
+        matchedPoints: [], buyerReply: '', evidence: [machineAdvice] };
+    }
+    return undefined;
+  }
   const advice = clauses.find((part) => HAND_WASH.test(part) && !/不要|不能|不建议|不可|避免|机洗|干洗/u.test(part));
+  if (!hasMissingDisclosure && noMachineWash && !advice &&
+      !/可能|也许|不确定|不清楚|不知道|核实|查一下|待确认/u.test(input.reply)) {
+    return { provider: 'local', decisionSource: 'wash-guidance', resolved: true,
+      reason: '商品未标注机洗方法，客服明确说明不建议机洗',
+      matchedPoints: [], buyerReply: '', evidence: [noMachineWash] };
+  }
   if (!hasMissingDisclosure && !(noMachineWash && advice)) return undefined;
   if (!advice || clauses.some((part) => /机洗/u.test(part) &&
       (!MISSING_DISCLOSURE.test(part) || (part.match(/机洗/gu)?.length ?? 0) > 1) && !/(?:不要|不能|不可|避免|不建议|不推荐).{0,8}机洗/u.test(part))) {

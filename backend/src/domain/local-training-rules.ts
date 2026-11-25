@@ -89,11 +89,17 @@ function polyesterPercents(text: string): number[] {
   return [...new Set(values)];
 }
 
+const FABRIC_STATEMENT = /(?:有棉|含棉(?!量|比例)|纯棉|全棉|棉质|棉感|棉混纺|棉涤|涤棉|聚酯纤维|涤纶|雪纺|亚麻|棉麻|真丝|桑蚕丝|粘纤|粘胶|莫代尔|莱赛尔|天丝|锦纶|尼龙|氨纶|腈纶|醋酸|羊毛|羊绒|混纺|针织|梭织)/u;
+
 function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult | undefined {
   const question = normalizeQuestion(input.question);
-  const cotton = /(?:含棉量|含棉比例|棉含量|棉的比例|棉比例|棉占比)(?:大概|大约|约)?(?:是|有)?(?:多少|几成|百分之几|高吗|高不高)(?:呢|啊|呀|哈|哦|吗)?(?:亲)?$|(?:含(?:有)?(?:多少|几成)棉|棉占多少|棉成分(?:有|是)?多少)(?:呢|啊|呀|哈|哦|吗)?(?:亲)?$/u.test(question);
+  const cotton = /(?:含棉量|含棉比例|棉含量|棉的比例|棉比例|棉占比)(?:大概|大约|约)?(?:是|有)?(?:多少|几成|百分之几|高吗|高不高)(?:呢|啊|呀|哈|哦|吗)?(?:亲)?$|(?:含(?:有)?(?:多少|几成)棉|棉占多少|棉成分(?:有|是)?多少|(?:有|有没有|含|含有|是不是|是)(?:纯棉|全棉|棉)(?:的|面料|材质|成分)?)(?:呢|啊|呀|哈|哦|吗)?(?:亲)?$/u.test(question);
   const polyester = /(?:是|是不是|是否是|是否为|属于|含有|有没有)(?:聚酯纤维|涤纶)(?:的面料|面料|的)?(?:吗|呢|啊|呀|哈|哦)?(?:亲)?$/u.test(question);
-  if ((!cotton && !polyester) || /[\n；;？?]|(?:吗|呢|嘛|么)[，,]|还有|以及|并且|还是|注意事项|怎么洗|缩水|透气|会不会|色差|尺码|发货|退换|什么(?:面料|材质|成分)/u.test(question)) return undefined;
+  const generalMaterial = !cotton && !polyester && !/内衬|里衬|填充/u.test(question) &&
+    (/(?:什么|哪种|啥)(?:面料|材质|成分)(?:的|做的)?(?:呢|啊|呀|哈|哦|吗)?(?:亲)?$|(?:面料|材质|成分)(?:是|为)(?:什么|哪种|啥)(?:呢|啊|呀|哈|哦|吗)?(?:亲)?$/u.test(question));
+  if ((!cotton && !polyester && !generalMaterial) ||
+      /[\n；;？?]|(?:吗|呢|嘛|么)[，,]|还有|以及|并且|还是|注意事项|怎么洗|缩水|透气|会不会|色差|尺码|发货|退换|哪里|在哪/u.test(question) ||
+      (!generalMaterial && /什么(?:面料|材质|成分)/u.test(question))) return undefined;
   const product = input.facts?.product;
   if (!product || !Array.isArray(product.attributes)) return undefined;
   const attributes = product.attributes.filter((row): row is { name: string; value: unknown } =>
@@ -113,27 +119,32 @@ function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult
   const disclosure = materialDisclosure(reply.split(/[。；;！!\n]/u), cotton);
   if (!disclosure.length && MATERIAL_UNCERTAINTY.test(reply)) return undefined;
   const directClauses = clauses.filter((part) => !MATERIAL_UNCERTAINTY.test(part) &&
-    !/核实|查一下|待确认|确认后|(?:未|没有|没|暂未|暂无)(?:明确|单独|具体)*(?:标注|标明|写明|注明|给出|说明|提供|显示|写|标)/u.test(part));
+    !/核实|查一下|待确认|确认后|(?:看标签|帮您|为您|先).{0,6}确认|价格|更贵|便宜|(?:未|没有|没|暂未|暂无)(?:(?:明确|单独|具体)+(?:标注|标明|写明|注明|给出|说明|提供|显示|写|标)?|(?:标注|标明|写明|注明|给出|说明|提供|显示|写|标))/u.test(part));
+  const known = [...cottonPercents(declaredTitle), ...material.flatMap((row) => cottonPercents(row.value, COTTON_RATIO.test(row.name)))];
+  if (details.some((value) => /(?:100\s*[%％]\s*|全|纯)(?:聚酯纤维|涤纶)/u.test(value))) known.push(0);
+  const deny = /(?:不是|不含|没有)(?:任何|用|纯|全)?(?:聚酯纤维|涤纶)/u;
+  const knownPositive = details.some((value) => POLYESTER.test(value) && !deny.test(value) && !/样|仿|未标|暂无/u.test(value));
+  const knownNegative = details.some((value) => deny.test(value) || cottonPercents(value).includes(100) ||
+    /100\s*[%％]\s*(?:锦纶|羊毛|真丝|亚麻)/u.test(value));
   let evidence: string[];
   if (cotton) {
-    if (/棉[^，,。；;]*不含棉|不含棉[^，,。；;]*(?:棉.{0,4}\d|\d+\s*[%％]\s*棉)|(?:不是|并非|不等于)[^，,。；;]*(?:棉|[%％])/u.test(reply)) return undefined;
+    if (/棉[^，,。；;]*不含棉|不含棉[^，,。；;]*(?:棉.{0,4}\d|\d+\s*[%％]\s*棉|有棉|含棉)|(?:不是|并非|不等于)[^，,。；;]*(?:棉|[%％])/u.test(reply)) return undefined;
     const replies = directClauses.map((part) => ({ part, percents: cottonPercents(part, true) }))
       .filter((item) => item.percents.length);
-    const known = [...cottonPercents(declaredTitle), ...material.flatMap((row) => cottonPercents(row.value, COTTON_RATIO.test(row.name)))];
-    if (details.some((value) => /(?:100\s*[%％]\s*|全|纯)(?:聚酯纤维|涤纶)/u.test(value))) known.push(0);
     const stated = replies.flatMap((item) => item.percents);
     if (new Set([...known, ...stated]).size > 1 || [...known, ...stated].some((value) => value > 100) ||
         (stated.includes(0) && !known.length && details.some((value) => /棉/u.test(value) && !/棉感|仿棉|不含棉/u.test(value)))) return undefined;
     evidence = replies.map((item) => item.part);
-    if (!evidence.length && !known.length) evidence = disclosure;
-  } else {
-    const deny = /(?:不是|不含|没有)(?:任何|用|纯|全)?(?:聚酯纤维|涤纶)/u;
+    if (!evidence.length && !known.length) {
+      evidence = disclosure.length ? disclosure
+        : !details.some((value) => /纯棉|全棉|不含棉/u.test(value))
+          ? directClauses.filter((part) => FABRIC_STATEMENT.test(part))
+          : [];
+    }
+  } else if (polyester) {
     const yes = /(?:是|采用|使用|用的是|主要为|含有|含)(?:的|用的)?(?:聚酯纤维|涤纶)|(?:聚酯纤维|涤纶)(?:的)?(?:面料|材质|成分)[的哦哈呢呀\s]*$|^(?:聚酯纤维|涤纶|是的|对的)[的哦哈呢呀\s]*$/u;
     const positive = directClauses.filter((part) => yes.test(part) && !deny.test(part));
     const negative = directClauses.filter((part) => deny.test(part) || /^(?:不是的?|没有)[哦哈呢呀\s]*$/u.test(part));
-    const knownPositive = details.some((value) => POLYESTER.test(value) && !deny.test(value) && !/样|仿|未标|暂无/u.test(value));
-    const knownNegative = details.some((value) => deny.test(value) || cottonPercents(value).includes(100) ||
-      /100\s*[%％]\s*(?:锦纶|羊毛|真丝|亚麻)/u.test(value));
     if ((knownPositive || positive.length) && (knownNegative || negative.length)) return undefined;
     if (knownPositive && directClauses.some((part) => /[%％]|百分之|全(?:聚酯纤维|涤纶)|纯(?:聚酯纤维|涤纶)/u.test(part))) {
       const knownPoly = details.flatMap((value) => polyesterPercents(value));
@@ -141,11 +152,18 @@ function assessMaterialDetails(input: ModelReceptionInput): ModelReceptionResult
       if (!knownPoly.length || !statedPoly.length || new Set([...knownPoly, ...statedPoly]).size > 1) return undefined;
     }
     evidence = [...positive, ...negative];
-    if (!evidence.length && !knownPositive && !knownNegative) evidence = disclosure;
+    if (!evidence.length && !knownPositive && !knownNegative) {
+      evidence = disclosure.length ? disclosure : directClauses.filter((part) => FABRIC_STATEMENT.test(part));
+    }
+  } else {
+    if ((known.includes(100) && /不含棉|全(?:聚酯纤维|涤纶)|100\s*[%％]\s*(?:聚酯纤维|涤纶)/u.test(reply)) ||
+        (known.includes(0) && /纯棉|全棉|有棉|含棉/u.test(reply))) return undefined;
+    evidence = directClauses.filter((part) => FABRIC_STATEMENT.test(part));
+    if (!evidence.length && !known.length && !knownPositive && !knownNegative) evidence = disclosure;
   }
   if (!evidence.length) return undefined;
   return { provider: 'local', decisionSource: 'material-details', resolved: true,
-    reason: '答复直接说明了买家询问的成分或资料缺项', evidence, matchedPoints: [], buyerReply: '' };
+    reason: '答复直接说明了买家询问的成分或资料缺项', evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
 }
 
 function assessDryCleanRequirement(input: ModelReceptionInput): ModelReceptionResult | undefined {
@@ -496,27 +514,27 @@ const TOPIC_RULES: Array<{
   },
   {
     source: 'fabric-behavior',
-    question: /缩水|掉色|褪色|起球|变形|起皱|褶皱|晾晒|暴晒|阴干/u,
-    exclude: /机洗|干洗|手洗|含棉|聚酯|色差|尺码|发货/u,
-    answer: /(?:不会|不易|不怎么|轻微|正常|避免|不要|建议|冷水|轻柔|平铺|阴干|通风处|反面|挂烫|熨烫|分开洗|固色|缩水|掉色|褪色|起球|变形|起皱|褶皱)/u,
+    question: /缩水|掉色|褪色|起球|变形|起皱|褶皱|晾晒|暴晒|阴干|怎么清洗|怎么手洗|应该怎么洗|如何清洗/u,
+    exclude: /机洗|干洗|含棉|聚酯|色差|尺码|发货|哪里|在哪/u,
+    answer: /(?:不会|不易|不怎么|轻微|正常|避免|不要|建议|冷水|常温|手洗|轻柔|中性洗涤|平铺|阴干|通风处|反面|挂烫|熨烫|分开洗|固色|洗标|水洗标|缩水|掉色|褪色|起球|变形|起皱|褶皱)/u,
     reject: /不确定|不清楚|不知道|核实|查一下|待确认/u,
-    reason: '答复正面说明了面料护理特性或晾晒建议',
+    reason: '答复正面说明了面料护理特性、清洗方式或晾晒建议',
   },
   {
     source: 'garment-spec',
-    question: /厚度|薄厚|厚薄|加绒|弹力|弹性|内衬|里衬|透不透|透吗|会透|什么季节|春夏|秋冬|穿到几月/u,
+    question: /厚度|薄厚|厚薄|加绒|弹力|弹性|内衬|里衬|透不透|透吗|会透|什么季节|春夏|秋冬|穿到几月|外套长度|包包.{0,6}风格|鞋跟高度/u,
     exclude: /材料|材质|成分|含棉|聚酯|色差|尺码|洗|发货/u,
-    answer: /(?:常规|适中|偏薄|偏厚|加绒|不加绒|轻薄|有弹力|微弹|高弹|无弹|不透|不会透|微透|有内衬|有里衬|无内衬|春|夏|秋|冬|四季|单穿|打底)/u,
+    answer: /(?:常规|适中|偏薄|偏厚|加绒|不加绒|轻薄|有弹力|微弹|高弹|无弹|不透|不会透|微透|有内衬|有里衬|无内衬|春|夏|秋|冬|四季|单穿|打底|短款|中长款|长款|过臀|托特|腋下|斜挎|单肩|手提|简约|平底|低跟|中跟|中低跟|粗跟|细跟|厘米|cm)/iu,
     reject: /不确定|不清楚|不知道|核实|查一下|待确认/u,
-    reason: '答复明确说明了衣物厚度、弹力、内衬或适用季节',
+    reason: '答复明确说明了衣物规格、适用季节或穿搭建议',
   },
   {
     source: 'order-service',
-    question: /改地址|修改地址|改收货|改尺码|改颜色|取消订单|催发货|发票|开票|赠品|礼盒|包装/u,
-    exclude: /色差|面料|材质|洗|退货/u,
-    answer: /(?:可以改|支持修改|帮您改|帮您备注|未发货|已发货|重新拍|申请取消|电子发票|开票|补开发票|有赠品|无赠品|礼盒|包装|加急|优先发出|尽快发出)/u,
+    question: /改地址|修改地址|修改订单|改收货|改尺码|改颜色|取消订单|催发货|发票|开票|赠品|礼盒|包装|支付方式|完成付款|怎么付款|联系商家|联系客服|(?:尺码表|码表|面料成分|材质信息|洗护说明|洗涤方法|做工.{0,4}细节|订单进度|自己下的订单|出库时间).{0,10}(?:哪里|在哪|怎么看|如何查看)|(?:哪里|在哪|如何|怎样).{0,8}(?:查看|看).{0,8}(?:尺码表|面料成分|材质信息|洗护说明|做工|订单|出库时间)/u,
+    exclude: /买家秀|实拍|视频|晒图|物流|快递|色差|退货/u,
+    answer: /(?:可以改|支持修改|帮您改|帮您备注|未发货|已发货|重新拍|申请取消|电子发票|开票|补开发票|有赠品|无赠品|礼盒|包装|防尘|防水|加急|优先发出|尽快发出|微信|支付宝|银行卡|花呗|信用卡|收银台|付款|详情页|商品页|参数|尺码表|水洗标|洗标|标签|吊牌|订单详情|我的订单|订单列表|在线客服|联系客服|客服窗口|点击|下滑)/u,
     reject: /不确定|不清楚|不知道|核实|查一下|待确认/u,
-    reason: '答复明确回应了订单服务、发票或包装问题',
+    reason: '答复明确回应了订单服务、支付、查看入口或包装发票问题',
   },
 ];
 
