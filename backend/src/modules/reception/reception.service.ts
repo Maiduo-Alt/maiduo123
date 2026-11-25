@@ -105,6 +105,9 @@ export class ReceptionService implements OnModuleInit {
   private readonly pendingReplies = new Set<number>();
   private localJudgeQueue = Promise.resolve();
   private readonly localJudgeBudgetMs = 45000;
+  private readonly replyQueues = new Map<number, QueuedReply[]>();
+  private readonly replyDrainers = new Set<number>();
+  private readonly backgroundJobs = new Map<number, Promise<unknown>>();
 
   /**
    * 沟通风格只改变“怎么说”，不再额外注入新的业务意图。
@@ -1861,7 +1864,8 @@ export class ReceptionService implements OnModuleInit {
       if (!inserted) throw new Error('待判定的客服消息写入失败');
       this.scheduler.cancel(`next:${sessionId}`);
       handedOff = true;
-      const job = complete(inserted.id).catch(async (error: Error) => {
+      let job: Promise<unknown>;
+      job = complete(inserted.id).catch(async (error: Error) => {
         const ruleResult = this.unavailableJudgment(session.current_seq);
         await this.db.query(`UPDATE messages SET rule_result = $2::jsonb WHERE id = $1 AND rule_result->>'judgmentState' = 'pending'`,
           [inserted.id, JSON.stringify(ruleResult)]);
