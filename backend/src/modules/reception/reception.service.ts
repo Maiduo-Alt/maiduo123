@@ -90,6 +90,14 @@ interface SessionRow {
   score: string | null;
 }
 
+interface QueuedReply {
+  accountId: number;
+  attemptId: number;
+  content: string;
+  messageId: number;
+  receivedAt: number;
+}
+
 @Injectable()
 export class ReceptionService implements OnModuleInit {
   private readonly logger = new Logger(ReceptionService.name);
@@ -792,7 +800,7 @@ export class ReceptionService implements OnModuleInit {
   }
 
   async pushNextQuestion(sessionId: number, modelIntro?: string): Promise<void> {
-    if (this.pendingReplies.has(sessionId)) return;
+    if (this.isReplyBusy(sessionId)) return;
     let session = await this.loadSession(sessionId);
     if (!session || ['finished', 'transferred', 'aborted', 'pending', 'awaiting_agent_close'].includes(session.state)) return;
     // 题号可能因跳题而增加，必须按实际推送过的轮次计算。
@@ -1072,7 +1080,7 @@ export class ReceptionService implements OnModuleInit {
    * 历史消息没有 judge 字段（旧数据）时退回要点命中口径。
    */
   async advanceAfterReply(sessionId: number): Promise<void> {
-    if (this.pendingReplies.has(sessionId)) return;
+    if (this.isReplyBusy(sessionId)) return;
     const session = await this.loadSession(sessionId);
     if (!session || ['finished', 'transferred', 'aborted', 'pending'].includes(session.state)) return;
     // 开场白阶段：买家只发了问候/商品链接，客服有任何回应即抛出第一题（不参与要点判定）。
@@ -1373,7 +1381,7 @@ export class ReceptionService implements OnModuleInit {
      * 带 businessAction 的消息：不参与「无效 / 敷衍回复」判定（连点两次催付是正常操作），
      * 其余（计入本轮响应时长、要点命中、情绪变化）与普通回复一致。
      */
-    meta?: { businessAction?: { code: string; name: string }; backgroundJudgment?: boolean },
+    meta?: { businessAction?: { code: string; name: string }; backgroundJudgment?: boolean; queued?: QueuedReply },
   ) {
     const attempt = await this.assertAttempt(accountId, attemptId);
     // 判定与计分一律按开局时的参数快照：系统参数改完只对新接待生效，历史接待按旧快照复算
@@ -1390,7 +1398,9 @@ export class ReceptionService implements OnModuleInit {
     if (this.isMeaningless(text)) throw new BizError(ERR.PARAM, '请输入有效回复内容');
 
     const tolerance = params.waitToleranceFactor[attempt.level] ?? 1;
-    const now = Date.now();
+    const queued = meta?.queued;
+    // 响应时长按客服真实发送时刻计算：排队判定的消息用入队时间，而不是轮到它判定的时间
+    const now = queued?.receivedAt ?? Date.now();
     const lastBuyerAt = inAgentCloseWindow ? null : session.last_buyer_at ? new Date(session.last_buyer_at).getTime() : null;
 
     const currentQuestion = session.questions.find((q) => q.seq === session.current_seq) || null;
@@ -1403,14 +1413,25 @@ export class ReceptionService implements OnModuleInit {
     } } : await this.credentials.getKeys();
     const judgingQuestion = Boolean(currentQuestion && session.current_seq > 0 && !session.opener_pending && !inAgentCloseWindow);
     const useModel = judgingQuestion && (semanticOnly || Boolean('glmKey' in modelKeys && (modelKeys.glmKey || modelKeys.deepseekKey)));
-    if (this.modelRequests.has(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复，请稍候');
+    // 以下「检查 → 占用」之间没有 await，同一会话的并发发送不会同时进入判定
+    if (this.modelRequests.has(sessionId) || (!queued && this.isReplyQueueBusy(sessionId))) {
+      if (meta?.backgroundJudgment && !queued) {
+        return this.enqueueReply(sessionId, { accountId, attemptId, content: text, receivedAt: now }, session.current_seq, attempt.level);
+      }
+      throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复，请稍候');
+    }
+    // 模型占用令牌与响应计时分开：排队消息的 now 是过去的发送时刻，不能拿来当占用令牌
+    const claimAt = queued ? Math.max(Date.now(), now + 1) : now;
     if (useModel) {
+      this.modelRequests.set(sessionId, claimAt);
       const claimed = await this.db.one<{ id: number }>(
         `UPDATE sessions SET model_started_at = $2 WHERE id = $1 AND model_started_at IS NULL AND state = $3 AND current_seq = $4 RETURNING id`,
-        [sessionId, new Date(now).toISOString(), session.state, session.current_seq],
-      );
-      if (!claimed) throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复或状态已改变，请稍候');
-      this.modelRequests.set(sessionId, now);
+        [sessionId, new Date(claimAt).toISOString(), session.state, session.current_seq],
+      ).catch((error: Error) => { this.modelRequests.delete(sessionId); throw error; });
+      if (!claimed) {
+        this.modelRequests.delete(sessionId);
+        throw new BizError(ERR.SESSION_STATE, '该会话正在处理回复或状态已改变，请稍候');
+      }
     }
     let released = false;
     const release = async () => {
@@ -1418,7 +1439,7 @@ export class ReceptionService implements OnModuleInit {
       released = true;
       try {
         if (useModel) {
-          await this.db.query(`UPDATE sessions SET model_started_at = NULL WHERE id = $1 AND model_started_at = $2`, [sessionId, new Date(now).toISOString()]);
+          await this.db.query(`UPDATE sessions SET model_started_at = NULL WHERE id = $1 AND model_started_at = $2`, [sessionId, new Date(claimAt).toISOString()]);
         }
       } finally {
         if (useModel) this.modelRequests.delete(sessionId);
@@ -1474,14 +1495,14 @@ export class ReceptionService implements OnModuleInit {
     try {
       if (modelInput) {
         modelResult = ruleDecision ?? (modelKeys.local
-          ? await this.queueLocalJudgment(modelInput, modelKeys.local, now)
+          ? await this.queueLocalJudgment(modelInput, modelKeys.local, claimAt)
           : await evaluateWithModels(modelInput, modelKeys));
       }
     } catch (error) {
       if (lastBuyerAt !== null) {
         await this.db.query(
           `UPDATE sessions SET last_buyer_at = $2 WHERE id = $1 AND state = $3 AND last_buyer_at = $4`,
-          [sessionId, new Date(lastBuyerAt + Date.now() - now).toISOString(), session.state, session.last_buyer_at],
+          [sessionId, new Date(lastBuyerAt + Date.now() - claimAt).toISOString(), session.state, session.last_buyer_at],
         );
       }
       throw error;
@@ -1692,15 +1713,17 @@ export class ReceptionService implements OnModuleInit {
       ...(meta?.businessAction ? { businessAction: meta.businessAction } : {}),
     };
 
+    // 排队判定的消息在入队时已落库（买家当场可见），判定完成后原地更新
+    const existingId = pendingId ?? queued?.messageId;
     const persistReply = async (query: DbService['query']) => {
-      const result = pendingId === undefined ? await query<{ id: number }>(
+      const result = existingId === undefined ? await query<{ id: number }>(
         `INSERT INTO messages (session_id, sender, content, seq, response_sec, is_timeout, rule_result)
          VALUES ($1,'agent',$2,$3,$4,$5,$6::jsonb) RETURNING id`,
         [sessionId, text, insertSeq, responseSec, isTimeout, JSON.stringify(ruleResult)]
       ) : await query<{ id: number }>(
-        `UPDATE messages SET response_sec = $2, is_timeout = $3, rule_result = $4::jsonb
+        `UPDATE messages SET response_sec = $2, is_timeout = $3, rule_result = $4::jsonb, seq = $5
          WHERE id = $1 AND rule_result->>'judgmentState' = 'pending' RETURNING id`,
-        [pendingId, responseSec, isTimeout, JSON.stringify(ruleResult)],
+        [existingId, responseSec, isTimeout, JSON.stringify(ruleResult), insertSeq],
       );
       const inserted = result.rows[0];
       if (!inserted) throw new Error('待判定的客服消息已改变');
@@ -1761,7 +1784,7 @@ export class ReceptionService implements OnModuleInit {
       : await this.db.tx(async (client) => {
         const current = await client.query(
           `SELECT id FROM sessions WHERE id = $1 AND state = $2 AND current_seq = $3 AND model_started_at = $4 FOR UPDATE`,
-          [sessionId, session.state, session.current_seq, new Date(now).toISOString()],
+          [sessionId, session.state, session.current_seq, new Date(claimAt).toISOString()],
         );
         if (!current.rows.length) throw new BizError(ERR.SESSION_STATE, '会话状态已改变，请重新确认后发送');
         return persistReply((sql, values) => client.query(sql, values));
@@ -1770,7 +1793,7 @@ export class ReceptionService implements OnModuleInit {
     this.gateway.emitToUser(accountId, 'agent.message.ack', {
       sessionId,
       messageId: inserted.id,
-      backgroundJudgment: pendingId !== undefined,
+      backgroundJudgment: existingId !== undefined,
       responseSec,
       isTimeout,
       ruleResult,
@@ -1813,9 +1836,10 @@ export class ReceptionService implements OnModuleInit {
 
     // A zero-delay buyer task must be able to run as soon as the result is committed.
     if (pendingId !== undefined) await release();
+    const hasQueuedReplies = (this.replyQueues.get(sessionId)?.length ?? 0) > 0;
     if (inAgentCloseWindow) {
       this.scheduleAgentClose(sessionId, Date.parse(closeDeadline!));
-    } else if (!waitingForEscalationReply) {
+    } else if (!waitingForEscalationReply && !hasQueuedReplies) {
       if (session.current_seq === 0 && !session.opener_pending) this.scheduler.cancel(`join:${sessionId}`);
       const rng = createRng(now + sessionId);
       const [minDelay, maxDelay] = params.questionPushDelaySec ?? [3, 7];
@@ -1830,22 +1854,25 @@ export class ReceptionService implements OnModuleInit {
     if (modelInput && modelKeys.local && meta?.backgroundJudgment && !ruleDecision) {
       this.pendingReplies.add(sessionId);
       const pending = { questionSeq: session.current_seq, judgmentVersion: 2, judgmentState: 'pending' };
-      const inserted = await this.db.one<{ id: number }>(
+      const inserted = queued ? { id: queued.messageId } : await this.db.one<{ id: number }>(
         `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'agent',$2,$3,$4::jsonb) RETURNING id`,
         [sessionId, text, session.current_seq, JSON.stringify(pending)],
       );
+      if (!inserted) throw new Error('待判定的客服消息写入失败');
       this.scheduler.cancel(`next:${sessionId}`);
       handedOff = true;
-      void complete(inserted.id).catch(async (error: Error) => {
+      const job = complete(inserted.id).catch(async (error: Error) => {
         const ruleResult = this.unavailableJudgment(session.current_seq);
         await this.db.query(`UPDATE messages SET rule_result = $2::jsonb WHERE id = $1 AND rule_result->>'judgmentState' = 'pending'`,
           [inserted.id, JSON.stringify(ruleResult)]);
         this.gateway.emitToUser(accountId, 'agent.message.ack', { sessionId, messageId: inserted.id, ruleResult });
-        if (session.state === 'waiting_buyer') {
+        if (session.state === 'waiting_buyer' && !(this.replyQueues.get(sessionId)?.length)) {
           this.scheduler.schedule(`next:${sessionId}`, this.REPLY_THINK_DELAY_MS, () => this.advanceAfterReply(sessionId));
         }
         this.logger.warn(`后台判定未完成 session=${sessionId}：${error.message}`);
-      }).finally(release).catch((error: Error) => this.logger.error(`更新后台判定状态失败 session=${sessionId}：${error.message}`));
+      }).finally(release).catch((error: Error) => this.logger.error(`更新后台判定状态失败 session=${sessionId}：${error.message}`))
+        .finally(() => { if (this.backgroundJobs.get(sessionId) === job) this.backgroundJobs.delete(sessionId); });
+      this.backgroundJobs.set(sessionId, job);
       return { messageId: inserted.id, responseSec: null, isTimeout: false, ruleResult: pending, level: attempt.level };
     }
     return await complete();
@@ -1857,6 +1884,90 @@ export class ReceptionService implements OnModuleInit {
   private unavailableJudgment(questionSeq?: number) {
     return { questionSeq, judgmentVersion: 2, judgmentState: 'unavailable',
       replyAssessment: { reason: '本次判定未完成，可重新发送回复' } };
+  }
+
+  /** 该会话是否还有回复在判定或排队（含正在逐条判定的排队消息）。 */
+  private isReplyQueueBusy(sessionId: number) {
+    return this.pendingReplies.has(sessionId) || this.replyDrainers.has(sessionId) ||
+      (this.replyQueues.get(sessionId)?.length ?? 0) > 0;
+  }
+
+  private isReplyBusy(sessionId: number) {
+    return this.modelRequests.has(sessionId) || this.isReplyQueueBusy(sessionId);
+  }
+
+  /**
+   * 高频接待：上一条还在判定时，新回复立即落库（买家当场能看到，客服输入框不被锁），
+   * 并排进本会话的判定队列；前一条判定完成后按发送顺序逐条判定。
+   */
+  private async enqueueReply(
+    sessionId: number,
+    item: Omit<QueuedReply, 'messageId'>,
+    questionSeq: number,
+    level: string,
+  ) {
+    const pending = { questionSeq, judgmentVersion: 2, judgmentState: 'pending' };
+    const inserted = await this.db.one<{ id: number }>(
+      `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'agent',$2,$3,$4::jsonb) RETURNING id`,
+      [sessionId, item.content, questionSeq, JSON.stringify(pending)],
+    );
+    if (!inserted) throw new Error('排队回复写入失败');
+    this.scheduler.cancel(`next:${sessionId}`);
+    const queue = this.replyQueues.get(sessionId) ?? [];
+    queue.push({ ...item, messageId: inserted.id });
+    this.replyQueues.set(sessionId, queue);
+    this.ensureReplyDrainer(sessionId);
+    return { messageId: inserted.id, responseSec: null, isTimeout: false, ruleResult: pending, level };
+  }
+
+  private ensureReplyDrainer(sessionId: number) {
+    if (this.replyDrainers.has(sessionId)) return;
+    this.replyDrainers.add(sessionId);
+    void (async () => {
+      try {
+        while (true) {
+          const runningJob = this.backgroundJobs.get(sessionId);
+          if (runningJob) {
+            await runningJob.catch(() => undefined);
+            continue;
+          }
+          if (this.modelRequests.has(sessionId)) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            continue;
+          }
+          const queue = this.replyQueues.get(sessionId);
+          if (!queue?.length) break;
+          const next = queue.shift()!;
+          try {
+            await this.processMessage(next.accountId, next.attemptId, sessionId, next.content, {
+              backgroundJudgment: true,
+              queued: next,
+            });
+          } catch (error) {
+            const err = error as Error;
+            const ruleResult = this.unavailableJudgment();
+            await this.db.query(
+              `UPDATE messages SET rule_result = $2::jsonb WHERE id = $1 AND rule_result->>'judgmentState' = 'pending'`,
+              [next.messageId, JSON.stringify(ruleResult)],
+            ).catch(() => undefined);
+            this.gateway.emitToUser(next.accountId, 'agent.message.ack', {
+              sessionId,
+              messageId: next.messageId,
+              backgroundJudgment: true,
+              ruleResult,
+            });
+            this.logger.warn(`排队消息判定失败 session=${sessionId} msg=${next.messageId}：${err.message}`);
+          }
+        }
+      } finally {
+        this.replyDrainers.delete(sessionId);
+        if ((this.replyQueues.get(sessionId)?.length ?? 0) === 0) {
+          this.replyQueues.delete(sessionId);
+        } else {
+          this.ensureReplyDrainer(sessionId);
+        }
+      }
+    })();
   }
 
   private async queueLocalJudgment(input: ModelReceptionInput, config: NonNullable<Parameters<typeof evaluateWithModels>[1]['local']>, receivedAt: number) {
@@ -1932,7 +2043,7 @@ export class ReceptionService implements OnModuleInit {
     await this.assertAttempt(accountId, attemptId);
     const session = await this.loadSession(sessionId);
     if (!session || session.attempt_id !== attemptId) throw new BizError(ERR.NOT_FOUND, '会话不存在');
-    if (this.pendingReplies.has(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在判定，请稍候');
+    if (this.isReplyBusy(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在判定，请稍候');
     if (session.state === 'pending') throw new BizError(ERR.SESSION_STATE, '该买家还在排队待接入，请稍候');
     if (['finished', 'transferred', 'aborted'].includes(session.state)) throw new BizError(ERR.SESSION_STATE, '该会话已结束');
     const transferred = Array.from(new Set([...(session.transferred_seqs || []), session.current_seq]));
@@ -1955,7 +2066,7 @@ export class ReceptionService implements OnModuleInit {
     await this.assertAttempt(accountId, attemptId);
     const session = await this.loadSession(sessionId);
     if (!session || session.attempt_id !== attemptId) throw new BizError(ERR.NOT_FOUND, '会话不存在');
-    if (this.pendingReplies.has(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在判定，请稍候');
+    if (this.isReplyBusy(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在判定，请稍候');
     if (session.state === 'pending') throw new BizError(ERR.SESSION_STATE, '该买家还在排队待接入，请稍候');
     if (['finished', 'transferred', 'aborted'].includes(session.state)) throw new BizError(ERR.SESSION_STATE, '该会话已结束');
     const reason: 'normal' | 'early' | 'manual' = session.state === 'awaiting_agent_close'
@@ -1970,7 +2081,7 @@ export class ReceptionService implements OnModuleInit {
   async finishAttempt(accountId: number, attemptId: number) {
     await this.assertAttempt(accountId, attemptId);
     const sessions = await this.db.many<SessionRow>(`SELECT * FROM sessions WHERE attempt_id = $1`, [attemptId]);
-    if (sessions.some((s) => this.pendingReplies.has(s.id))) throw new BizError(ERR.SESSION_STATE, '有会话正在判定，请稍候');
+    if (sessions.some((s) => this.isReplyBusy(s.id))) throw new BizError(ERR.SESSION_STATE, '有会话正在判定，请稍候');
     for (const s of sessions) {
       if (!['finished', 'transferred', 'aborted'].includes(s.state)) {
         this.scheduler.cancel(`next:${s.id}`);
