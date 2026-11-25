@@ -470,6 +470,75 @@ function assessGreetingOnly(input: ModelReceptionInput): ModelReceptionResult | 
     reason: '只有招呼或开场话术，没有回答买家的问题', matchedPoints: [], buyerReply: '', evidence: [] };
 }
 
+const TOPIC_RULES: Array<{
+  source: NonNullable<ModelReceptionResult['decisionSource']>;
+  question: RegExp;
+  exclude?: RegExp;
+  answer: RegExp;
+  reject?: RegExp;
+  reason: string;
+}> = [
+  {
+    source: 'aftersale-refund',
+    question: /退货|退款|退钱|运费险|包退|七天无理由|7天无理由|怎么退/u,
+    exclude: /换货|换码|色差|尺码|面料|材质|洗|发货/u,
+    answer: /(?:支持|可以|有的|有运费险|包退|7天无理由|七天无理由|退货|退款|申请售后|原路退回|联系客服|不影响二次销售|承担运费)/u,
+    reject: /不确定|不清楚|不知道|核实|查一下|待确认/u,
+    reason: '答复明确说明了退货退款或运费险政策',
+  },
+  {
+    source: 'stock-price',
+    question: /有货|现货|还有吗|断货|补货|缺货|多少钱|什么价|价格|优惠|打折|折扣|便宜|满减|领券|优惠券|包邮|运费/u,
+    exclude: /退货|运费险|发货|物流|色差|尺码|面料|材质|洗/u,
+    answer: /(?:有货|现货|库存|补货|缺货|暂时无货|券后|到手价|活动价|优惠|折扣|满减|立减|领券|包邮|运费|免邮|按页面|下单.*显示|拍下.*价)/u,
+    reject: /不确定|不清楚|不知道|核实|查一下|待确认/u,
+    reason: '答复明确说明了库存、价格或优惠信息',
+  },
+  {
+    source: 'fabric-behavior',
+    question: /缩水|掉色|褪色|起球|变形|起皱|褶皱|晾晒|暴晒|阴干/u,
+    exclude: /机洗|干洗|手洗|含棉|聚酯|色差|尺码|发货/u,
+    answer: /(?:不会|不易|不怎么|轻微|正常|避免|不要|建议|冷水|轻柔|平铺|阴干|通风处|反面|挂烫|熨烫|分开洗|固色|缩水|掉色|褪色|起球|变形|起皱|褶皱)/u,
+    reject: /不确定|不清楚|不知道|核实|查一下|待确认/u,
+    reason: '答复正面说明了面料护理特性或晾晒建议',
+  },
+  {
+    source: 'garment-spec',
+    question: /厚度|薄厚|厚薄|加绒|弹力|弹性|内衬|里衬|透不透|透吗|会透|什么季节|春夏|秋冬|穿到几月/u,
+    exclude: /材料|材质|成分|含棉|聚酯|色差|尺码|洗|发货/u,
+    answer: /(?:常规|适中|偏薄|偏厚|加绒|不加绒|轻薄|有弹力|微弹|高弹|无弹|不透|不会透|微透|有内衬|有里衬|无内衬|春|夏|秋|冬|四季|单穿|打底)/u,
+    reject: /不确定|不清楚|不知道|核实|查一下|待确认/u,
+    reason: '答复明确说明了衣物厚度、弹力、内衬或适用季节',
+  },
+  {
+    source: 'order-service',
+    question: /改地址|修改地址|改收货|改尺码|改颜色|取消订单|催发货|发票|开票|赠品|礼盒|包装/u,
+    exclude: /色差|面料|材质|洗|退货/u,
+    answer: /(?:可以改|支持修改|帮您改|帮您备注|未发货|已发货|重新拍|申请取消|电子发票|开票|补开发票|有赠品|无赠品|礼盒|包装|加急|优先发出|尽快发出)/u,
+    reject: /不确定|不清楚|不知道|核实|查一下|待确认/u,
+    reason: '答复明确回应了订单服务、发票或包装问题',
+  },
+];
+
+function assessSimpleTopic(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  const question = normalizeQuestion(input.question);
+  if (/[\n；;？?]|以及|顺便|还有/u.test(question)) return undefined;
+  for (const rule of TOPIC_RULES) {
+    if (!rule.question.test(question) || rule.exclude?.test(question)) continue;
+    if (isPerfunctory({ question, keyPoints: [], reply: input.reply, buyerText: input.question }) ||
+        isPendingVerification(input.reply)) {
+      return { provider: 'local', decisionSource: rule.source, resolved: false,
+        reason: '回复未正面解答买家问题', matchedPoints: [], buyerReply: '', evidence: [] };
+    }
+    const clauses = input.reply.split(/[，,。；;！!\n]/u).map((part) => part.trim()).filter((part) => !!part && !/[？?]/u.test(part));
+    const evidence = clauses.filter((part) => rule.answer.test(part) && (!rule.reject || !rule.reject.test(part)));
+    if (!evidence.length) return undefined;
+    return { provider: 'local', decisionSource: rule.source, resolved: true,
+      reason: rule.reason, evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
+  }
+  return undefined;
+}
+
 export function assessLocalTrainingRules(input: ModelReceptionInput): ModelReceptionResult | undefined {
   if (input.judgmentVersion !== 2) return undefined;
   if (input.goals.length) return assessGreetingOnly(input);
@@ -488,5 +557,6 @@ export function assessLocalTrainingRules(input: ModelReceptionInput): ModelRecep
     ?? assessShippingDeliveryLogistics(input)
     ?? assessExchangePolicy(input)
     ?? assessFitAndSizing(input)
+    ?? assessSimpleTopic(input)
     ?? assessGreetingOnly(input);
 }
