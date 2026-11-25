@@ -108,6 +108,8 @@ export class ReceptionService implements OnModuleInit {
   private readonly replyQueues = new Map<number, QueuedReply[]>();
   private readonly replyDrainers = new Set<number>();
   private readonly backgroundJobs = new Map<number, Promise<unknown>>();
+  /** 流式接待：本地无语义目标题的后台质检任务，不阻塞买家推进与客服继续回复，仅在会话收尾计分前等待落库。 */
+  private readonly gradingJobs = new Map<number, Set<Promise<void>>>();
 
   /**
    * 沟通风格只改变“怎么说”，不再额外注入新的业务意图。
@@ -1101,6 +1103,18 @@ export class ReceptionService implements OnModuleInit {
       `SELECT content, rule_result FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'agent' AND COALESCE(rule_result->>'judgmentState', '') = '' ORDER BY id`,
       [sessionId, session.current_seq]
     );
+    // 流式接待：本地模式且本题无多要点语义目标时，模型不会推导衍生追问，
+    // 只要客服已发出实质回复（正在后台异步质检），买家直接按自然节奏推进下一题，避免断层式等待。
+    if (process.env.REPLY_JUDGMENT_MODE === 'local' && !(question.semanticGoals || []).length) {
+      const pendingReply = await this.db.one<{ id: number }>(
+        `SELECT id FROM messages WHERE session_id = $1 AND seq = $2 AND sender = 'agent' AND rule_result->>'judgmentState' = 'pending' LIMIT 1`,
+        [sessionId, session.current_seq],
+      );
+      if (pendingReply) {
+        await this.pushNextQuestion(sessionId);
+        return;
+      }
+    }
     // 开场回应（judge.signal='opener'，与首题同 seq）只是打招呼，不代表答到了题，
     // 必须从判定集合剔除——否则首题任何回复都会被它带成「已通过」（2026-10-11 线上实测）。
     const judgedReplies = replies.filter((r) => r.rule_result?.judge?.signal !== 'opener');
@@ -1451,10 +1465,11 @@ export class ReceptionService implements OnModuleInit {
     };
     let handedOff = false;
     try {
-    const historyRows = (await this.db.many<any>(
+    const allHistoryRows = await this.db.many<any>(
       `SELECT sender, content, seq, response_sec, is_timeout, rule_result FROM messages WHERE session_id = $1 ORDER BY id`,
       [sessionId]
-    )).filter((m) => !m.rule_result?.judgmentState);
+    );
+    const historyRows = allHistoryRows.filter((m) => !m.rule_result?.judgmentState);
     const dialogue = historyRows.filter((m) => m.sender === 'buyer' || m.sender === 'agent');
     const sequenceDialogue = semanticMode === 'local' ? dialogue.filter((m) =>
       (m.rule_result?.questionSeq ?? m.seq) === session.current_seq) : [];
@@ -1493,7 +1508,7 @@ export class ReceptionService implements OnModuleInit {
     } : null;
     const ruleDecision = modelInput && semanticMode === 'local' ? assessLocalTrainingRules(modelInput) : undefined;
 
-    const complete = async (pendingId?: number) => {
+    const complete = async (pendingId?: number, decoupled = false) => {
     let modelResult: Awaited<ReturnType<typeof evaluateWithModels>> | null = null;
     try {
       if (modelInput) {
@@ -1502,7 +1517,7 @@ export class ReceptionService implements OnModuleInit {
           : await evaluateWithModels(modelInput, modelKeys));
       }
     } catch (error) {
-      if (lastBuyerAt !== null) {
+      if (!decoupled && lastBuyerAt !== null) {
         await this.db.query(
           `UPDATE sessions SET last_buyer_at = $2 WHERE id = $1 AND state = $3 AND last_buyer_at = $4`,
           [sessionId, new Date(lastBuyerAt + Date.now() - claimAt).toISOString(), session.state, session.last_buyer_at],
@@ -1510,7 +1525,7 @@ export class ReceptionService implements OnModuleInit {
       }
       throw error;
     }
-    if (modelResult) {
+    if (modelResult && !decoupled) {
       const latest = await this.loadSession(sessionId);
       if (!latest || latest.state !== session.state || latest.current_seq !== session.current_seq ||
           String(latest.last_buyer_at) !== String(session.last_buyer_at)) {
@@ -1637,10 +1652,10 @@ export class ReceptionService implements OnModuleInit {
     // 注意 last_buyer_at 在客服回复时**不刷新**，所以本轮稍后的第一条有效回复天然按
     // 「买家发消息 → 该条回复」计时，正好满足官方「回退到首条有效回复」的要求。
     // 被判无效的回复同样不计时，把这一轮留给后面的有效回复（始终没有则按 600 秒）。
-    const eventStart = historyRows.map((m) => m.sender === 'buyer' && m.rule_result?.responseRoundStart === true).lastIndexOf(true);
+    const eventStart = allHistoryRows.map((m) => m.sender === 'buyer' && m.rule_result?.responseRoundStart === true).lastIndexOf(true);
     const alreadyCounted = params.responseTimingVersion === 2
-      ? (eventStart < 0 && session.current_seq !== 0) || historyRows.slice(eventStart + 1).some((m) => m.sender === 'agent' && m.response_sec !== null)
-      : historyRows.some((m) => m.sender === 'agent' && m.seq === insertSeq &&
+      ? (eventStart < 0 && session.current_seq !== 0) || allHistoryRows.slice(eventStart + 1).some((m) => m.sender === 'agent' && m.response_sec !== null)
+      : allHistoryRows.some((m) => m.sender === 'agent' && m.seq === insertSeq &&
           m.response_sec !== null && (openerStage ? m.rule_result?.judge?.signal === 'opener' : m.rule_result?.judge?.signal !== 'opener'));
     const responseSec =
       !alreadyCounted && !invalidReason && lastBuyerAt ? Math.max(0, Math.round((now - lastBuyerAt) / 1000)) : null;
@@ -1715,6 +1730,26 @@ export class ReceptionService implements OnModuleInit {
       // 客户 2026-10-03：业务动作（催付 / 改价 / 去发货…）在消息上留痕，对话与复盘里都能看到
       ...(meta?.businessAction ? { businessAction: meta.businessAction } : {}),
     };
+
+    // 流式接待的后台质检：只回写该条消息的判定结论，不动当前会话状态（买家可能已推进到后续问题）。
+    if (decoupled && pendingId !== undefined) {
+      await this.db.query(
+        `UPDATE messages SET response_sec = $2, is_timeout = $3, rule_result = $4::jsonb
+         WHERE id = $1 AND rule_result->>'judgmentState' = 'pending'`,
+        [pendingId, invalidReason ? null : responseSec, invalidReason ? false : isTimeout, JSON.stringify(ruleResult)],
+      );
+      this.gateway.emitToUser(accountId, 'agent.message.ack', {
+        sessionId,
+        messageId: pendingId,
+        backgroundJudgment: true,
+        responseSec: invalidReason ? null : responseSec,
+        isTimeout: invalidReason ? false : isTimeout,
+        ruleResult,
+        invalid: !!invalidReason,
+        invalidReason,
+      });
+      return { messageId: pendingId, responseSec, isTimeout, ruleResult, level: attempt.level };
+    }
 
     // 排队判定的消息在入队时已落库（买家当场可见），判定完成后原地更新
     const existingId = pendingId ?? queued?.messageId;
@@ -1854,6 +1889,70 @@ export class ReceptionService implements OnModuleInit {
     return { messageId: inserted.id, responseSec, isTimeout, ruleResult, level: attempt.level };
     };
 
+    if (modelInput && modelKeys.local && meta?.backgroundJudgment && !ruleDecision && !(currentQuestion?.semanticGoals || []).length) {
+      // 流式接待：本地模式且本题无多要点语义目标时，不等待慢模型，立即落库并按自然节奏推进下一题；
+      // 语义判定在后台异步完成并回写该条消息，会话结束计分前等待后台质检收口。
+      const pending = { questionSeq: session.current_seq, judgmentVersion: 2, judgmentState: 'pending', semanticOnly: true };
+      const eventStart = allHistoryRows.map((m) => m.sender === 'buyer' && m.rule_result?.responseRoundStart === true).lastIndexOf(true);
+      const alreadyCounted = params.responseTimingVersion === 2
+        ? (eventStart < 0 && session.current_seq !== 0) || allHistoryRows.slice(eventStart + 1).some((m) => m.sender === 'agent' && m.response_sec !== null)
+        : allHistoryRows.some((m) => m.sender === 'agent' && m.seq === session.current_seq && m.response_sec !== null && m.rule_result?.judge?.signal !== 'opener');
+      const responseSec = !alreadyCounted && lastBuyerAt ? Math.max(0, Math.round((now - lastBuyerAt) / 1000)) : null;
+      const isTimeout = responseSec !== null && responseSec > Math.round(params.timeoutSec * tolerance);
+      const roundAlreadyTimedOut = eventStart >= 0
+        ? allHistoryRows.slice(eventStart).some((m) => m.is_timeout === true)
+        : allHistoryRows.some((m) => m.is_timeout === true && m.seq === session.current_seq);
+      const shouldIncrementTimeout = isTimeout && !roundAlreadyTimedOut;
+      const inserted = queued
+        ? await this.db.one<{ id: number }>(
+          `UPDATE messages SET response_sec = $2, is_timeout = $3, rule_result = $4::jsonb
+           WHERE id = $1 AND rule_result->>'judgmentState' = 'pending' RETURNING id`,
+          [queued.messageId, responseSec, isTimeout, JSON.stringify(pending)],
+        )
+        : await this.db.one<{ id: number }>(
+          `INSERT INTO messages (session_id, sender, content, seq, response_sec, is_timeout, rule_result)
+           VALUES ($1,'agent',$2,$3,$4,$5,$6::jsonb) RETURNING id`,
+          [sessionId, text, session.current_seq, responseSec, isTimeout, JSON.stringify(pending)],
+        );
+      if (!inserted) throw new Error('待判定的客服消息写入失败');
+      const maxResponseSec = Math.max(session.max_response_sec || 0, responseSec || 0);
+      const avgResponseSec = params.responseTimingVersion === 2
+        ? await this.responseEventAverage(session, params, this.db.query.bind(this.db))
+        : session.avg_response_sec;
+      await this.db.query(
+        `UPDATE sessions SET state = 'waiting_buyer',
+                             close_deadline_at = NULL,
+                             last_agent_at = now(),
+                             first_reply_at = COALESCE(first_reply_at, now()),
+                             max_response_sec = $2,
+                             avg_response_sec = $3,
+                             timeout_count = timeout_count + $4
+         WHERE id = $1 AND state IN ('serving', 'waiting_buyer')`,
+        [sessionId, maxResponseSec, avgResponseSec, shouldIncrementTimeout ? 1 : 0],
+      );
+      await release();
+      const rng = createRng(now + sessionId);
+      const [minDelay, maxDelay] = params.questionPushDelaySec ?? [3, 7];
+      const thinkDelay = Math.round((minDelay + rng() * (maxDelay - minDelay)) * 1000);
+      this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.advanceAfterReply(sessionId));
+      const gradingJob = complete(inserted.id, true).then(() => undefined).catch(async (error: Error) => {
+        const ruleResult = this.unavailableJudgment(session.current_seq);
+        await this.db.query(
+          `UPDATE messages SET rule_result = $2::jsonb WHERE id = $1 AND rule_result->>'judgmentState' = 'pending'`,
+          [inserted.id, JSON.stringify(ruleResult)],
+        );
+        this.gateway.emitToUser(accountId, 'agent.message.ack', {
+          sessionId,
+          messageId: inserted.id,
+          backgroundJudgment: true,
+          ruleResult,
+        });
+        this.logger.warn(`后台异步质检未完成 session=${sessionId} msg=${inserted.id}：${error.message}`);
+      });
+      this.trackGradingJob(sessionId, gradingJob);
+      return { messageId: inserted.id, responseSec, isTimeout, ruleResult: pending, level: attempt.level };
+    }
+
     if (modelInput && modelKeys.local && meta?.backgroundJudgment && !ruleDecision) {
       this.pendingReplies.add(sessionId);
       const pending = { questionSeq: session.current_seq, judgmentVersion: 2, judgmentState: 'pending' };
@@ -1898,6 +1997,26 @@ export class ReceptionService implements OnModuleInit {
 
   private isReplyBusy(sessionId: number) {
     return this.modelRequests.has(sessionId) || this.isReplyQueueBusy(sessionId);
+  }
+
+  private trackGradingJob(sessionId: number, job: Promise<void>) {
+    const jobs = this.gradingJobs.get(sessionId) ?? new Set<Promise<void>>();
+    jobs.add(job);
+    this.gradingJobs.set(sessionId, jobs);
+    void job.finally(() => {
+      const current = this.gradingJobs.get(sessionId);
+      if (!current) return;
+      current.delete(job);
+      if (current.size === 0) this.gradingJobs.delete(sessionId);
+    });
+  }
+
+  private async waitForGradingJobs(sessionId: number) {
+    while (true) {
+      const jobs = this.gradingJobs.get(sessionId);
+      if (!jobs || jobs.size === 0) return;
+      await Promise.allSettled([...jobs]);
+    }
   }
 
   /**
@@ -2119,6 +2238,7 @@ export class ReceptionService implements OnModuleInit {
 
   async completeSession(sessionId: number, reason: 'normal' | 'early' | 'transferred' | 'aborted' | 'manual' | 'auto_timeout'): Promise<void> {
     this.scheduler.cancel(`close:${sessionId}`);
+    if (reason !== 'aborted') await this.waitForGradingJobs(sessionId);
     const session = await this.loadSession(sessionId);
     if (!session) return;
     if (['finished', 'transferred', 'aborted'].includes(session.state)) return;
