@@ -214,12 +214,13 @@ describe('在线模拟接待端到端链路', () => {
       expect([firstReply.ruleResult.judgmentState, secondReply.ruleResult.judgmentState]).toEqual(['pending', 'pending']);
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const pending = await snapshot();
-      expect(pending.sessions.filter((session) => session.timerPausedAt).map((session) => session.sessionId)).toEqual([first, second]);
+      expect(pending.sessions.filter((session) => [first, second].includes(session.sessionId)).map((session) => session.state))
+        .toEqual(['waiting_buyer', 'waiting_buyer']);
       expect(pending.messages.find((msg) => msg.id === firstReply.messageId)).toMatchObject({ content: '整齐的哦', ruleResult: { judgmentState: 'pending' } });
-      const queuedRes = await send(first, '为您服务，请问有什么可以帮您？');
-      expect(queuedRes.body.code).toBe(0);
-      const queuedReply = queuedRes.body.data;
-      expect(queuedReply.ruleResult.judgmentState).toBe('pending');
+      const followUpRes = await send(first, '为您服务，请问有什么可以帮您？');
+      expect(followUpRes.body.code).toBe(0);
+      const followUpReply = followUpRes.body.data;
+      expect(followUpReply.ruleResult).toMatchObject({ judge: { pass: false, signal: 'hedge' }, replyAssessment: { source: 'rule' } });
       const fast = (await send(color, '光线可能带来细微色差')).body.data;
       expect(fast.ruleResult).toMatchObject({ judge: { pass: true }, replyAssessment: { source: 'rule' } });
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -227,15 +228,14 @@ describe('在线模拟接待端到端链路', () => {
       await waitFor(() => releases.length === 2);
       releases[1]({ ok: false } as Response);
       let completed = await snapshot();
-      for (let i = 0; i < 30 && (completed.sessions.some((session) => session.timerPausedAt) ||
-          completed.messages.some((msg) => msg.ruleResult?.judgmentState === 'pending')); i++) {
+      for (let i = 0; i < 30 && completed.messages.some((msg) => msg.ruleResult?.judgmentState === 'pending'); i++) {
         await sleep(50);
         completed = await snapshot();
       }
       expect(completed.sessions.every((session) => !session.timerPausedAt)).toBe(true);
       expect(completed.messages.filter((msg) => msg.sessionId === first && msg.sender === 'agent')).toEqual([
         expect.objectContaining({ id: firstReply.messageId, ruleResult: expect.objectContaining({ judge: { pass: true, signal: 'key-point' } }) }),
-        expect.objectContaining({ id: queuedReply.messageId, ruleResult: expect.objectContaining({ judge: { pass: false, signal: 'hedge' }, replyAssessment: expect.objectContaining({ source: 'rule' }) }) }),
+        expect.objectContaining({ id: followUpReply.messageId, ruleResult: expect.objectContaining({ judge: { pass: false, signal: 'hedge' }, replyAssessment: expect.objectContaining({ source: 'rule' }) }) }),
       ]);
       expect(completed.messages.find((msg) => msg.id === secondReply.messageId)).toMatchObject({
         content: '棉质内衬', ruleResult: { judgmentState: 'unavailable' }, isTimeout: false,
