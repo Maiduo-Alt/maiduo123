@@ -330,3 +330,31 @@ it.each([
   expect(verdict.decisionSource).toBeUndefined();
   expect(mock).toHaveBeenCalledTimes(1);
 });
+
+it.each([
+  ['这款连衣裙可以机洗吗', '为您服务，请问有什么可以帮您？'],
+  ['走线整齐吗？', '亲，您好！请问有什么可以帮到您？'],
+  ['发货快吗？', '在的哦'],
+  ['尺码标准吗？', '亲在的，很高兴为您服务'],
+])('纯招呼/开场话术直接本地秒判未解决，不占用小模型：%s %s', async (question, reply) => {
+  const mock = jest.fn();
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved: false, decisionSource: 'greeting-only' });
+  expect(mock).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['这款连衣裙可以机洗吗', '为您服务，支持轻柔机洗的哦'],
+  ['这个款式日常通勤穿合适吗？', '亲在的，这款日常通勤穿很合适哦'],
+  ['走线整齐吗？', '我帮您查一下。'],
+])('带实质内容或待核实承诺的回复不误判为纯招呼：%s %s', async (question, reply) => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolved: false, reason: '模型判定', evidence: [] }) } }],
+  }) });
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict.decisionSource).not.toBe('greeting-only');
+  expect(mock).toHaveBeenCalledTimes(1);
+});
+

@@ -676,10 +676,6 @@ export default function Reception() {
 
   const send = async () => {
     if (!attempt || !activeSession || !input.trim() || sending) return;
-    if (activeSession.timerPausedAt) {
-      message.info('当前会话正在判定上一条回复，请稍候 1~2 秒再发送');
-      return;
-    }
     const draft = input;
     const sessionId = activeSession.sessionId;
     setSending(true);
@@ -688,9 +684,17 @@ export default function Reception() {
         method: 'POST',
         body: { content: draft.trim(), backgroundJudgment: true },
       });
-      if (activeIdRef.current === sessionId) setInput((value) => value === draft ? '' : value);
+      if (activeIdRef.current === sessionId) {
+        setInput((value) => {
+          if (value === draft) {
+            inputRef.current = '';
+            return '';
+          }
+          return value;
+        });
+      }
       if (data.isTimeout) message.warning(`本条回复超过时限（${data.responseSec} 秒），已记录一次超时`);
-      await loadSnapshot(attempt.id);
+      void loadSnapshot(attempt.id);
     } catch (e) {
       message.error((e as Error).message);
     } finally {
@@ -1714,7 +1718,7 @@ export default function Reception() {
             <span className="reception-input-count">
               {input.length}/{systemParams?.messageMaxLength ?? 800}
             </span>
-            <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send} disabled={!running || !!activeSession?.timerPausedAt}>
+            <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send} disabled={!running || !activeSession}>
               发送
             </Button>
           </div>

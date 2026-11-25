@@ -448,8 +448,31 @@ function assessComfortAndBreathability(input: ModelReceptionInput): ModelRecepti
     reason: '答复说明了面料透气性与穿着舒适度', evidence: evidence.slice(0, 2), matchedPoints: [], buyerReply: '' };
 }
 
+// 纯招呼 / 开场话术（「为您服务，请问有什么可以帮您？」「亲在的哦」）：只由固定招呼短语、语气词和标点组成，
+// 不含任何实质信息。这类回复一定不算回答买家问题，直接本地判定，不再排队等 CPU 上的小模型。
+const GREETING_ONLY_REPLY = new RegExp(
+  '^(?:' + [
+    '请问有什么可以帮(?:到)?您(?:的)?', '有什么可以帮(?:到)?您(?:的)?', '请问有什么需要(?:帮助)?(?:的)?', '有什么需要(?:帮助)?(?:的)?',
+    '很高兴为您服务', '竭诚为您服务', '为您服务', '欢迎光临', '亲爱的', '亲亲', '亲', '您好', '你好', '哈喽', '在的', '在呢', '在',
+    '[的呢哦哈呀啊嘛啦哒~～]', '[\\s!！?？。，,、.…]',
+  ].join('|') + ')+$',
+  'u',
+);
+
+export function isGreetingOnlyReply(reply: string): boolean {
+  const text = String(reply || '').trim();
+  return !!text && GREETING_ONLY_REPLY.test(text) && /[\u4e00-\u9fa5]/u.test(text);
+}
+
+function assessGreetingOnly(input: ModelReceptionInput): ModelReceptionResult | undefined {
+  if (input.judgmentVersion !== 2 || !isGreetingOnlyReply(input.reply)) return undefined;
+  return { provider: 'local', decisionSource: 'greeting-only', resolved: false,
+    reason: '只有招呼或开场话术，没有回答买家的问题', matchedPoints: [], buyerReply: '', evidence: [] };
+}
+
 export function assessLocalTrainingRules(input: ModelReceptionInput): ModelReceptionResult | undefined {
-  if (input.judgmentVersion !== 2 || input.goals.length) return undefined;
+  if (input.judgmentVersion !== 2) return undefined;
+  if (input.goals.length) return assessGreetingOnly(input);
   return assessLocalWashGuidance(input)
     ?? assessColorDifference(input)
     ?? assessMediaLocation(input)
@@ -464,5 +487,6 @@ export function assessLocalTrainingRules(input: ModelReceptionInput): ModelRecep
     ?? assessCareAndMaterialNotice(input)
     ?? assessShippingDeliveryLogistics(input)
     ?? assessExchangePolicy(input)
-    ?? assessFitAndSizing(input);
+    ?? assessFitAndSizing(input)
+    ?? assessGreetingOnly(input);
 }

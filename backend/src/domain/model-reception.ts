@@ -29,7 +29,8 @@ export interface ModelReceptionResult {
     | 'care-notice'
     | 'shipping-logistics'
     | 'exchange-policy'
-    | 'fit-sizing';
+    | 'fit-sizing'
+    | 'greeting-only';
   resolved: boolean;
   reason: string;
   matchedPoints: { goalId: string; pointIds: string[] }[];
