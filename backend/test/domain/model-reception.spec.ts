@@ -358,3 +358,29 @@ it.each([
   expect(mock).toHaveBeenCalledTimes(1);
 });
 
+it('本地 Qwen3 请求同时附带 /no_think 与 reasoning_effort=none 关闭思考耗时', async () => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ resolved: true, reason: '已回答', evidence: ['整齐的哦'] }) } }],
+  }) });
+  await evaluateWithModels({ ...input, question: '走线整齐吗？', reply: '整齐的哦', history: [], goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  const sent = JSON.parse(mock.mock.calls[0][1].body);
+  expect(sent.reasoning_effort).toBe('none');
+  expect(sent.messages[0].content).toContain('/no_think');
+});
+
+it.each([
+  ['支持七天无理由退货吗？', '支持的亲，收货7天内不影响二次销售可以退货退款。', 'aftersale-refund'],
+  ['这款有现货吗？', '有的亲，目前有现货，拍下默认包邮发出。', 'stock-price'],
+  ['洗了会缩水掉色吗？', '正常冷水轻柔洗不会缩水掉色，深浅色建议分开洗。', 'fabric-behavior'],
+  ['这件穿起来透不透？', '厚度适中，上身不会透的，春秋单穿都很合适。', 'garment-spec'],
+  ['下单后可以改地址吗？', '未发货前可以帮您修改地址，您把新地址发我就行。', 'order-service'],
+])('高频售后/库存/面料/规格/订单服务问题直接本地秒判：%s', async (question, reply, decisionSource) => {
+  const mock = jest.fn();
+  const verdict = await evaluateWithModels({ question, reply, history: [], goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://local.test', model: 'qwen3:0.6b' } }, mock as any);
+  expect(verdict).toMatchObject({ resolved: true, decisionSource });
+  expect(mock).not.toHaveBeenCalled();
+});
+
+
