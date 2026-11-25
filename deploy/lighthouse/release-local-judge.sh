@@ -4,6 +4,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 test -f .env
 compose=(sudo docker compose --env-file .env -f deploy/lighthouse/docker-compose.yml -f deploy/lighthouse/compose.semantic.yml -f deploy/lighthouse/compose.local-judge.yml --profile semantic)
 "${compose[@]}" up -d --no-deps semantic-judge
+for _ in $(seq 1 20); do
+  if "${compose[@]}" exec -T semantic-judge ollama list >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 model="$("${compose[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["api"]["environment"]["LOCAL_SEMANTIC_JUDGE_MODEL"])')"
 echo "本地判定模型：$model"
 if ! "${compose[@]}" exec -T semantic-judge ollama show "$model" >/dev/null 2>&1; then
