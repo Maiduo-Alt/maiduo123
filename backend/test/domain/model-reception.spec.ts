@@ -383,4 +383,44 @@ it.each([
   expect(mock).not.toHaveBeenCalled();
 });
 
+it('Ollama 原生 /api/chat 接口显式发送 think:false、keep_alive:24h 与 num_ctx:1024', async () => {
+  const mock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({
+    done: true, done_reason: 'stop',
+    message: { role: 'assistant', content: JSON.stringify({ resolved: true, reason: '已回答', evidence: ['整齐的哦'] }) },
+  }) });
+  const verdict = await evaluateWithModels(
+    { ...input, question: '走线整齐吗？', reply: '整齐的哦', history: [], goals: [], judgmentVersion: 2 },
+    { local: { url: 'http://semantic-judge:11434/api/chat', model: 'qwen3:0.6b' } },
+    mock as any,
+  );
+  expect(verdict).toMatchObject({ provider: 'local', resolved: true, evidence: ['整齐的哦'] });
+  const sent = JSON.parse(mock.mock.calls[0][1].body);
+  expect(sent).toMatchObject({
+    model: 'qwen3:0.6b',
+    stream: false,
+    think: false,
+    keep_alive: '24h',
+    options: { temperature: 0, seed: 42, num_predict: 128, num_ctx: 1024 },
+  });
+});
+
+it.each([
+  ['含棉量多少？', '有棉的哦', 'material-details'],
+  ['含棉量多少？', '这款是聚酯纤维面料', 'material-details'],
+  ['有棉吗？', '有的亲，这款含有棉成分，穿着很亲肤。', 'material-details'],
+  ['是什么面料？', '这款是棉和聚酯纤维混纺的哦', 'material-details'],
+  ['是聚酯纤维吗？', '这款是有棉的哦', 'material-details'],
+  ['这款连衣裙可以机洗吗？', '支持机洗的哦', 'wash-guidance'],
+])('系统无标码信息时，非敷衍的实质回复（如有棉、聚酯纤维、支持机洗）直接秒判通过：%s -> %s', async (question, reply, decisionSource) => {
+  const mock = jest.fn();
+  const verdict = await evaluateWithModels(
+    { question, reply, history: [], goals: [], judgmentVersion: 2, facts: trainingProduct },
+    { local: { url: 'http://semantic-judge:11434/api/chat', model: 'qwen3:0.6b' } },
+    mock as any,
+  );
+  expect(verdict).toMatchObject({ resolved: true, decisionSource });
+  expect(mock).not.toHaveBeenCalled();
+});
+
+
 
