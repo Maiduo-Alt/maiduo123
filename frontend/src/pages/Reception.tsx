@@ -221,6 +221,7 @@ export default function Reception() {
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const seenBuyerSessionsRef = useRef(new Set<number>());
+  const seenJoinedSessionsRef = useRef(new Set<number>());
   const lastClosedSessionRef = useRef<number | null>(null);
   const closedSessionIdsRef = useRef(new Set<number>());
   const activeRunningRef = useRef(false);
@@ -346,6 +347,9 @@ export default function Reception() {
 
   /** 正在接待中（已进线、未结束） */
   const isRunning = useCallback((s: SessionDto) => !['finished', 'transferred', 'aborted', 'pending'].includes(s.state), []);
+  useEffect(() => {
+    activeRunningRef.current = Boolean(activeSession && isRunning(activeSession));
+  }, [activeSession, isRunning]);
   /** 待接入（C5：本次模拟总接待人数 > 同时在线人数时，排在后面的买家） */
   const isPending = useCallback((s: SessionDto) => s.state === 'pending', []);
   /** 还没结束（含待接入），用于左侧「正在接待 / 接待结束」两个页签的划分 */
@@ -493,30 +497,40 @@ export default function Reception() {
           (s: SessionDto) => s.sessionId === activeIdRef.current && !['pending', 'finished', 'transferred', 'aborted'].includes(s.state)
         );
         activeRunningRef.current = activeIsStillRunning;
+        const newlyJoined = data.sessions.find((s: SessionDto) =>
+          !seenJoinedSessionsRef.current.has(s.sessionId) &&
+          !closedSessionIdsRef.current.has(s.sessionId) &&
+          ['wait', 'serving', 'timeout'].includes(s.state)
+        );
+        data.sessions.forEach((s: SessionDto) => {
+          if (s.state !== 'pending') seenJoinedSessionsRef.current.add(s.sessionId);
+        });
         const newBuyer = data.messages.find((m: MessageDto) => m.sender === 'buyer' &&
           !seenBuyerSessionsRef.current.has(m.sessionId) &&
           !closedSessionIdsRef.current.has(m.sessionId) &&
-          data.sessions.some((s: SessionDto) => s.sessionId === m.sessionId && ['serving', 'timeout'].includes(s.state)));
+          data.sessions.some((s: SessionDto) => s.sessionId === m.sessionId && ['wait', 'serving', 'timeout'].includes(s.state)));
         data.messages.forEach((m: MessageDto) => {
           if (m.sender === 'buyer') seenBuyerSessionsRef.current.add(m.sessionId);
         });
-        if (newBuyer && !activeIsStillRunning && !inputRef.current.trim()) {
-          autoFocusSessionRef.current = newBuyer.sessionId;
+        const autoOpenId = newlyJoined?.sessionId ?? newBuyer?.sessionId ?? null;
+        if (autoOpenId && !activeIsStillRunning && !inputRef.current.trim()) {
+          autoFocusSessionRef.current = autoOpenId;
+          activeRunningRef.current = true;
           setQueueTab('serving');
-          selectSession(newBuyer.sessionId);
+          selectSession(autoOpenId);
         } else if (!activeIdRef.current && suppressAutoSelectRef.current && !inputRef.current.trim()) {
           const waiting = data.sessions.find((s: SessionDto) => s.sessionId !== lastClosedSessionRef.current &&
             !closedSessionIdsRef.current.has(s.sessionId) &&
-            ['serving', 'timeout'].includes(s.state) &&
-            data.messages.some((m: MessageDto) => m.sender === 'buyer' && m.sessionId === s.sessionId));
+            ['wait', 'serving', 'timeout'].includes(s.state));
           if (waiting) {
             autoFocusSessionRef.current = waiting.sessionId;
+            activeRunningRef.current = true;
             setQueueTab('serving');
             selectSession(waiting.sessionId);
           }
         }
         // 客户 2026-10-03：待接入的买家不在「正在接待」里展示，默认选中的也应该是已进线且未结束的那个。
-        // ESC 主动关闭窗口后（suppressAutoSelectRef）轮询不再自动选中，直到用户手动点开会话。
+        // ESC 主动关闭窗口后（suppressAutoSelectRef）轮询不再自动选中，直到用户手动点开会话或有新客户进线。
         setActiveId((prev) => prev ?? (suppressAutoSelectRef.current ? null : data.sessions.find((s: any) => !['pending', 'finished', 'transferred', 'aborted'].includes(s.state))?.sessionId ?? null));
       } catch (e) {
         if (!silent) message.error((e as Error).message);
@@ -562,6 +576,10 @@ export default function Reception() {
 
   useEffect(() => {
     if (!attemptIdFromUrl) return;
+    seenJoinedSessionsRef.current.clear();
+    seenBuyerSessionsRef.current.clear();
+    closedSessionIdsRef.current.clear();
+    activeRunningRef.current = false;
     loadSnapshot(attemptIdFromUrl, false);
     const disconnect = connectRealtime((event, payload) => {
       if (event === 'timeout.warning') beep(true);
@@ -586,6 +604,22 @@ export default function Reception() {
           return next;
         });
       }
+      // 新客户进线（待接入补位进入正在接待）：若当前页面没有聚焦的活跃会话框，自动打开新进线的客户会话
+      if (event === 'session.joined' && payload?.sessionId) {
+        const sessionId = Number(payload.sessionId);
+        if (payload.attemptId && Number(payload.attemptId) !== attemptIdFromUrl) return;
+        if (closedSessionIdsRef.current.has(sessionId)) return;
+        const isNewJoin = !seenJoinedSessionsRef.current.has(sessionId);
+        seenJoinedSessionsRef.current.add(sessionId);
+        if (isNewJoin && !activeRunningRef.current && !inputRef.current.trim()) {
+          autoFocusSessionRef.current = sessionId;
+          activeRunningRef.current = true;
+          setQueueTab('serving');
+          selectSession(sessionId);
+        } else if (isNewJoin && sessionId !== activeIdRef.current) {
+          beep(false);
+        }
+      }
       // 方案 3.1.5：买家消息到达且不在当前会话时，队列项显示未读红点并播放轻提示音
       if (event === 'buyer.message' && payload?.sessionId) {
         const sessionId = Number(payload.sessionId);
@@ -593,8 +627,10 @@ export default function Reception() {
         if (closedSessionIdsRef.current.has(sessionId)) return;
         const isNewBuyer = !seenBuyerSessionsRef.current.has(sessionId);
         seenBuyerSessionsRef.current.add(sessionId);
+        seenJoinedSessionsRef.current.add(sessionId);
         if (isNewBuyer && !activeRunningRef.current && !inputRef.current.trim()) {
           autoFocusSessionRef.current = sessionId;
+          activeRunningRef.current = true;
           setQueueTab('serving');
           selectSession(sessionId);
         }
@@ -608,6 +644,18 @@ export default function Reception() {
       if (event === 'timer.tick' && Array.isArray(payload?.sessions)) {
         if (Number(payload.attemptId) !== attemptIdFromUrl || !updateServerClock(payload.serverTime)) return;
         const byId = new Map<number, any>(payload.sessions.map((s: any) => [s.sessionId, s]));
+        let newlyJoinedTickId: number | null = null;
+        for (const item of payload.sessions) {
+          if (item.state !== 'pending') {
+            if (!seenJoinedSessionsRef.current.has(item.sessionId)) {
+              seenJoinedSessionsRef.current.add(item.sessionId);
+              if (newlyJoinedTickId === null && !closedSessionIdsRef.current.has(item.sessionId) &&
+                  ['wait', 'serving', 'timeout'].includes(item.state)) {
+                newlyJoinedTickId = Number(item.sessionId);
+              }
+            }
+          }
+        }
         setSessions((prev) =>
           prev.map((s) => {
             const next = byId.get(s.sessionId);
@@ -627,6 +675,12 @@ export default function Reception() {
               : s;
           })
         );
+        if (newlyJoinedTickId !== null && !activeRunningRef.current && !inputRef.current.trim()) {
+          autoFocusSessionRef.current = newlyJoinedTickId;
+          activeRunningRef.current = true;
+          setQueueTab('serving');
+          selectSession(newlyJoinedTickId);
+        }
         return;
       }
       loadSnapshot(attemptIdFromUrl);
@@ -663,7 +717,9 @@ export default function Reception() {
       });
       setParams({ attemptId: String(data.attemptId) });
       seenBuyerSessionsRef.current.clear();
+      seenJoinedSessionsRef.current.clear();
       closedSessionIdsRef.current.clear();
+      activeRunningRef.current = false;
       lastClosedSessionRef.current = null;
       // 新一局恢复「自动选中第一个进线会话」的默认行为（上一局可能用 ESC 关过窗口）。
       suppressAutoSelectRef.current = false;
