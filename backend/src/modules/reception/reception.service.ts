@@ -769,8 +769,8 @@ export class ReceptionService implements OnModuleInit {
    * 没有空位或没有待接入时是空操作；整局结束由 `finalizeAttempt` 判断。
    */
   private async promoteWaiting(attemptId: number): Promise<void> {
-    const attempt = await this.db.one<{ level: string; param_snapshot: SystemParams | null }>(
-      `SELECT level, param_snapshot FROM attempts WHERE id = $1`,
+    const attempt = await this.db.one<{ account_id: number; level: string; param_snapshot: SystemParams | null }>(
+      `SELECT account_id, level, param_snapshot FROM attempts WHERE id = $1`,
       [attemptId]
     );
     if (!attempt) return;
@@ -800,6 +800,11 @@ export class ReceptionService implements OnModuleInit {
       );
       if (claimed && Array.isArray(claimed.rows) && claimed.rows.length === 0) continue;
       this.scheduler.schedule(`join:${next.id}`, joinDelay, () => this.pushNextQuestion(next.id));
+      this.gateway.emitToUser(attempt.account_id, 'session.joined', {
+        attemptId,
+        sessionId: next.id,
+        joinedAt: new Date().toISOString(),
+      });
       slots -= 1;
     }
   }

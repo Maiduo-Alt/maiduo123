@@ -19,6 +19,7 @@ export function connectRealtime(onEvent: (event: string, payload: any) => void):
     'reception.connected',
     'reception.ready',
     'buyer.message',
+    'session.joined',
     'agent.message.ack',
     'session.finished',
     'reception.finished',
