@@ -563,7 +563,7 @@ export class ReceptionService implements OnModuleInit {
           joinAt.toISOString(),
           styleRow?.emotion_base ?? 20,
           initialState,
-          null,
+          initialState === 'wait' ? joinAt.toISOString() : null,
         ]
       );
       // 开局就按「第一个问题的订单状态」生成订单：售前=待支付/待发货，售后=已发货
@@ -795,7 +795,7 @@ export class ReceptionService implements OnModuleInit {
       const joinDelay = Math.round(minDelay + Math.random() * (maxDelay - minDelay)) * 1000;
       const joinAt = new Date(Date.now() + joinDelay);
       const claimed = await this.db.query<{ id: number }>(
-        `UPDATE sessions SET state = 'wait', join_at = $2, last_buyer_at = NULL WHERE id = $1 AND state = 'pending' RETURNING id`,
+        `UPDATE sessions SET state = 'wait', join_at = $2, last_buyer_at = now() WHERE id = $1 AND state = 'pending' RETURNING id`,
         [next.id, joinAt.toISOString()],
       );
       if (claimed && Array.isArray(claimed.rows) && claimed.rows.length === 0) continue;
@@ -968,7 +968,7 @@ export class ReceptionService implements OnModuleInit {
       if (opener.kind !== 'direct') {
         const pushedOpener = await this.db.tx(async (client) => {
           const claimed = await client.query<{ id: number }>(
-            `UPDATE sessions SET state = 'serving', last_buyer_at = now(), opener_pending = true
+            `UPDATE sessions SET state = 'serving', last_buyer_at = COALESCE(last_buyer_at, now()), opener_pending = true
              WHERE id = $1 AND current_seq = 0 AND opener_pending = false
                AND state NOT IN ('finished','transferred','aborted','pending','awaiting_agent_close')
              RETURNING id`,
@@ -1029,13 +1029,16 @@ export class ReceptionService implements OnModuleInit {
     );
     const order = this.buildOrder(sessionId, orderStage, Date.parse(String(session.join_at)), session.products?.[0] ?? null, inferQuantityFromTexts(buyerTexts.map((row) => row.content)));
     const expectedSeq = next.skippedSeqs.length !== (session.skipped_seqs || []).length ? nextSeq - 1 : session.current_seq;
+    const nextLastBuyerAt = session.current_seq === 0 && !session.first_reply_at && session.last_buyer_at
+      ? session.last_buyer_at
+      : new Date().toISOString();
     const pushedQuestion = await this.db.tx(async (client) => {
       const claimed = await client.query<{ id: number }>(
-        `UPDATE sessions SET current_seq = $2, state = 'serving', last_buyer_at = now(), follow_ups = 0, opener_pending = false
+        `UPDATE sessions SET current_seq = $2, state = 'serving', last_buyer_at = $4, follow_ups = 0, opener_pending = false
          WHERE id = $1 AND current_seq = $3
            AND state NOT IN ('finished','transferred','aborted','pending','awaiting_agent_close')
          RETURNING id`,
-        [sessionId, nextSeq, expectedSeq]
+        [sessionId, nextSeq, expectedSeq, nextLastBuyerAt]
       );
       if (!claimed.rows.length) return false;
       await client.query(
@@ -1783,9 +1786,11 @@ export class ReceptionService implements OnModuleInit {
           session.total_questions - (session.skipped_seqs || []).length
         );
       }
-      const roundAlreadyTimedOut = eventStart >= 0
-        ? historyRows.slice(eventStart).some((m) => m.is_timeout === true)
-        : historyRows.some((m) => m.is_timeout === true && m.seq === insertSeq);
+      const roundAlreadyTimedOut = !session.first_reply_at
+        ? allHistoryRows.some((m) => m.is_timeout === true)
+        : eventStart >= 0
+        ? allHistoryRows.slice(eventStart).some((m) => m.is_timeout === true)
+        : allHistoryRows.some((m) => m.is_timeout === true && m.seq === insertSeq);
       const shouldIncrementTimeout = isTimeout && !roundAlreadyTimedOut;
       const closeDeadline = inAgentCloseWindow
         ? new Date(Date.now() + this.agentCloseWindowMs(attempt.level)).toISOString()
@@ -1899,7 +1904,9 @@ export class ReceptionService implements OnModuleInit {
         : allHistoryRows.some((m) => m.sender === 'agent' && m.seq === session.current_seq && m.response_sec !== null && m.rule_result?.judge?.signal !== 'opener');
       const responseSec = !alreadyCounted && lastBuyerAt ? Math.max(0, Math.round((now - lastBuyerAt) / 1000)) : null;
       const isTimeout = responseSec !== null && responseSec > Math.round(params.timeoutSec * tolerance);
-      const roundAlreadyTimedOut = eventStart >= 0
+      const roundAlreadyTimedOut = !session.first_reply_at
+        ? allHistoryRows.some((m) => m.is_timeout === true)
+        : eventStart >= 0
         ? allHistoryRows.slice(eventStart).some((m) => m.is_timeout === true)
         : allHistoryRows.some((m) => m.is_timeout === true && m.seq === session.current_seq);
       const shouldIncrementTimeout = isTimeout && !roundAlreadyTimedOut;
