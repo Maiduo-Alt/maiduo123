@@ -1205,3 +1205,151 @@ body {
   height: 100%;
   object-fit: cover;
 }
+
+/* ==========================================================================
+ * 现代飞鸽 Pro 视觉层（仅样式覆盖，不影响任何交互逻辑）
+ * ========================================================================== */
+:root {
+  --fp-primary: #3f5bf6;
+  --fp-primary-2: #7c5cff;
+  --fp-primary-soft: #eef1ff;
+  --fp-bg: #f4f6fb;
+  --fp-surface: #ffffff;
+  --fp-border: #edf0f6;
+  --fp-text: #1f2937;
+  --fp-text-2: #6b7280;
+  --fp-danger: #ef4444;
+  --fp-danger-soft: #fef2f2;
+  --fp-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --fp-shadow-md: 0 4px 16px rgba(31, 45, 90, 0.08);
+  --fp-radius: 12px;
+}
+body {
+  background: var(--fp-bg);
+  color: var(--fp-text);
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #d5dae5; border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #b9c0cf; background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 侧栏 / 顶栏 */
+.app-sider { border-right: 1px solid var(--fp-border); box-shadow: 1px 0 0 rgba(16,24,40,0.02); z-index: 2; }
+.app-logo-mark {
+  background: linear-gradient(135deg, var(--fp-primary), var(--fp-primary-2));
+  box-shadow: 0 4px 12px rgba(63, 91, 246, 0.35);
+}
+.app-logo-title { font-weight: 600; letter-spacing: 0.3px; }
+.app-header {
+  backdrop-filter: saturate(180%) blur(10px);
+  -webkit-backdrop-filter: saturate(180%) blur(10px);
+  border-bottom: 1px solid var(--fp-border);
+  position: sticky; top: 0; z-index: 10;
+}
+.app-content { background: var(--fp-bg); }
+.app-sider .ant-menu-item-selected { font-weight: 600; }
+.app-sider .ant-menu-item-selected::before {
+  content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--fp-primary);
+}
+
+/* 通用卡片 / 表格 / 页面 */
+.page-card, .app-content > .ant-card, .app-content .ant-card:not(.ant-card-type-inner) {
+  border-radius: var(--fp-radius);
+  border: 1px solid var(--fp-border);
+  box-shadow: var(--fp-shadow-sm);
+}
+.app-content .ant-card-hoverable:hover { box-shadow: var(--fp-shadow-md); transform: translateY(-1px); transition: all .2s; }
+.app-content .ant-card-head { border-bottom-color: var(--fp-border); }
+.app-content .ant-card-head-title { font-weight: 600; }
+.app-content .ant-statistic-content-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+.app-content .ant-table-wrapper .ant-table { border-radius: 10px; }
+.app-content .ant-table-thead > tr > th { font-weight: 600; }
+.ant-tag { border-radius: 6px; }
+.ant-modal .ant-modal-content { box-shadow: 0 20px 48px rgba(16, 24, 40, 0.18); }
+
+/* 登录页 */
+.login-page {
+  background:
+    radial-gradient(900px 500px at 10% 10%, rgba(124, 92, 255, 0.18), transparent 60%),
+    radial-gradient(800px 500px at 90% 90%, rgba(63, 91, 246, 0.18), transparent 60%),
+    linear-gradient(135deg, #f3f5ff 0%, #f8fafc 60%, #eef2ff 100%) !important;
+}
+.login-card {
+  border-radius: 18px !important;
+  border: 1px solid rgba(255,255,255,0.7);
+  background: rgba(255, 255, 255, 0.86) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 24px 60px rgba(31, 45, 90, 0.14) !important;
+}
+.login-card .ant-card-body { padding: 36px 32px 28px; }
+.login-card .ant-btn-primary { height: 42px; background: linear-gradient(135deg, var(--fp-primary), var(--fp-primary-2)); border: none; }
+
+/* 接待工作台 */
+.reception-shell { gap: 0; }
+.reception-left, .reception-center, .reception-right { background: var(--fp-surface); }
+.reception-titlebar { box-shadow: 0 1px 0 var(--fp-border); }
+.conversation-item { border-radius: 10px; margin: 2px 6px; transition: background .15s, box-shadow .15s; }
+.conversation-item:hover { background: #f6f7fc; }
+.conversation-item.active {
+  background: var(--fp-primary-soft);
+  box-shadow: inset 3px 0 0 var(--fp-primary);
+}
+.conversation-item.overdue { background: var(--fp-danger-soft); box-shadow: inset 3px 0 0 var(--fp-danger); }
+.conversation-timer, .session-countdown, .reception-stat-value { font-variant-numeric: tabular-nums; }
+.unread-dot { box-shadow: 0 0 0 2px #fff; }
+.queue-tab.active, .library-tab.active, .order-status-tab.active { color: var(--fp-primary); }
+.session-countdown {
+  border-radius: 999px;
+  padding: 2px 10px;
+  background: var(--fp-primary-soft);
+  color: var(--fp-primary);
+  font-weight: 600;
+}
+.session-countdown.urgent {
+  background: var(--fp-danger-soft);
+  color: var(--fp-danger);
+  animation: fp-pulse 1.2s ease-in-out infinite;
+}
+@keyframes fp-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }
+  50% { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+}
+.message-list { background: linear-gradient(180deg, #f8f9fd 0%, #f5f7fb 100%); }
+.message-bubble {
+  border-radius: 4px 14px 14px 14px;
+  background: #ffffff;
+  border: 1px solid var(--fp-border);
+  box-shadow: var(--fp-shadow-sm);
+  color: var(--fp-text);
+}
+.message-row.agent .message-bubble {
+  border-radius: 14px 4px 14px 14px;
+  background: linear-gradient(135deg, #4f6bff, #6a5cff);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(63, 91, 246, 0.22);
+}
+.message-row.agent .message-bubble a { color: #fff; text-decoration: underline; }
+.message-bubble-card, .message-row.agent .message-bubble-card {
+  background: #fff;
+  color: var(--fp-text);
+  border: 1px solid var(--fp-border);
+  border-radius: 12px;
+}
+.message-avatar { box-shadow: 0 0 0 2px #fff, var(--fp-shadow-sm); }
+.reception-input { border-top: 1px solid var(--fp-border); background: #fff; }
+.reception-input .ant-input { border-radius: 10px; }
+.reception-input .ant-input:focus { box-shadow: 0 0 0 3px rgba(63, 91, 246, 0.12); }
+.reception-toolbar .ant-btn { border-radius: 8px; }
+.task-card, .order-card, .feige-product-card, .consult-product {
+  border-radius: 12px;
+  border: 1px solid var(--fp-border);
+  box-shadow: var(--fp-shadow-sm);
+}
+.consult-card { border-radius: 10px; }
+.reception-banner { border-radius: 10px; }
+.category-item { border-radius: 8px; }
+.category-item.active { background: var(--fp-primary-soft); color: var(--fp-primary); }
