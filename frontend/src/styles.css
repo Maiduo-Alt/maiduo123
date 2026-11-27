@@ -1801,3 +1801,498 @@ body {
   .app-content { padding: 12px; }
   .reception-shell { --fx-gap: 10px; height: calc(100vh - 144px); }
 }
+
+/* ==========================================================================
+ * 训练评分报告与会话复盘页（RecordDetail）
+ * ========================================================================== */
+.report-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1480px;
+  margin: 0 auto;
+}
+.report-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 18px;
+  background: var(--fx-panel);
+  border: 1px solid rgba(16, 24, 40, 0.04);
+  border-radius: var(--fx-radius);
+  box-shadow: var(--fx-shadow);
+}
+.report-header-left,
+.report-header-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.report-title-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.report-attempt-no {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fx-text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.report-time-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fx-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 总览双栏：左总分环 + 右四维度均分 */
+.report-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 420px) 1fr;
+  gap: 14px;
+}
+.report-score-panel,
+.report-dim-panel {
+  background: var(--fx-panel);
+  border: 1px solid rgba(16, 24, 40, 0.04);
+  border-radius: var(--fx-radius);
+  box-shadow: var(--fx-shadow);
+  padding: 20px 22px;
+}
+.report-score-panel {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.report-ring-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.2;
+}
+.report-ring-value {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--fx-text);
+  font-variant-numeric: tabular-nums;
+}
+.report-ring-label {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--fx-text-3);
+}
+.report-score-meta {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.report-mini-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--fx-subtle);
+  border: 1px solid var(--fx-line);
+}
+.report-mini-stat span {
+  font-size: 12px;
+  color: var(--fx-text-3);
+}
+.report-mini-stat b {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--fx-text);
+  font-variant-numeric: tabular-nums;
+}
+.report-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fx-text);
+}
+.report-panel-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fx-text-3);
+  font-variant-numeric: tabular-nums;
+}
+.report-dim-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 24px;
+}
+.report-dim-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.report-dim-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.report-dim-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fx-text-2);
+}
+.report-dim-num {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--fx-text-3);
+}
+.report-dim-num b {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fx-text);
+}
+.report-dim-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #eef2f6;
+  overflow: hidden;
+}
+.report-dim-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+
+/* 评分表交互与标签 */
+.report-clickable-row {
+  cursor: pointer;
+}
+.report-buyer-link {
+  color: var(--fx-primary);
+  font-weight: 600;
+}
+.report-muted {
+  color: var(--fx-text-3);
+}
+.report-score-pill.ant-tag {
+  margin-inline-end: 0;
+  min-width: 52px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 失分明细：紧凑两列网格 */
+.report-deductions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.report-deduction-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--fx-subtle);
+  border: 1px solid var(--fx-line);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.report-deduction-item:hover {
+  background: #fff;
+  border-color: #c7d9ff;
+  box-shadow: 0 2px 8px rgba(30, 111, 255, 0.08);
+}
+.report-deduction-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.report-deduction-pts.ant-tag {
+  margin-inline-end: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.report-deduction-reason {
+  font-size: 13px;
+  color: var(--fx-text);
+  line-height: 1.5;
+}
+
+/* 会话复盘明细 */
+.report-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.report-tab-score {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.report-tab-score.good { background: #ecfdf3; color: #067647; }
+.report-tab-score.mid { background: #fffaeb; color: #b54708; }
+.report-tab-score.low { background: #fef3f2; color: #b42318; }
+
+.report-session-split {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.report-session-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.report-session-side {
+  flex: none;
+  width: 340px;
+}
+.report-empty-order {
+  padding: 36px 16px;
+  border-radius: 12px;
+  background: var(--fx-subtle);
+  border: 1px dashed var(--fx-line-strong);
+}
+
+/* 会话摘要条 */
+.report-session-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--fx-subtle);
+  border: 1px solid var(--fx-line);
+}
+.report-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+.report-summary-kv {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.report-summary-kv span {
+  color: var(--fx-text-3);
+}
+.report-summary-kv b {
+  color: var(--fx-text);
+  font-weight: 600;
+}
+.report-summary-metrics {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--fx-line);
+}
+.report-metric-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--fx-line);
+  font-size: 12px;
+}
+.report-metric-pill span {
+  color: var(--fx-text-3);
+}
+.report-metric-pill b {
+  color: var(--fx-text);
+  font-variant-numeric: tabular-nums;
+}
+.report-summary-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  font-size: 12px;
+  color: var(--fx-text-2);
+  padding-top: 8px;
+  border-top: 1px dashed var(--fx-line-strong);
+}
+.report-summary-foot b {
+  color: var(--fx-text);
+  font-weight: 500;
+}
+
+/* 复盘对话流 */
+.report-chat-box {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: 12px;
+  background: #f7f9fc;
+  border: 1px solid var(--fx-line);
+  max-height: 620px;
+  overflow-y: auto;
+}
+.report-msg-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.report-msg-row.agent {
+  flex-direction: row-reverse;
+}
+.report-msg-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #fff;
+  background: linear-gradient(160deg, #84adff, #528bff);
+  box-shadow: 0 0 0 2px #fff, 0 1px 3px rgba(16, 24, 40, 0.1);
+}
+.report-msg-avatar.agent {
+  background: linear-gradient(160deg, #528bff, #1e6fff);
+}
+.report-msg-avatar.system {
+  background: #e4e7ec;
+  color: var(--fx-text-2);
+  font-size: 12px;
+  box-shadow: none;
+}
+.report-msg-body {
+  max-width: 72%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.report-msg-row.agent .report-msg-body {
+  align-items: flex-end;
+}
+.report-msg-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fx-text-3);
+  font-variant-numeric: tabular-nums;
+}
+.report-msg-sender {
+  font-weight: 500;
+  color: var(--fx-text-2);
+}
+.report-resp-chip {
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--fx-primary-soft);
+  color: var(--fx-primary);
+  font-weight: 500;
+}
+.report-resp-chip.timeout {
+  background: #fef3f2;
+  color: #b42318;
+}
+.report-msg-bubble {
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--fx-text);
+  background: #fff;
+  border: 1px solid var(--fx-line);
+  border-radius: 4px 12px 12px 12px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.report-msg-row.agent .report-msg-bubble {
+  background: #eef4ff;
+  border-color: #c7d9ff;
+  border-radius: 12px 4px 12px 12px;
+}
+.report-msg-row.system .report-msg-bubble {
+  background: #fffaeb;
+  border-color: #fedf89;
+  font-size: 13px;
+}
+.report-msg-verdict-wrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  justify-content: flex-end;
+}
+.report-verdict-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.report-verdict-chip.pass {
+  background: #ecfdf3;
+  color: #067647;
+}
+.report-verdict-chip.pending {
+  background: #fffaeb;
+  color: #b54708;
+}
+.report-verdict-chip.invalid {
+  background: #fef3f2;
+  color: #b42318;
+}
+.report-verdict-reason {
+  color: var(--fx-text-2);
+  max-width: 520px;
+}
+.report-msg-verdict.invalid {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #fef3f2;
+  color: #b42318;
+  border: 1px solid #fecdca;
+}
+
+@media (max-width: 1100px) {
+  .report-hero-grid {
+    grid-template-columns: 1fr;
+  }
+  .report-deductions-grid {
+    grid-template-columns: 1fr;
+  }
+  .report-session-split {
+    flex-direction: column;
+  }
+  .report-session-side {
+    width: 100%;
+  }
+}
