@@ -1,3 +1,5 @@
+import { ALL_FLEXIBLE_PREFIXES, ALL_FLEXIBLE_SUFFIXES } from './flexible-push';
+
 /**
  * 自适应推送（客户 2026-10-11）：买家不再死板地按剧本顺序提问，
  * 而是根据客服对当前问题的回复质量决定「推进下一题」还是「追问」。
@@ -77,7 +79,7 @@ export function stripTopicTransitionText(question: string): string {
   return prefix ? question.slice(prefix.length) : question;
 }
 
-/** Remove simulator wrappers (topic transitions and follow-up templates) around the core buyer question. */
+/** Remove simulator wrappers (topic transitions, flexible style prefixes/suffixes, and follow-up templates) around the core buyer question. */
 export function stripBuyerQuestionWrapper(question: string): string {
   let text = stripTopicTransitionText(String(question || '').trim());
   for (const pair of Object.values(FOLLOWUP_TEMPLATES)) {
@@ -90,7 +92,20 @@ export function stripBuyerQuestionWrapper(question: string): string {
       }
     }
   }
-  return stripTopicTransitionText(text)
+  text = stripTopicTransitionText(text);
+  for (const prefix of ALL_FLEXIBLE_PREFIXES) {
+    if (text.startsWith(prefix)) {
+      text = text.slice(prefix.length).trim();
+      break;
+    }
+  }
+  for (const suffix of ALL_FLEXIBLE_SUFFIXES) {
+    if (text.endsWith(suffix)) {
+      text = text.slice(0, text.length - suffix.length).trim();
+      break;
+    }
+  }
+  return text
     .replace(/^我想确认一下[，,：:\s]*/u, '')
     .replace(/[？?]麻烦直接说一下。?$/u, '')
     .trim();
