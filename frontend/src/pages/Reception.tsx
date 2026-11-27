@@ -447,15 +447,30 @@ export default function Reception() {
     return () => window.clearInterval(timer);
   }, [attemptIdFromUrl]);
 
-  /** 飞鸽式工作台快捷键：↑/↓ 或 light+ / light- 切换买家回复窗口。 */
+  /** 飞鸽式工作台快捷键：↑/↓（打字区同样可用）或 light+ / light- 切换买家回复窗口。 */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       const target = event.target as HTMLElement | null;
       const editing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
-      const isNext = event.key === '+' || event.key === '=' || event.key === 'Light+' || event.code === 'NumpadAdd' || event.key === 'ArrowDown';
-      const isPrevious = event.key === '-' || event.key === '_' || event.key === 'Light-' || event.code === 'NumpadSubtract' || event.key === 'ArrowUp';
+      const isArrowDown = event.key === 'ArrowDown';
+      const isArrowUp = event.key === 'ArrowUp';
+      const isNext = event.key === '+' || event.key === '=' || event.key === 'Light+' || event.code === 'NumpadAdd' || isArrowDown;
+      const isPrevious = event.key === '-' || event.key === '_' || event.key === 'Light-' || event.code === 'NumpadSubtract' || isArrowUp;
       if (isNext || isPrevious) {
-        if (editing) return;
+        if (editing) {
+          const inReplyBox = Boolean(target?.closest('.reception-input')) && target?.tagName === 'TEXTAREA';
+          if (!(inReplyBox && (isArrowUp || isArrowDown))) return;
+          const textarea = target as HTMLTextAreaElement;
+          const val = textarea.value || '';
+          if (val.includes('\n')) {
+            const start = textarea.selectionStart ?? 0;
+            const end = textarea.selectionEnd ?? val.length;
+            const onFirstLine = !val.slice(0, start).includes('\n');
+            const onLastLine = !val.slice(end).includes('\n');
+            if ((isArrowUp && !onFirstLine) || (isArrowDown && !onLastLine)) return;
+          }
+        }
         const openSessions = sessions.filter(isRunning);
         if (!openSessions.length) return;
         const currentIndex = Math.max(0, openSessions.findIndex((session) => session.sessionId === activeId));
