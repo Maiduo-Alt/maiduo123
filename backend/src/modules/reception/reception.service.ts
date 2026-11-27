@@ -540,7 +540,7 @@ export class ReceptionService implements OnModuleInit {
       }));
       const questions = process.env.NODE_ENV === 'test'
         ? mixedQuestions
-        : shuffleFlexibleQuestions(mixedQuestions, seed + i * 97 + 31);
+        : shuffleFlexibleQuestions(mixedQuestions, Math.floor(rng() * 1e9) + i * 97 + 31);
       const product = await this.pickProduct(script.id, questions);
       const joinDelaySec =
         i >= activeSlots
