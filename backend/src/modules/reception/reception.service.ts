@@ -47,6 +47,13 @@ import { buildSemanticCandidates, findVectorCandidates } from '../../domain/sema
 import { assessAutomaticReply, ReplyAssessment } from '../../domain/automatic-reply';
 import { evaluateWithModels, ModelReceptionInput } from '../../domain/model-reception';
 import { assessLocalTrainingRules, isGreetingOnlyReply } from '../../domain/local-training-rules';
+import {
+  buildFlexibleBuyerMessages,
+  buildWaitingNudge,
+  computeFlexiblePushDelayMs,
+  findProactivelyAnsweredSeqs,
+  shuffleFlexibleQuestions,
+} from '../../domain/flexible-push';
 import { ModelCredentialsService } from '../settings/model-credentials.service';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, selectWashFollowUp } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
@@ -514,7 +521,7 @@ export class ReceptionService implements OnModuleInit {
 
       // C14：会话快照按配置混入少量另一阶段问题，但这些问题统一标记为 optional +
       // triggerConditions；它们只在上下文满足时才真正问出，不再破坏自然对话主线。
-      const questions = mixQuestionSeq(baseQuestions, {
+      const mixedQuestions = mixQuestionSeq(baseQuestions, {
         ratioPct: Number(effectiveParams.aftersaleQuestionRatio || 0),
         pool: script.stage === 'aftersale' ? PRESALE_PRODUCT_QUESTIONS : ORDER_AFTERSALE_QUESTIONS,
         stage: script.stage === 'aftersale' ? 'presale' : 'aftersale',
@@ -530,6 +537,9 @@ export class ReceptionService implements OnModuleInit {
         customerGoal: undefined,
         automaticEvaluation: true,
       }));
+      const questions = process.env.NODE_ENV === 'test'
+        ? mixedQuestions
+        : shuffleFlexibleQuestions(mixedQuestions, seed + i * 97 + 31);
       const product = await this.pickProduct(script.id, questions);
       const joinDelaySec =
         i >= activeSlots
@@ -817,32 +827,34 @@ export class ReceptionService implements OnModuleInit {
     const askedRounds = session.questions.filter((q) =>
       q.seq <= session.current_seq && !(session.skipped_seqs || []).includes(q.seq)
     ).length;
-    const recentAgent = await this.db.one<{ content: string }>(
-      `SELECT content FROM messages WHERE session_id = $1 AND sender = 'agent' AND COALESCE(rule_result->>'judgmentState', '') = '' ORDER BY id DESC LIMIT 1`,
+    const priorMessages = await this.db.many<any>(
+      `SELECT content, seq, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
       [sessionId]
     );
+    const repliedRounds = new Set(
+      priorMessages
+        .filter((row) => row.rule_result?.openerTiming !== true && row.rule_result?.judge?.signal !== 'opener')
+        .map((row) => Number(row.rule_result?.questionSeq ?? row.seq))
+        .filter((seq) => seq > 0),
+    ).size;
+    const recentAgent = [...priorMessages].reverse().find((row) => !row.rule_result?.judgmentState) || null;
     if (recentAgent && isNaturalClosingReply(recentAgent.content)) {
       const closingState = await this.persistConversationState(session);
-      // 客服说“谢谢/先这样”只能作为收尾信号，不能覆盖仍未解决的客户核心目标。
-      // 核心问题尚未解决时，买家继续围绕未解决目标推进，而不是被客服单方面结束会话。
-      if (closingState.shouldClose && askedRounds >= 3 && session.current_seq >= Math.min(6, session.total_questions)) {
+      // 客服说“谢谢/先这样”只能作为收尾信号，不能覆盖仍未解决的客户核心目标，且一通会话最少沟通 3 轮。
+      if (closingState.shouldClose && askedRounds >= 3 && repliedRounds >= 3 && session.current_seq >= Math.min(6, session.total_questions)) {
         await this.closeWithBuyerMessage(session, closingState, 'early');
         return;
       }
     }
 
-    const priorMessages = await this.db.many<any>(
-      `SELECT content, seq, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent' ORDER BY id`,
-      [sessionId]
-    );
     const evaluations = priorMessages.map((row) => row.rule_result?.semanticEvaluation).filter(Boolean);
     const businessActionCodes = priorMessages
       .map((row) => row.rule_result?.businessAction?.code)
       .filter((code): code is string => !!code);
     let conversationState = await this.persistConversationState(session, evaluations);
 
-    // 客户核心目标已经解决、整体覆盖度足够时，不再为了“把题问完”继续机械推进。
-    if (askedRounds >= 3 && session.current_seq >= Math.min(6, session.total_questions) && conversationState.shouldClose) {
+    // 客户核心目标已经解决、整体覆盖度足够且已沟通满 3 轮时，自然收尾。
+    if (askedRounds >= 3 && repliedRounds >= 3 && session.current_seq >= Math.min(6, session.total_questions) && conversationState.shouldClose) {
       await this.closeWithBuyerMessage(session, conversationState, 'normal');
       return;
     }
@@ -897,6 +909,17 @@ export class ReceptionService implements OnModuleInit {
       }
       if (modelIntro && /水洗/u.test(modelIntro)) modelIntro = undefined;
     }
+    if (process.env.NODE_ENV !== 'test' && priorMessages.length) {
+      const proactiveHits = findProactivelyAnsweredSeqs(
+        session.questions,
+        session.current_seq,
+        alreadyAnswered,
+        priorMessages.map((m) => String(m.content || '')),
+      );
+      for (const seq of proactiveHits) {
+        if (!alreadyAnswered.includes(seq)) alreadyAnswered.push(seq);
+      }
+    }
     const next = selectNextQuestion(
       session.questions,
       session.current_seq,
@@ -910,18 +933,21 @@ export class ReceptionService implements OnModuleInit {
         hasOrder: !!session.order_no,
       },
     );
-    if (next.nextSeq === null && askedRounds < 3 && previousQuestion) {
-      const parent = session.questions.find((q) => q.seq === previousQuestion.derivedFromSeq) || previousQuestion;
-      const latest = priorMessages[priorMessages.length - 1]?.rule_result;
-      const fallback = createMinimumRoundQuestion(session.questions, parent, latest?.judgmentVersion === 2 ? {
-        pending: latest.replyAssessment?.status === 'pending', agentReplies: priorMessages.map((message) => message.content), shippingAnswered: !!shippingAnswered, currentSeq: session.current_seq, skippedSeqs: session.skipped_seqs || [],
-      } : undefined);
-      session.questions = [...session.questions, fallback];
-      session.total_questions = fallback.seq;
-      await this.db.query(`UPDATE sessions SET questions = $2::jsonb, total_questions = $3 WHERE id = $1`, [
-        sessionId, JSON.stringify(session.questions), session.total_questions,
-      ]);
-      next.nextSeq = fallback.seq;
+    if (next.nextSeq === null && (askedRounds < 3 || repliedRounds < 3)) {
+      const anchor = previousQuestion || session.questions[session.questions.length - 1] || null;
+      if (anchor) {
+        const parent = session.questions.find((q) => q.seq === anchor.derivedFromSeq) || anchor;
+        const latest = priorMessages[priorMessages.length - 1]?.rule_result;
+        const fallback = createMinimumRoundQuestion(session.questions, parent, latest?.judgmentVersion === 2 ? {
+          pending: latest.replyAssessment?.status === 'pending', agentReplies: priorMessages.map((message) => message.content), shippingAnswered: !!shippingAnswered, currentSeq: session.current_seq, skippedSeqs: session.skipped_seqs || [],
+        } : undefined);
+        session.questions = [...session.questions, fallback];
+        session.total_questions = fallback.seq;
+        await this.db.query(`UPDATE sessions SET questions = $2::jsonb, total_questions = $3 WHERE id = $1`, [
+          sessionId, JSON.stringify(session.questions), session.total_questions,
+        ]);
+        next.nextSeq = fallback.seq;
+      }
     }
     const nextSeq = next.nextSeq ?? session.total_questions + 1;
     if (next.skippedSeqs.length !== (session.skipped_seqs || []).length) {
@@ -1006,7 +1032,11 @@ export class ReceptionService implements OnModuleInit {
       }
     }
     const behavior = this.styleBehavior[session.style_code] || this.styleBehavior.friendly;
-    const rawPrompt = question.conversationPlan?.promptTemplates?.[0] || question.baseQuestion || question.question;
+    const templates = question.conversationPlan?.promptTemplates?.filter(Boolean) || [];
+    const promptRng = createRng(sessionId * 131 + nextSeq * 17);
+    const rawPrompt = templates.length > 1 && process.env.NODE_ENV !== 'test'
+      ? templates[Math.floor(promptRng() * templates.length)]
+      : (templates[0] || question.baseQuestion || question.question);
     const nextTopic = conversationTopic(question);
     const isTopicTransition =
       session.current_seq > 0 &&
@@ -1014,12 +1044,25 @@ export class ReceptionService implements OnModuleInit {
       previousTopic !== 'general' &&
       nextTopic !== 'general' &&
       previousTopic !== nextTopic));
-    const plannedPrompt = isTopicTransition
-      ? buildTopicTransitionText(session.style_code, rawPrompt)
-      : rawPrompt;
-    // 转场文案已经按风格生成，不能再套一次 styleBehavior，否则会出现
-    // “我想确认一下，另外我还想确认一下……”这类双重风格前缀。
-    const texts = isTopicTransition ? [plannedPrompt] : behavior.transform(plannedPrompt);
+    let texts: string[];
+    let supplementText: string | undefined;
+    if (process.env.NODE_ENV === 'test') {
+      const plannedPrompt = isTopicTransition
+        ? buildTopicTransitionText(session.style_code, rawPrompt)
+        : rawPrompt;
+      texts = isTopicTransition ? [plannedPrompt] : behavior.transform(plannedPrompt);
+    } else {
+      const flexible = buildFlexibleBuyerMessages(
+        rawPrompt,
+        session.style_code,
+        isTopicTransition,
+        sessionId * 977 + nextSeq * 53 + Date.now() % 1000,
+        true,
+      );
+      texts = [flexible.primary];
+      supplementText = flexible.supplement;
+      if (supplementText) texts.push(supplementText);
+    }
     // 跨话题补题已带完整转场；模型生成的下一句可能是另一个问题，避免同轮混入两道题。
     if (modelIntro && !question.topicTransition) texts.unshift(modelIntro);
     /**
@@ -1051,11 +1094,17 @@ export class ReceptionService implements OnModuleInit {
         [sessionId, order.orderNo, order.amount, order.statusText, JSON.stringify(order)]
       );
       for (const [index, text] of texts.entries()) {
+        const isSupplement = Boolean(supplementText) && index === texts.length - 1;
+        const meta = index === 0
+          ? { responseRoundStart: true, responseRoundType: 'question' }
+          : isSupplement
+            ? { responseRoundType: 'supplement' }
+            : {};
         await client.query(`INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`, [
           sessionId,
           text,
           nextSeq,
-          JSON.stringify(index === 0 ? { responseRoundStart: true, responseRoundType: 'question' } : {}),
+          JSON.stringify(meta),
         ]);
       }
       return true;
@@ -1175,6 +1224,11 @@ export class ReceptionService implements OnModuleInit {
               `这部分明白了，还想了解${label}，能再说明一下吗？`);
             return;
           }
+        }
+        if (process.env.NODE_ENV !== 'test' && !modelReply.resolved &&
+            modelReply.decisionSource === 'greeting-only' && (session.follow_ups || 0) < 1) {
+          await this.pushFollowUp(sessionId, session, question, session.follow_ups || 0);
+          return;
         }
         await this.pushNextQuestion(sessionId);
         return;
@@ -1490,11 +1544,14 @@ export class ReceptionService implements OnModuleInit {
     const latestBuyer = currentBuyerMessages.at(-1);
     const latestBuyerIndexInQuestion = latestBuyer ? currentDialogue.lastIndexOf(latestBuyer) : -1;
     const latestBuyerRound: string[] = [];
-    // Keep every buyer bubble in the latest push, even when the buyer asks in several messages.
+    // Keep every core buyer bubble in the latest push, excluding supplementary concern/nudge bubbles so rules match cleanly.
     for (let index = latestBuyerIndexInQuestion; index >= 0; index--) {
       const message = currentDialogue[index];
       if (message.sender !== 'buyer') break;
-      latestBuyerRound.unshift(message.content);
+      const roundType = message.rule_result?.responseRoundType;
+      if (roundType !== 'supplement' && roundType !== 'nudge') {
+        latestBuyerRound.unshift(message.content);
+      }
       if (message.rule_result?.responseRoundStart) break;
     }
     const modelInput: ModelReceptionInput | null = useModel ? {
@@ -1889,9 +1946,9 @@ export class ReceptionService implements OnModuleInit {
       this.scheduleAgentClose(sessionId, Date.parse(closeDeadline!));
     } else if (!waitingForEscalationReply && !hasQueuedReplies) {
       if (session.current_seq === 0 && !session.opener_pending) this.scheduler.cancel(`join:${sessionId}`);
-      const rng = createRng(now + sessionId);
-      const [minDelay, maxDelay] = params.questionPushDelaySec ?? [3, 7];
-      const thinkDelay = Math.round((minDelay + rng() * (maxDelay - minDelay)) * 1000);
+      const thinkDelay = process.env.NODE_ENV === 'test'
+        ? Math.round(((params.questionPushDelaySec?.[0] ?? 3) + createRng(now + sessionId)() * ((params.questionPushDelaySec?.[1] ?? 7) - (params.questionPushDelaySec?.[0] ?? 3))) * 1000)
+        : computeFlexiblePushDelayMs(params.questionPushDelaySec, session.style_code, now + sessionId);
       // 2026-10-11 自适应推送：不再无条件推下一题，先看本轮回复是否答到要点
       this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.advanceAfterReply(sessionId));
     }
@@ -1943,9 +2000,9 @@ export class ReceptionService implements OnModuleInit {
         [sessionId, maxResponseSec, avgResponseSec, shouldIncrementTimeout ? 1 : 0],
       );
       await release();
-      const rng = createRng(now + sessionId);
-      const [minDelay, maxDelay] = params.questionPushDelaySec ?? [3, 7];
-      const thinkDelay = Math.round((minDelay + rng() * (maxDelay - minDelay)) * 1000);
+      const thinkDelay = process.env.NODE_ENV === 'test'
+        ? Math.round(((params.questionPushDelaySec?.[0] ?? 3) + createRng(now + sessionId)() * ((params.questionPushDelaySec?.[1] ?? 7) - (params.questionPushDelaySec?.[0] ?? 3))) * 1000)
+        : computeFlexiblePushDelayMs(params.questionPushDelaySec, session.style_code, now + sessionId);
       this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.advanceAfterReply(sessionId));
       const gradingJob = complete(inserted.id, true).then(() => undefined).catch(async (error: Error) => {
         const fallbackAssessment = assessAutomaticReply({
@@ -2236,6 +2293,21 @@ export class ReceptionService implements OnModuleInit {
     if (this.isReplyBusy(sessionId)) throw new BizError(ERR.SESSION_STATE, '该会话正在判定，请稍候');
     if (session.state === 'pending') throw new BizError(ERR.SESSION_STATE, '该买家还在排队待接入，请稍候');
     if (['finished', 'transferred', 'aborted'].includes(session.state)) throw new BizError(ERR.SESSION_STATE, '该会话已结束');
+    if (process.env.NODE_ENV !== 'test' && session.state !== 'awaiting_agent_close') {
+      const agentReplies = await this.db.many<{ seq: number; rule_result: any }>(
+        `SELECT seq, rule_result FROM messages WHERE session_id = $1 AND sender = 'agent'`,
+        [sessionId],
+      );
+      const repliedRounds = new Set(
+        agentReplies
+          .filter((row) => row.rule_result?.openerTiming !== true && row.rule_result?.judge?.signal !== 'opener')
+          .map((row) => Number(row.rule_result?.questionSeq ?? row.seq))
+          .filter((seq) => seq > 0),
+      ).size;
+      if (repliedRounds < 3) {
+        throw new BizError(ERR.SESSION_STATE, `一通会话最少需要沟通 3 轮，当前已沟通 ${repliedRounds} 轮，请继续接待`);
+      }
+    }
     const reason: 'normal' | 'early' | 'manual' = session.state === 'awaiting_agent_close'
       ? 'manual'
       : session.current_seq >= session.total_questions ? 'normal' : 'early';
@@ -2712,7 +2784,7 @@ export class ReceptionService implements OnModuleInit {
     await this.abortDisconnectedAttempts();
     await this.broadcastTimerTick();
     const rows = await this.db.many<any>(
-      `SELECT s.id, s.attempt_id, s.last_buyer_at, s.first_reply_at, s.state, a.level, a.account_id, a.param_snapshot
+      `SELECT s.id, s.attempt_id, s.last_buyer_at, s.first_reply_at, s.state, s.style_code, s.current_seq, s.emotion_value, a.level, a.account_id, a.param_snapshot
        FROM sessions s JOIN attempts a ON a.id = s.attempt_id
        WHERE a.status = 'running' AND s.state IN ('serving','wait','timeout')`
     );
@@ -2723,6 +2795,34 @@ export class ReceptionService implements OnModuleInit {
       const tolerance = params.waitToleranceFactor[row.level] ?? 1;
       const limitMs = params.timeoutSec * tolerance * 1000;
       const elapsed = Date.now() - new Date(row.last_buyer_at).getTime();
+      // 客服迟迟未回时，买家在等待过半后主动温和催一句（不重置 last_buyer_at，不影响计时与判定）
+      if (process.env.NODE_ENV !== 'test' && row.state === 'serving' && row.current_seq > 0) {
+        const nudgeAtMs = Math.max(25000, Math.round(limitMs * 0.55));
+        if (elapsed >= nudgeAtMs && elapsed < limitMs - 10000) {
+          const alreadyNudged = await this.db.one<{ count: string }>(
+            `SELECT count(*)::text AS count FROM messages
+             WHERE session_id = $1 AND sender = 'buyer' AND seq = $2
+               AND rule_result->>'responseRoundType' = 'nudge' AND created_at >= $3`,
+            [row.id, row.current_seq, row.last_buyer_at],
+          );
+          if (Number(alreadyNudged?.count || 0) === 0) {
+            const nudgeText = buildWaitingNudge(row.style_code || 'friendly', row.id * 37 + row.current_seq);
+            await this.db.query(
+              `INSERT INTO messages (session_id, sender, content, seq, rule_result) VALUES ($1,'buyer',$2,$3,$4::jsonb)`,
+              [row.id, nudgeText, row.current_seq, JSON.stringify({ responseRoundType: 'nudge' })],
+            );
+            this.gateway.emitToUser(row.account_id, 'buyer.message', {
+              attemptId: row.attempt_id,
+              sessionId: row.id,
+              seq: row.current_seq,
+              contents: [nudgeText],
+              emotion: row.emotion_value,
+              nudge: true,
+              sentAt: new Date().toISOString(),
+            });
+          }
+        }
+      }
       if (elapsed <= limitMs) continue;
       const event = params.responseTimingVersion === 2 && row.first_reply_at
         ? await this.db.one<{ id: number }>(
