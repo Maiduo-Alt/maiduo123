@@ -1,5 +1,6 @@
 import { stripBuyerQuestionWrapper } from '../../src/domain/adaptive-push';
 import {
+  buildContextFollowUpQuestion,
   buildFlexibleBuyerMessages,
   buildWaitingNudge,
   computeFlexiblePushDelayMs,
@@ -63,6 +64,34 @@ describe('flexible-push', () => {
       '亲，这款是棉混纺面料，标准正码不偏大不偏小，支持7天无理由退换且有运费险哦。',
     ]);
     expect(skipped).toEqual([2, 3]);
+  });
+
+  it('skips redundant polyester question when agent already answered polyester and follows up contextually', () => {
+    const questions: ScriptQuestion[] = [
+      { seq: 1, question: '含棉量多少', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '是聚酯纤维吗', keyPoints: [], automaticEvaluation: true },
+      { seq: 3, question: '什么时候发货', keyPoints: [], automaticEvaluation: true },
+    ];
+    const replies = ['这款是聚酯纤维的不含棉哈'];
+    const skipped = findProactivelyAnsweredSeqs(questions, 1, [], replies, {
+      product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] },
+    });
+    expect(skipped).toEqual([2]);
+
+    const followUp = buildContextFollowUpQuestion(questions, replies, replies[0], questions[0], {
+      product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] },
+    });
+    expect(followUp?.question).toBe('聚酯纤维的话，穿起来会不会闷或不舒服呢？');
+
+    const repliesWithBreathability = ['这款是聚酯纤维的不含棉，但面料亲肤透气不会闷热哦'];
+    const nextFollowUp = buildContextFollowUpQuestion(
+      questions,
+      repliesWithBreathability,
+      repliesWithBreathability[0],
+      questions[0],
+      { product: { title: '测试服装', attributes: [{ name: '材质', value: '其他' }] } },
+    );
+    expect(nextFollowUp?.question).toBe('聚酯纤维平时清洗和打理有什么要注意的吗？');
   });
 
   it('builds non-empty waiting nudges for all styles', () => {

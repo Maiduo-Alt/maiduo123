@@ -1,3 +1,5 @@
+import { assessLocalTrainingRules } from './local-training-rules';
+import type { ModelReceptionInput } from './model-reception';
 import { createRng } from './rng';
 import { ScriptQuestion } from './types';
 
@@ -245,6 +247,26 @@ export function buildWaitingNudge(styleCode: string, seed: number): string {
 
 const PROACTIVE_TOPIC_CHECKS: Array<{ question: RegExp; answer: RegExp; reject?: RegExp }> = [
   {
+    question: /(?:是|是不是|含有|有没有).{0,4}(?:聚酯纤维|涤纶)/u,
+    answer: /(?:聚酯纤维|涤纶|纯棉|全棉|100\s*[%％]\s*棉|不含(?:聚酯纤维|涤纶))/u,
+    reject: /不确定|不清楚|核实|查一下/u,
+  },
+  {
+    question: /含棉|纯棉|全棉|什么面料|什么材质|什么成分/u,
+    answer: /(?:不含棉|无棉|纯棉|全棉|\d+\s*[%％]\s*棉|含棉|聚酯纤维|涤纶|棉麻|真丝|莫代尔|氨纶|羊毛|混纺)/u,
+    reject: /不确定|不清楚|核实|查一下/u,
+  },
+  {
+    question: /机洗|水洗/u,
+    answer: /(?:支持机洗|可以机洗|不可机洗|不能机洗|不建议机洗|建议手洗|轻柔手洗)/u,
+    reject: /不确定|不清楚|核实|查一下/u,
+  },
+  {
+    question: /干洗/u,
+    answer: /(?:不需要干洗|不用干洗|无需干洗|需要干洗|必须干洗|建议干洗)/u,
+    reject: /不确定|不清楚|核实|查一下/u,
+  },
+  {
     question: /退货|退款|七天无理由|7天无理由|运费险/u,
     answer: /(?:支持|可以).{0,6}(?:7天|七天)无理由|有运费险|赠送运费险|包退/u,
     reject: /不确定|不清楚|核实|查一下/u,
@@ -261,17 +283,22 @@ const PROACTIVE_TOPIC_CHECKS: Array<{ question: RegExp; answer: RegExp; reject?:
   },
   {
     question: /包邮|运费多少|要运费吗/u,
-    answer: /包邮|免运费|免邮/u,
+    answer: /包邮|免运费|免邮|不包邮/u,
     reject: /不确定|不清楚|核实|查一下/u,
   },
   {
     question: /偏大|偏小|尺码.{0,4}(?:正|标准)/u,
-    answer: /标准正码|正码|不偏大不偏小|按平时.{0,4}码(?:拍|选)/u,
+    answer: /标准正码|正码|不偏大不偏小|偏大|偏小|按平时.{0,4}码(?:拍|选)/u,
     reject: /不确定|不清楚|核实|查一下/u,
   },
   {
     question: /缩水|掉色|褪色|起球/u,
     answer: /不会缩水|不易缩水|不会掉色|不易掉色|不易起球|不会起球/u,
+    reject: /不确定|不清楚|核实|查一下/u,
+  },
+  {
+    question: /透气|会不会闷|不舒服|扎人/u,
+    answer: /透气|不闷|不会闷|亲肤|不扎|舒适|舒服/u,
     reject: /不确定|不清楚|核实|查一下/u,
   },
   {
@@ -281,16 +308,65 @@ const PROACTIVE_TOPIC_CHECKS: Array<{ question: RegExp; answer: RegExp; reject?:
   },
 ];
 
+const HIGH_PRECISION_PROACTIVE_SOURCES = new Set([
+  'material-details',
+  'wash-guidance',
+  'dry-clean-required',
+  'color-difference',
+  'media-location',
+  'media-available',
+  'shipping-logistics',
+  'exchange-policy',
+  'fit-sizing',
+  'comfort-breathability',
+  'shoe-styling',
+  'outer-shoe-styling',
+  'outerwear-color',
+  'craft-aftersale',
+]);
+
+function isQuestionAnsweredByReplies(
+  questionText: string,
+  agentReplies: string[],
+  facts?: ModelReceptionInput['facts'],
+): boolean {
+  const text = String(questionText || '').trim();
+  if (!text || !agentReplies.length) return false;
+  const effectiveFacts = facts ?? { product: { title: '', attributes: [] } };
+
+  for (const reply of agentReplies) {
+    const trimmed = String(reply || '').trim();
+    if (!trimmed) continue;
+    const ruleHit = assessLocalTrainingRules({
+      question: text,
+      reply: trimmed,
+      history: [],
+      goals: [],
+      judgmentVersion: 2,
+      facts: effectiveFacts,
+    });
+    if (ruleHit?.resolved === true && ruleHit.decisionSource && HIGH_PRECISION_PROACTIVE_SOURCES.has(ruleHit.decisionSource)) {
+      return true;
+    }
+  }
+
+  return PROACTIVE_TOPIC_CHECKS.some((rule) =>
+    rule.question.test(text) &&
+    agentReplies.some((reply) => rule.answer.test(reply) && (!rule.reject || !rule.reject.test(reply))),
+  );
+}
+
 /** 检测客服前面的回复是否已经主动答到了后续某道独立问题，避免买家机械重复提问。 */
 export function findProactivelyAnsweredSeqs(
   questions: ScriptQuestion[],
   currentSeq: number,
   alreadySkipped: number[],
   agentReplies: string[],
+  facts?: ModelReceptionInput['facts'],
 ): number[] {
-  if (!agentReplies.length) return [];
+  const combined = agentReplies.map((r) => String(r || '').trim()).filter(Boolean);
+  if (!combined.length) return [];
   const skipped = new Set(alreadySkipped);
-  const combined = agentReplies.filter(Boolean);
   const hits: number[] = [];
 
   for (const question of questions) {
@@ -298,12 +374,117 @@ export function findProactivelyAnsweredSeqs(
     if (skipped.has(question.seq)) continue;
     if (question.needTransfer || (question.semanticGoals && question.semanticGoals.length > 0)) continue;
 
-    const text = String(question.question || '').trim();
-    const matched = PROACTIVE_TOPIC_CHECKS.some((rule) =>
-      rule.question.test(text) &&
-      combined.some((reply) => rule.answer.test(reply) && (!rule.reject || !rule.reject.test(reply))),
-    );
-    if (matched) hits.push(question.seq);
+    if (isQuestionAnsweredByReplies(question.question, combined, facts)) {
+      hits.push(question.seq);
+    }
   }
   return hits;
 }
+
+const CONTEXT_FOLLOWUPS: Array<{
+  trigger: RegExp;
+  exclude?: RegExp;
+  candidates: string[];
+}> = [
+  {
+    trigger: /聚酯纤维|涤纶|化纤|不含棉|无棉/u,
+    exclude: /不确定|不清楚|核实|查一下/u,
+    candidates: [
+      '聚酯纤维的话，穿起来会不会闷或不舒服呢？',
+      '聚酯纤维平时清洗和打理有什么要注意的吗？',
+      '这种面料容易起球或者变形吗？',
+    ],
+  },
+  {
+    trigger: /纯棉|全棉|含棉|棉麻|棉混纺|\d+\s*[%％]\s*棉/u,
+    exclude: /不含棉|无棉|不确定|不清楚|核实|查一下/u,
+    candidates: [
+      '含棉的话，洗完容易缩水或者掉色吗？',
+      '平时清洗和打理有什么要注意的吗？',
+    ],
+  },
+  {
+    trigger: /不建议机洗|不可机洗|不能机洗|建议手洗|轻柔手洗/u,
+    exclude: /不确定|不清楚|核实|查一下/u,
+    candidates: [
+      '平时手洗和晾晒有什么要注意的吗？',
+      '要不要干洗呢？',
+    ],
+  },
+  {
+    trigger: /需要干洗|必须干洗|建议干洗/u,
+    exclude: /不需要干洗|不用干洗|无需干洗/u,
+    candidates: [
+      '平时穿着和打理有什么要注意的吗？',
+    ],
+  },
+  {
+    trigger: /偏小|偏大|修身|宽松|标准正码|正码|不偏大|不偏小/u,
+    exclude: /不确定|不清楚|核实|查一下/u,
+    candidates: [
+      '如果尺码不合适，可以换吗？',
+      '那平时穿M码的话，这款建议怎么选尺码呢？',
+    ],
+  },
+  {
+    trigger: /轻微色差|细微色差|光线|屏幕|色差/u,
+    exclude: /不确定|不清楚|核实|查一下/u,
+    candidates: [
+      '有没有买家秀可以看呀？',
+      '买家秀在哪里看？',
+    ],
+  },
+  {
+    trigger: /\d+\s*(?:小时|天|日)(?:内|左右)?(?:安排)?(?:发货|发出|出库)|当天发货|现货秒发/u,
+    exclude: /不确定|不清楚|核实|查一下|无法保证/u,
+    candidates: [
+      '发出后大概几天能送到呢？',
+      '这款包邮吗？',
+    ],
+  },
+  {
+    trigger: /7天无理由|七天无理由|支持退换|支持退货|有运费险/u,
+    exclude: /不确定|不清楚|核实|查一下/u,
+    candidates: [
+      '如果尺码不合适，可以换吗？',
+      '发出后大概几天能送到呢？',
+    ],
+  },
+];
+
+/** 根据客服最新一轮回复的具体内容，顺着上下文生成一条自然、未问过且尚未被答到的追问。 */
+export function buildContextFollowUpQuestion(
+  questions: ScriptQuestion[],
+  agentReplies: string[],
+  latestAgentReply: string,
+  parent: ScriptQuestion,
+  facts?: ModelReceptionInput['facts'],
+): ScriptQuestion | null {
+  const latest = String(latestAgentReply || '').trim();
+  if (!latest) return null;
+  const usedQuestions = new Set(questions.map((q) => String(q.question || '').trim()));
+
+  for (const rule of CONTEXT_FOLLOWUPS) {
+    if (!rule.trigger.test(latest)) continue;
+    if (rule.exclude?.test(latest)) continue;
+    for (const candidate of rule.candidates) {
+      if (usedQuestions.has(candidate)) continue;
+      if (isQuestionAnsweredByReplies(candidate, agentReplies, facts)) continue;
+      return {
+        seq: Math.max(0, ...questions.map((q) => q.seq)) + 1,
+        question: candidate,
+        keyPoints: parent.automaticEvaluation ? [] : ['有效回应'],
+        ...(parent.automaticEvaluation ? { automaticEvaluation: true } : {}),
+        sourceType: 'derived',
+        requiresContext: true,
+        derivedFromSeq: parent.seq,
+        goalPriority: 'secondary',
+        needTransfer: false,
+        stage: parent.stage || 'presale',
+        orderStage: parent.orderStage,
+      };
+    }
+  }
+  return null;
+}
+

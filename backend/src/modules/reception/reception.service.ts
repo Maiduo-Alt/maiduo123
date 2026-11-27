@@ -48,6 +48,7 @@ import { assessAutomaticReply, ReplyAssessment } from '../../domain/automatic-re
 import { evaluateWithModels, ModelReceptionInput } from '../../domain/model-reception';
 import { assessLocalTrainingRules, isGreetingOnlyReply } from '../../domain/local-training-rules';
 import {
+  buildContextFollowUpQuestion,
   buildFlexibleBuyerMessages,
   buildWaitingNudge,
   computeFlexiblePushDelayMs,
@@ -909,15 +910,49 @@ export class ReceptionService implements OnModuleInit {
       }
       if (modelIntro && /水洗/u.test(modelIntro)) modelIntro = undefined;
     }
+    const sessionFacts = {
+      product: session.products[0] ? {
+        title: session.products[0].title,
+        attributes: session.products[0].attributes,
+        services: session.products[0].services,
+        stock: session.products[0].stock,
+      } : undefined,
+      order: session.order_payload ? {
+        stage: session.order_payload.stage,
+        statusText: session.order_payload.statusText,
+        promisedShipAt: session.order_payload.promisedShipAt,
+      } : undefined,
+    };
+    const agentReplyTexts = priorMessages.map((m) => String(m.content || ''));
+    const latestAgentText = agentReplyTexts.at(-1) || '';
     if (process.env.NODE_ENV !== 'test' && priorMessages.length) {
       const proactiveHits = findProactivelyAnsweredSeqs(
         session.questions,
         session.current_seq,
         alreadyAnswered,
-        priorMessages.map((m) => String(m.content || '')),
+        agentReplyTexts,
+        sessionFacts,
       );
-      for (const seq of proactiveHits) {
-        if (!alreadyAnswered.includes(seq)) alreadyAnswered.push(seq);
+      if (proactiveHits.length) {
+        const firstHitSeq = proactiveHits[0];
+        const anchor = previousQuestion || session.questions[session.questions.length - 1] || null;
+        const contextual = anchor
+          ? buildContextFollowUpQuestion(session.questions, agentReplyTexts, latestAgentText, anchor, sessionFacts)
+          : null;
+        if (contextual) {
+          // 客服在上一轮已直接答到后续题目时，原地把被答到的下一题改写为紧扣当前上下文的自然追问
+          session.questions = session.questions.map((q) => (q.seq === firstHitSeq ? { ...contextual, seq: firstHitSeq } : q));
+          await this.db.query(`UPDATE sessions SET questions = $2::jsonb WHERE id = $1`, [
+            sessionId, JSON.stringify(session.questions),
+          ]);
+          for (const seq of proactiveHits.slice(1)) {
+            if (!alreadyAnswered.includes(seq)) alreadyAnswered.push(seq);
+          }
+        } else {
+          for (const seq of proactiveHits) {
+            if (!alreadyAnswered.includes(seq)) alreadyAnswered.push(seq);
+          }
+        }
       }
     }
     const next = selectNextQuestion(
@@ -938,8 +973,11 @@ export class ReceptionService implements OnModuleInit {
       if (anchor) {
         const parent = session.questions.find((q) => q.seq === anchor.derivedFromSeq) || anchor;
         const latest = priorMessages[priorMessages.length - 1]?.rule_result;
-        const fallback = createMinimumRoundQuestion(session.questions, parent, latest?.judgmentVersion === 2 ? {
-          pending: latest.replyAssessment?.status === 'pending', agentReplies: priorMessages.map((message) => message.content), shippingAnswered: !!shippingAnswered, currentSeq: session.current_seq, skippedSeqs: session.skipped_seqs || [],
+        const contextual = process.env.NODE_ENV !== 'test'
+          ? buildContextFollowUpQuestion(session.questions, agentReplyTexts, latestAgentText, parent, sessionFacts)
+          : null;
+        const fallback = contextual || createMinimumRoundQuestion(session.questions, parent, latest?.judgmentVersion === 2 ? {
+          pending: latest.replyAssessment?.status === 'pending', agentReplies: agentReplyTexts, shippingAnswered: !!shippingAnswered, currentSeq: session.current_seq, skippedSeqs: session.skipped_seqs || [],
         } : undefined);
         session.questions = [...session.questions, fallback];
         session.total_questions = fallback.seq;
