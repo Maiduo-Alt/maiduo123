@@ -90,7 +90,10 @@ export function stripBuyerQuestionWrapper(question: string): string {
       }
     }
   }
-  return stripTopicTransitionText(text).replace(/[？?]麻烦直接说一下。?$/u, '').trim();
+  return stripTopicTransitionText(text)
+    .replace(/^我想确认一下[，,：:\s]*/u, '')
+    .replace(/[？?]麻烦直接说一下。?$/u, '')
+    .trim();
 }
 
 /**

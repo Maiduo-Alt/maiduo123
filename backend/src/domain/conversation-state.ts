@@ -26,9 +26,11 @@ export function buildKeywordQuestionProgress(
     .map((question) => {
       const required = [...new Set((question.keyPoints || []).filter((point) => point && point !== '有效回应'))];
       const hits = hitsBySeq.get(question.seq) || new Set<string>();
-      const covered = required.length
-        ? required.filter((point) => hits.has(point)).length
-        : hits.size > 0 ? 1 : 0;
+      const covered = hits.has('automatic-resolved')
+        ? (required.length || 1)
+        : required.length
+          ? required.filter((point) => hits.has(point)).length
+          : hits.size > 0 ? 1 : 0;
       return {
         seq: question.seq,
         covered,

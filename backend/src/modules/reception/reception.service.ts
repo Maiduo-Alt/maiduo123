@@ -28,7 +28,7 @@ import { allocateStyles, normalizeRatios } from '../../domain/style-ratio';
 import { shouldAbortAsDisconnected } from '../../domain/disconnect';
 import { computeResponseRounds, weightedAvgResponseSec } from '../../domain/response-rounds';
 import { judgeValidReplies } from '../../domain/reply-validity';
-import { isPendingVerification, supportsMachineWash } from '../../domain/reply-judge';
+import { isPendingVerification, isPerfunctory, supportsMachineWash } from '../../domain/reply-judge';
 import { cloneParams } from '../../domain/params';
 import { buildSimulatedOrder, orderStageForQuestion, OrderStage, SimulatedOrder, OrderProductRef, inferQuantityFromTexts } from '../../domain/order';
 import {
@@ -46,7 +46,7 @@ import { buildKeywordQuestionProgress, deriveConversationState } from '../../dom
 import { buildSemanticCandidates, findVectorCandidates } from '../../domain/semantic-client';
 import { assessAutomaticReply, ReplyAssessment } from '../../domain/automatic-reply';
 import { evaluateWithModels, ModelReceptionInput } from '../../domain/model-reception';
-import { assessLocalTrainingRules } from '../../domain/local-training-rules';
+import { assessLocalTrainingRules, isGreetingOnlyReply } from '../../domain/local-training-rules';
 import { ModelCredentialsService } from '../settings/model-credentials.service';
 import { decidePush, buildFollowUpText, buildMissingPointFollowUpText, buildTopicTransitionText, followUpEmotionDelta, selectWashFollowUp } from '../../domain/adaptive-push';
 import { TasksService } from '../tasks/tasks.service';
@@ -1948,18 +1948,49 @@ export class ReceptionService implements OnModuleInit {
       const thinkDelay = Math.round((minDelay + rng() * (maxDelay - minDelay)) * 1000);
       this.scheduler.schedule(`next:${sessionId}`, thinkDelay, () => this.advanceAfterReply(sessionId));
       const gradingJob = complete(inserted.id, true).then(() => undefined).catch(async (error: Error) => {
-        const ruleResult = this.unavailableJudgment(session.current_seq);
+        const fallbackAssessment = assessAutomaticReply({
+          question: currentQuestion?.question || '',
+          keyPoints: currentQuestion?.keyPoints || [],
+          reply: text,
+          buyerText: modelInput.question,
+        }, 2);
+        const rejected = isPerfunctory({ question: currentQuestion?.question || '', keyPoints: [], reply: text, buyerText: modelInput.question })
+          || isGreetingOnlyReply(text)
+          || isPendingVerification(text)
+          || fallbackAssessment.status === 'unsupported';
+        const passed = !rejected;
+        const ruleResult = {
+          questionSeq: session.current_seq,
+          semanticOnly: true,
+          judgmentVersion: 2,
+          replyAssessment: {
+            source: 'rule-fallback',
+            status: passed ? 'resolved' : isPendingVerification(text) ? 'pending' : 'unanswered',
+            reason: passed
+              ? (fallbackAssessment.pass ? fallbackAssessment.reason : '本地模型繁忙，按实质回复兜底通过')
+              : (fallbackAssessment.reason || '回复未正面解答买家问题'),
+            evidence: passed ? [text] : [],
+            missing: [],
+          },
+          hitPoints: [],
+          semanticEvaluation: { goalMatches: [], riskItems: [] },
+          judge: { pass: passed, signal: passed ? 'key-point' as const : 'hedge' as const },
+          ...(isPendingVerification(text) ? { pendingVerification: true } : {}),
+        };
         await this.db.query(
-          `UPDATE messages SET rule_result = $2::jsonb WHERE id = $1 AND rule_result->>'judgmentState' = 'pending'`,
-          [inserted.id, JSON.stringify(ruleResult)],
+          `UPDATE messages SET response_sec = $2, is_timeout = $3, rule_result = $4::jsonb
+           WHERE id = $1 AND rule_result->>'judgmentState' = 'pending'`,
+          [inserted.id, responseSec, isTimeout, JSON.stringify(ruleResult)],
         );
         this.gateway.emitToUser(accountId, 'agent.message.ack', {
           sessionId,
           messageId: inserted.id,
           backgroundJudgment: true,
+          responseSec,
+          isTimeout,
           ruleResult,
         });
-        this.logger.warn(`后台异步质检未完成 session=${sessionId} msg=${inserted.id}：${error.message}`);
+        this.logger.warn(`后台异步质检回退规则兜底 session=${sessionId} msg=${inserted.id} passed=${passed}：${error.message}`);
       });
       this.trackGradingJob(sessionId, gradingJob);
       return { messageId: inserted.id, responseSec, isTimeout, ruleResult: pending, level: attempt.level };
@@ -2026,8 +2057,9 @@ export class ReceptionService implements OnModuleInit {
   private async waitForGradingJobs(sessionId: number) {
     while (true) {
       const jobs = this.gradingJobs.get(sessionId);
-      if (!jobs || jobs.size === 0) return;
-      await Promise.allSettled([...jobs]);
+      const bgJob = this.backgroundJobs.get(sessionId);
+      if ((!jobs || jobs.size === 0) && !bgJob) return;
+      await Promise.allSettled([...(jobs || []), ...(bgJob ? [bgJob] : [])]);
     }
   }
 
@@ -2254,6 +2286,9 @@ export class ReceptionService implements OnModuleInit {
     const session = await this.loadSession(sessionId);
     if (!session) return;
     if (['finished', 'transferred', 'aborted'].includes(session.state)) return;
+    if (reason !== 'aborted') {
+      await this.persistConversationState(session);
+    }
 
     const attemptRow = await this.db.one<{ account_id: number; param_snapshot: SystemParams }>(
       `SELECT account_id, param_snapshot FROM attempts WHERE id = $1`,

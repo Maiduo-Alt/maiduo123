@@ -99,6 +99,27 @@ describe('conversation state', () => {
     expect(state.shouldClose).toBe(false);
   });
 
+  it('marks keyword questions resolved when automaticResolved is true even if hitPoints is empty in semanticOnly mode', () => {
+    const keywordQuestions: ScriptQuestion[] = [
+      { seq: 1, question: '材质是什么？', keyPoints: ['面料', '成分'], sourceType: 'core', goalPriority: 'primary', primaryGoal: '面料' },
+      { seq: 2, question: '会缩水吗？', keyPoints: ['缩水'], sourceType: 'core' },
+    ];
+    const keywordProgress = buildKeywordQuestionProgress(keywordQuestions, [
+      { questionSeq: 1, hitPoints: [], automaticResolved: true },
+      { questionSeq: 2, hitPoints: [], automaticResolved: false },
+    ]);
+    const state = deriveConversationState(keywordQuestions, [], {
+      currentSeq: 2,
+      emotionValue: 20,
+      keywordProgress,
+    });
+
+    expect(state.resolvedGoalIds).toContain('keyword-seq-1');
+    expect(state.unresolvedGoalIds).not.toContain('keyword-seq-1');
+    expect(state.unresolvedGoalIds).toContain('keyword-seq-2');
+    expect(state.resolutionScore).toBe(67);
+  });
+
   it('does not accept an agent closing phrase while core goals remain unresolved', () => {
     const state = deriveConversationState(questions, [{
       goalMatches: [{ goalId: 'g1', pointIds: ['p1'] }],
