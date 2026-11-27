@@ -41,7 +41,7 @@ export default function Login() {
               height: 56,
               margin: '0 auto 12px',
               borderRadius: 14,
-              background: 'linear-gradient(135deg,#3f5bf6,#7c5cff)',
+              background: '#1e6fff',
               color: '#fff',
               display: 'flex',
               alignItems: 'center',
