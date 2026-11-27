@@ -181,7 +181,7 @@ export default function AppLayout() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider width={220} theme="light" style={{ borderRight: '1px solid #eef0f5' }}>
+      <Sider width={224} theme="light" className="app-sider">
         <div className="app-logo">
           <span className="app-logo-mark">接待</span>
           <div>

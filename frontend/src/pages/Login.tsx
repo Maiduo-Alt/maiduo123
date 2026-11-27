@@ -31,8 +31,9 @@ export default function Login() {
         justifyContent: 'center',
         background: 'linear-gradient(135deg, #eef4ff 0%, #f7f9fc 60%, #eaf0fb 100%)',
       }}
+      className="login-page"
     >
-      <Card style={{ width: 400, boxShadow: '0 8px 32px rgba(31,56,100,0.12)' }} bordered={false}>
+      <Card className="login-card" style={{ width: 400, boxShadow: '0 8px 32px rgba(31,56,100,0.12)' }} bordered={false}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <div
             style={{
@@ -40,7 +41,7 @@ export default function Login() {
               height: 56,
               margin: '0 auto 12px',
               borderRadius: 14,
-              background: 'linear-gradient(135deg,#2e5c9a,#4c8bf5)',
+              background: 'linear-gradient(135deg,#3f5bf6,#7c5cff)',
               color: '#fff',
               display: 'flex',
               alignItems: 'center',
