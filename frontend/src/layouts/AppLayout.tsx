@@ -14,7 +14,6 @@ import {
   Space,
   Tabs,
   Tag,
-  Typography,
   Upload,
   message,
 } from 'antd';
@@ -37,7 +36,7 @@ import {
 import { api, uploadImage } from '../api/client';
 import { useAuth } from '../store/auth';
 
-const { Header, Sider, Content } = Layout;
+const { Header, Content } = Layout;
 
 export default function AppLayout() {
   const { profile, logout, load, passwordNotice, clearPasswordNotice } = useAuth();
@@ -174,26 +173,51 @@ export default function AppLayout() {
         ],
       });
     }
-    return list;
+    // 顶部横向导航：「训练中心」平铺为一级入口；只有一个子项的分组直接平铺；其余分组做成下拉菜单
+    const nav: any[] = [];
+    list.forEach((group, index) => {
+      if (index === 0 || group.children.length === 1) {
+        nav.push(...group.children);
+      } else {
+        nav.push({ key: group.key, label: group.label, popupClassName: 'app-nav-popup', children: group.children });
+      }
+    });
+    return nav;
   }, [profile?.roleCode]);
+
+  /** 详情页（如 /records/123）也要高亮所属的一级入口 */
+  const selectedNavKey = useMemo(() => {
+    const keys: string[] = [];
+    items.forEach((item: any) => (item.children ? item.children : [item]).forEach((child: any) => keys.push(child.key)));
+    const path = location.pathname;
+    if (keys.includes(path)) return path;
+    const hit = keys
+      .filter((key) => key !== '/' && path.startsWith(`${key}/`))
+      .sort((a, b) => b.length - a.length)[0];
+    return hit || path;
+  }, [items, location.pathname]);
 
   const roleName = { admin: '管理员', leader: '主管/带教', agent: '客服' }[profile?.roleCode || 'agent'];
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider width={224} theme="light" className="app-sider">
-        <div className="app-logo">
-          <span className="app-logo-mark">接待</span>
-          <div>
-            <div className="app-logo-title">模拟接待训练</div>
-            <div className="app-logo-sub">客服培训系统</div>
-          </div>
-        </div>
-        <Menu mode="inline" selectedKeys={[location.pathname]} items={items} style={{ borderInlineEnd: 'none' }} />
-      </Sider>
       <Layout>
         <Header className="app-header">
-          <Typography.Text type="secondary">面向新入职客服的并发接待模拟训练平台</Typography.Text>
+          <Link to="/" className="app-logo">
+            <span className="app-logo-mark">
+              <CustomerServiceOutlined />
+            </span>
+            <span className="app-logo-text">
+              <span className="app-logo-title">模拟接待训练</span>
+              <span className="app-logo-sub">客服培训系统</span>
+            </span>
+          </Link>
+          <Menu
+            className="app-nav"
+            mode="horizontal"
+            selectedKeys={[selectedNavKey]}
+            items={items}
+          />
           <Dropdown
             menu={{
               items: [
@@ -211,11 +235,11 @@ export default function AppLayout() {
             }}
           >
             <div className="app-user">
-              <Avatar size={28} src={profile?.avatarUrl || undefined} style={{ backgroundColor: '#2e5c9a' }}>
+              <Avatar size={28} src={profile?.avatarUrl || undefined} style={{ backgroundColor: '#1e6fff' }}>
                 {profile?.avatarUrl ? null : profile?.displayName?.slice(0, 1)}
               </Avatar>
               <span>{profile?.displayName}</span>
-              <Tag color="blue">{roleName}</Tag>
+              <Tag className="app-role-tag">{roleName}</Tag>
             </div>
           </Dropdown>
         </Header>
