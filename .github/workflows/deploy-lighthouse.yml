@@ -27,6 +27,11 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Configure SSH key
         env:
           LIGHTHOUSE_SSH_KEY: ${{ secrets.LIGHTHOUSE_SSH_KEY }}
@@ -46,16 +51,16 @@ jobs:
           USER="${LIGHTHOUSE_USER:-root}"
           PORT="${LIGHTHOUSE_PORT:-22}"
           APP_DIR="${LIGHTHOUSE_APP_DIR:-/home/ubuntu/cs-training}"
+          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=40"
 
-          ssh \
-            -i ~/.ssh/deploy_key \
-            -p "$PORT" \
-            -o StrictHostKeyChecking=accept-new \
-            -o BatchMode=yes \
-            -o ConnectTimeout=15 \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=40 \
-            "${USER}@${LIGHTHOUSE_HOST}" \
+          echo "==> 在 Runner 本地打包 main 分支 git bundle..."
+          git bundle create /tmp/cs-training-main.bundle HEAD
+
+          echo "==> 通过 SSH 上传代码包到腾讯云轻量服务器..."
+          scp -P "$PORT" $SSH_OPTS /tmp/cs-training-main.bundle "${USER}@${LIGHTHOUSE_HOST}:/tmp/cs-training-main.bundle"
+          rm -f /tmp/cs-training-main.bundle
+
+          ssh -p "$PORT" $SSH_OPTS "${USER}@${LIGHTHOUSE_HOST}" \
             "APP_DIR='${APP_DIR}' bash -s" <<'REMOTE'
           set -euo pipefail
 
@@ -69,17 +74,19 @@ jobs:
           echo "==> 当前目录：$(pwd)"
 
           OWNER="$(stat -c '%U' "$APP_DIR")"
+          chmod 644 /tmp/cs-training-main.bundle
           if [ "$(id -u)" -eq 0 ] && [ "$OWNER" != "root" ]; then
-            echo "==> 以 $OWNER 身份拉取 origin/main..."
-            sudo -u "$OWNER" git fetch origin main
+            echo "==> 以 $OWNER 身份从本地代码包更新 main..."
+            sudo -u "$OWNER" git fetch /tmp/cs-training-main.bundle HEAD
             sudo -u "$OWNER" git checkout main
-            sudo -u "$OWNER" git pull --ff-only origin main
+            sudo -u "$OWNER" git merge --ff-only FETCH_HEAD
           else
-            echo "==> 拉取 origin/main..."
-            git fetch origin main
+            echo "==> 从本地代码包更新 main..."
+            git fetch /tmp/cs-training-main.bundle HEAD
             git checkout main
-            git pull --ff-only origin main
+            git merge --ff-only FETCH_HEAD
           fi
+          rm -f /tmp/cs-training-main.bundle
 
           echo "==> 当前版本：$(git rev-parse --short HEAD) $(git log -1 --pretty=%s)"
           echo "==> 执行本地语义判定发布脚本（含构建、模型预检、数据库备份与健康检查）..."
@@ -88,4 +95,4 @@ jobs:
 
       - name: Clean up SSH key
         if: always()
-        run: rm -f ~/.ssh/deploy_key
+        run: rm -f ~/.ssh/deploy_key /tmp/cs-training-main.bundle
