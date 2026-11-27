@@ -94,6 +94,43 @@ describe('flexible-push', () => {
     expect(nextFollowUp?.question).toBe('聚酯纤维平时清洗和打理有什么要注意的吗？');
   });
 
+  it('skips false-premise conditional questions and adapts contextually across all question-bank categories', () => {
+    // 1. 赠品随主商品一起发 → 自动跳过「如果分开发，什么时候能到？」并顺着追问退货赠品规则
+    const giftQuestions: ScriptQuestion[] = [
+      { seq: 1, question: '赠品是跟商品一起发吗？', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '如果分开发，什么时候能到？', keyPoints: [], automaticEvaluation: true },
+    ];
+    expect(findProactivelyAnsweredSeqs(giftQuestions, 1, [], ['赠品随主商品一起发出哦'])).toEqual([2]);
+    expect(buildContextFollowUpQuestion(giftQuestions, ['赠品随主商品一起发出哦'], '赠品随主商品一起发出哦', giftQuestions[0])?.question)
+      .toBe('如果后面主商品要退货的话，赠品需要一起退回吗？');
+
+    // 2. 有现货 → 自动跳过「缺货的话什么时候补货？」并顺着追问发货时效
+    const stockQuestions: ScriptQuestion[] = [
+      { seq: 1, question: '这个现在还有货吗？', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '缺货的话什么时候补货？', keyPoints: [], automaticEvaluation: true },
+    ];
+    expect(findProactivelyAnsweredSeqs(stockQuestions, 1, [], ['目前有现货充足，拍下就能发'])).toEqual([2]);
+    expect(buildContextFollowUpQuestion(stockQuestions, ['目前有现货充足，拍下就能发'], '目前有现货充足，拍下就能发', stockQuestions[0])?.question)
+      .toBe('那现在拍的话一般多久能发货呢？');
+
+    // 3. 发票 / 优惠券 / 正品 / 售后
+    const invoiceQuestions: ScriptQuestion[] = [
+      { seq: 1, question: '可以开发票吗？', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '怎么开发票？', keyPoints: [], automaticEvaluation: true },
+    ];
+    expect(findProactivelyAnsweredSeqs(invoiceQuestions, 1, [], ['支持开电子发票，在订单详情页申请开票即可'])).toEqual([2]);
+    expect(buildContextFollowUpQuestion(invoiceQuestions, ['支持开电子发票，在订单详情页申请开票即可'], '支持开电子发票，在订单详情页申请开票即可', invoiceQuestions[0])?.question)
+      .toBe('申请开票后一般多久能拿到发票呢？');
+
+    const couponQuestions: ScriptQuestion[] = [
+      { seq: 1, question: '优惠券有使用门槛吗？', keyPoints: [], automaticEvaluation: true },
+      { seq: 2, question: '能和店铺活动叠加使用吗？', keyPoints: [], automaticEvaluation: true },
+    ];
+    expect(findProactivelyAnsweredSeqs(couponQuestions, 1, [], ['满199减20，可以叠加跨店满减使用'])).toEqual([2]);
+    expect(buildContextFollowUpQuestion(couponQuestions, ['满199减20，可以叠加跨店满减使用'], '满199减20，可以叠加跨店满减使用', couponQuestions[0])?.question)
+      .toBe('如果刚买完降价了，支持价保补差价吗？');
+  });
+
   it('builds non-empty waiting nudges for all styles', () => {
     for (const style of ['friendly', 'hesitant', 'direct', 'impatient', 'silent']) {
       expect(buildWaitingNudge(style, 42).length).toBeGreaterThan(0);
